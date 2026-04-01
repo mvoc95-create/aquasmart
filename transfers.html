@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+{% block page_title %}Transferências bifásicas{% endblock %}
+{% block page_subtitle %}Registre a passagem dos lotes do berçário para a engorda e acompanhe o histórico.{% endblock %}
+{% block content %}
+<div class="grid-2">
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>Nova transferência</h2></div></div>
+<form method="post" class="form-grid">
+  <label>Data<input type="date" name="transfer_date" value="{{ today.isoformat() }}" required></label>
+  <label>Origem<select name="source_unit_id">{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
+  <label>Destino<select name="destination_unit_id">{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
+  <label>Lote origem (fallback)<select name="source_lot_id">{% for l in lots %}<option value="{{l.id}}">{{l.lot_code}} - {{l.unit.name}}</option>{% endfor %}</select></label>
+  <label>Novo código do lote destino<input name="destination_lot_code" required></label>
+  <label>Quantidade transferida<input type="number" name="transferred_qty" required></label>
+  <label>Peso médio (g)<input type="number" step="0.01" name="avg_weight_g"></label>
+  <label class="full">Observação<textarea name="notes"></textarea></label>
+  <div class="form-actions"><button type="submit">Salvar transferência</button></div>
+</form>
+</section>
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Transferências registradas</h2></div></div>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Data</th><th>Origem</th><th>Destino</th><th>Lote origem</th><th>Novo lote</th><th>Quantidade</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr><td>{{ r.transfer_date|brdate }}</td><td>{{ r.source_unit.name }}</td><td>{{ r.destination_unit.name }}</td><td>{{ r.source_lot.lot_code }}</td><td>{{ r.destination_lot_code }}</td><td>{{ r.transferred_qty }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+</div>
+{% endblock %}

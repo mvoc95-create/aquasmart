@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login · Sistema Fazenda Mirim</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-body">
+  <div class="login-shell">
+    <section class="login-card">
+      <div class="brand-wrap login-brand">
+        <div class="brand-mark">FM</div>
+        <div>
+          <div class="brand login-brand-title">Fazenda Mirim</div>
+          <div class="brand-sub">Sistema operacional com controle de acesso</div>
+        </div>
+      </div>
+
+      <div class="login-copy">
+        <p class="eyebrow">Acesso seguro</p>
+        <h1>Entre com seu usuário e senha</h1>
+        <p>Esse sistema agora tem perfis e permissões por usuário. Cada funcionário vê apenas o que precisa para trabalhar.</p>
+      </div>
+
+      {% with flashes = get_flashed_messages(with_categories=true) %}
+        {% if flashes %}
+          <div class="flash-wrap compact">
+            {% for category, msg in flashes %}
+              <div class="flash {{ category }}">{{ msg }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="post" class="form-grid login-form">
+        <label>Usuário ou e-mail
+          <input type="text" name="username" autocomplete="username" required autofocus>
+        </label>
+        <label>Senha
+          <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <label class="checkbox-row full">
+          <input type="checkbox" name="remember" value="1">
+          <span>Continuar conectado neste aparelho</span>
+        </label>
+        <div class="form-actions full"><button type="submit">Entrar no sistema</button></div>
+      </form>
+
+      <div class="login-hint">
+        <strong>Primeiro acesso</strong>
+        <p>Use o administrador padrão definido no README e troque a senha criando seus usuários logo após entrar.</p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

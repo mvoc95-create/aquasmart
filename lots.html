@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block page_title %}Lotes{% endblock %}
+{% block page_subtitle %}Cadastre e acompanhe os lotes ativos e históricos da operação.{% endblock %}
+{% block content %}
+<div class="grid-2">
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Cadastro</p><h2>Novo lote</h2></div></div>
+<form method="post" class="form-grid">
+  <label>Código do lote<input name="lot_code" required></label>
+  <label>Fase<select name="phase"><option value="bercario">Berçário</option><option value="engorda">Engorda</option></select></label>
+  <label>Data inicial<input type="date" name="start_date" required></label>
+  <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
+  <label>Quantidade inicial<input type="number" name="initial_count" required></label>
+  <label>Peso médio inicial (g)<input type="number" step="0.01" name="estimated_weight_g"></label>
+  <label class="full">Observações<textarea name="notes"></textarea></label>
+  <div class="form-actions"><button type="submit">Salvar lote</button></div>
+</form>
+</section>
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Lotes cadastrados</h2></div></div>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Lote</th><th>Fase</th><th>Início</th><th>Unidade</th><th>Quantidade</th><th>Status</th></tr></thead>
+<tbody>
+{% for r in lots %}
+<tr><td>{{ r.lot_code }}</td><td>{{ r.phase|phase_label }}</td><td>{{ r.start_date|brdate }}</td><td>{{ r.unit.name }}</td><td>{{ r.initial_count }}</td><td>{{ r.status|status_label }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+</div>
+{% endblock %}

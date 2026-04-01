@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block page_title %}Estoque de ração{% endblock %}
+{% block page_subtitle %}Controle entradas, saídas e acompanhe o saldo atual do estoque.{% endblock %}
+{% block content %}
+<div class="cards compact-cards"><div class="metric-card"><span class="metric-label">Saldo atual</span><strong>{{ total_stock }} kg</strong><small>Consolidado das movimentações registradas</small></div></div>
+<div class="grid-2">
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Movimentação</p><h2>Novo lançamento</h2></div></div>
+<form method="post" class="form-grid">
+  <label>Data<input type="date" name="movement_date" value="{{ today.isoformat() }}" required></label>
+  <label>Ração<input name="feed_name" required></label>
+  <label>Tipo<select name="movement_type"><option value="entrada">Entrada</option><option value="saida">Saída</option></select></label>
+  <label>Quantidade (kg)<input type="number" step="0.01" name="quantity_kg" required></label>
+  <label>Custo unitário<input type="number" step="0.01" name="unit_cost"></label>
+  <label class="full">Observação<textarea name="notes"></textarea></label>
+  <div class="form-actions"><button type="submit">Salvar movimentação</button></div>
+</form>
+</section>
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos lançamentos</h2></div></div>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Data</th><th>Ração</th><th>Tipo</th><th>Quantidade</th><th>Custo</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr><td>{{ r.movement_date|brdate }}</td><td>{{ r.feed_name }}</td><td>{{ r.movement_type|title }}</td><td>{{ r.quantity_kg }}</td><td>{{ r.unit_cost or '' }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+</div>
+{% endblock %}

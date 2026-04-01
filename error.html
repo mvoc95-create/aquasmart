@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ title }}{% endblock %}
+{% block page_subtitle %}{{ message }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <p class="panel-kicker">Erro</p>
+      <h2>{{ title }}</h2>
+    </div>
+  </div>
+  <p class="empty-state">{{ message }}</p>
+</section>
+{% endblock %}

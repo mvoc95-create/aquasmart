@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% block page_title %}Usuários e acessos{% endblock %}
+{% block page_subtitle %}Crie logins, defina perfis e controle quem pode lançar ou apenas consultar dados.{% endblock %}
+{% block content %}
+<div class="grid-2">
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Novo usuário</p><h2>Criar acesso</h2></div></div>
+  <form method="post" class="form-grid">
+    <input type="hidden" name="form_mode" value="create">
+    <label>Nome completo<input type="text" name="full_name" required></label>
+    <label>Usuário / login<input type="text" name="username" required></label>
+    <label>E-mail<input type="email" name="email"></label>
+    <label>Perfil
+      <select name="role" required>
+        {% for role_key, role_label in role_labels.items() %}
+        <option value="{{ role_key }}">{{ role_label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Senha inicial<input type="password" name="password" minlength="6" required></label>
+    <label class="checkbox-row">
+      <input type="checkbox" name="is_active_user" value="1" checked>
+      <span>Usuário ativo</span>
+    </label>
+    <div class="form-actions"><button type="submit">Criar usuário</button></div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Perfis</p><h2>O que cada papel pode fazer</h2></div></div>
+  <ul class="agenda">
+    <li><strong>Administrador:</strong> acesso total, inclusive criação de usuários.</li>
+    <li><strong>Gerente:</strong> operação completa, sem gerenciar usuários.</li>
+    <li><strong>Operador:</strong> lançamentos de água, manejo, transferências e ração.</li>
+    <li><strong>Consulta:</strong> apenas visualização do painel e das unidades.</li>
+  </ul>
+</section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Usuários cadastrados</p><h2>Gerenciar acessos</h2></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Status</th><th>Último acesso</th><th>Ações</th></tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.full_name }}</td>
+          <td>{{ u.username }}</td>
+          <td>{{ u.role_label }}</td>
+          <td>{{ 'Ativo' if u.is_active_user else 'Inativo' }}</td>
+          <td>{{ u.last_login_at.strftime('%d/%m/%Y %H:%M') if u.last_login_at else 'Nunca acessou' }}</td>
+          <td>
+            <details class="inline-editor">
+              <summary>Editar</summary>
+              <form method="post" class="form-grid compact-form">
+                <input type="hidden" name="form_mode" value="update">
+                <input type="hidden" name="user_id" value="{{ u.id }}">
+                <label>Nome completo<input type="text" name="full_name" value="{{ u.full_name }}" required></label>
+                <label>E-mail<input type="email" name="email" value="{{ u.email or '' }}"></label>
+                <label>Perfil
+                  <select name="role" required>
+                    {% for role_key, role_label in role_labels.items() %}
+                    <option value="{{ role_key }}" {{ 'selected' if u.role == role_key else '' }}>{{ role_label }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>Nova senha (opcional)<input type="password" name="password" minlength="6"></label>
+                <label class="checkbox-row">
+                  <input type="checkbox" name="is_active_user" value="1" {{ 'checked' if u.is_active_user else '' }}>
+                  <span>Usuário ativo</span>
+                </label>
+                <div class="form-actions"><button type="submit">Salvar alterações</button></div>
+              </form>
+            </details>
+            <form method="post" action="{{ url_for('toggle_user', user_id=u.id) }}" class="inline-form">
+              <button type="submit" class="secondary-button">{{ 'Desativar' if u.is_active_user else 'Reativar' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

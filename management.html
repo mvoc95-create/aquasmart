@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+{% block page_title %}Manejo diário{% endblock %}
+{% block page_subtitle %}Registre alimentação, mortalidade, biomassa estimada e observações do dia.{% endblock %}
+{% block content %}
+<div class="grid-2">
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>Novo manejo</h2></div></div>
+<form method="post" class="form-grid">
+  <label>Data<input type="date" name="manage_date" value="{{ today.isoformat() }}" required></label>
+  <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
+  <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg"></label>
+  <label>Ração consumida (kg)<input type="number" step="0.01" name="feed_consumed_kg"></label>
+  <label>Mortalidade<input type="number" name="mortality_qty"></label>
+  <label>Peso médio (g)<input type="number" step="0.01" name="average_weight_g"></label>
+  <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg"></label>
+  <label class="full">Observação<textarea name="notes"></textarea></label>
+  <div class="form-actions"><button type="submit">Salvar manejo</button></div>
+</form>
+</section>
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Últimos registros</p><h2>Histórico recente</h2></div></div>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Data</th><th>Unidade</th><th>Ração ofertada</th><th>Mortalidade</th><th>Peso médio</th><th>Biomassa</th></tr></thead>
+<tbody>
+{% for r in records %}
+<tr><td>{{ r.manage_date|brdate }}</td><td>{{ r.unit.name }}</td><td>{{ r.feed_offered_kg }}</td><td>{{ r.mortality_qty }}</td><td>{{ r.average_weight_g or '' }}</td><td>{{ r.estimated_biomass_kg or '' }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+</div>
+{% endblock %}

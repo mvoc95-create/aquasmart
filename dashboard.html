@@ -1,0 +1,119 @@
+{% extends 'base.html' %}
+{% block page_title %}Painel operacional{% endblock %}
+{% block page_subtitle %}Resumo das prioridades do dia, prontidão dos berçários e semáforo das unidades ativas.{% endblock %}
+{% block content %}
+<section class="hero-panel">
+  <div>
+    <p class="hero-kicker">Rotina diária</p>
+    <h2>Veja rapidamente o que precisa de ação hoje</h2>
+    <p class="hero-text">O painel destaca pendências de água e manejo, alertas do dia, prontidão para transferência e cobertura de ração para apoiar a operação no campo.</p>
+  </div>
+  <div class="hero-meta">
+    <div><span>Data</span><strong>{{ data.today|brdate }}</strong></div>
+    <div><span>Unidades ativas</span><strong>{{ data.units|length }}</strong></div>
+  </div>
+</section>
+
+<div class="cards">
+  <div class="metric-card">
+    <span class="metric-label">Pendências de água</span>
+    <strong>{{ data.water_pending }}</strong>
+    <small>Unidades com lote ativo sem leitura hoje</small>
+  </div>
+  <div class="metric-card danger">
+    <span class="metric-label">Alertas de água hoje</span>
+    <strong>{{ data.water_alerts }}</strong>
+    <small>OD, pH ou temperatura fora da faixa</small>
+  </div>
+  <div class="metric-card">
+    <span class="metric-label">Pendências de manejo</span>
+    <strong>{{ data.management_pending }}</strong>
+    <small>Lançamentos operacionais ainda faltando</small>
+  </div>
+  <div class="metric-card">
+    <span class="metric-label">Berçários prontos</span>
+    <strong>{{ data.nursery_ready|length }}</strong>
+    <small>Unidades elegíveis para transferência</small>
+  </div>
+  <div class="metric-card">
+    <span class="metric-label">Estoque de ração</span>
+    <strong>{{ data.feed_stock_kg }} kg</strong>
+    <small>Saldo consolidado do estoque</small>
+  </div>
+  <div class="metric-card">
+    <span class="metric-label">Cobertura de ração</span>
+    <strong>{{ data.feed_coverage_days if data.feed_coverage_days is not none else 'N/D' }} dias</strong>
+    <small>Com base na média recente de oferta</small>
+  </div>
+</div>
+
+<div class="grid-2">
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <p class="panel-kicker">Ações imediatas</p>
+        <h2>Agenda do dia</h2>
+      </div>
+    </div>
+    <ul class="agenda">
+      <li>Coletar água nas unidades com lote ativo e sem leitura de hoje.</li>
+      <li>Registrar manejo e alimentação das unidades ainda pendentes.</li>
+      <li>Conferir berçários próximos da transferência para engorda.</li>
+      <li>Validar cobertura de ração e programar compras se necessário.</li>
+    </ul>
+  </section>
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <p class="panel-kicker">Fluxo bifásico</p>
+        <h2>Prontidão de transferência</h2>
+      </div>
+    </div>
+    {% if data.nursery_ready %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Berçário</th><th>Lote</th><th>Dias</th></tr></thead>
+        <tbody>
+        {% for name, lot, days in data.nursery_ready %}
+          <tr><td>{{ name }}</td><td>{{ lot }}</td><td>{{ days }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <p class="empty-state">Nenhum berçário pronto agora.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <p class="panel-kicker">Visão consolidada</p>
+      <h2>Semáforo das unidades</h2>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th><th>Unidade</th><th>Fase</th><th>Lote</th><th>Última água</th><th>Último manejo</th><th>Observação</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in data.semaforo %}
+        <tr>
+          <td><span class="badge {{ row.status }}">{{ row.status|upper }}</span></td>
+          <td>{{ row.unit.name }}</td>
+          <td>{{ row.unit.phase|phase_label }}</td>
+          <td>{{ row.lot.lot_code if row.lot else 'Sem lote' }}</td>
+          <td>{% if row.water %}{{ row.water.monitor_date|brdate }} / {{ row.water.shift|shift_label }}{% else %}—{% endif %}</td>
+          <td>{% if row.mgmt %}{{ row.mgmt.manage_date|brdate }}{% else %}—{% endif %}</td>
+          <td>{{ row.reasons }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
