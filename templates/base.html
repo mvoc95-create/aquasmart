@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ title or 'Sistema Fazenda Mirim' }}</title>
+  <title>{{ title or 'Sistema Fazenda Aqua Smart' }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand-wrap">
-        <div class="brand-mark">FM</div>
+        <img class="brand-logo" src="{{ url_for('static', filename='logo-aqua-smart.png') }}" alt="Logo Fazenda Aqua Smart">
         <div>
-          <div class="brand">Fazenda Mirim</div>
-          <div class="brand-sub">Operação de camarão bifásica</div>
+          <div class="brand">Fazenda Aqua Smart</div>
+          <div class="brand-sub">Fazenda de camarão</div>
         </div>
       </div>
 
