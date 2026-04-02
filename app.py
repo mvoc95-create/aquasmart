@@ -16,7 +16,7 @@ from sqlalchemy import case, func, inspect, text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'fazenda-mirim-demo')
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'fazenda-aqua-smart-demo')
 db_url = os.getenv('DATABASE_URL', 'sqlite:///farm_system.db')
 if db_url.startswith('postgres://'):
     db_url = db_url.replace('postgres://', 'postgresql://', 1)
@@ -36,7 +36,7 @@ TARGET_PH_MAX = float(os.getenv('TARGET_PH_MAX', '8.5'))
 TARGET_TEMP_MIN = float(os.getenv('TARGET_TEMP_MIN', '28'))
 TARGET_TEMP_MAX = float(os.getenv('TARGET_TEMP_MAX', '32'))
 
-ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@fazendamirim.local')
+ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@fazendaaquasmart.local')
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
 ADMIN_NAME = os.getenv('ADMIN_NAME', 'Administrador')
 

@@ -1,4 +1,4 @@
-# Sistema Fazenda Mirim
+# Sistema Fazenda Aqua Smart
 
 Sistema web para operação bifásica de camarão, pensado para uso em tablet, celular ou computador. Esta versão já vem com **login, perfis de acesso e permissões por usuário**.
 
@@ -35,7 +35,7 @@ Pode apenas visualizar o painel e a aba de unidades.
 Na primeira vez que o sistema sobe, ele cria um usuário administrador automaticamente.
 
 ### Login padrão
-- **Usuário:** `admin@fazendamirim.local`
+- **Usuário:** `admin@fazendaaquasmart.local`
 - **Senha:** `admin123`
 
 ## Muito importante
@@ -231,7 +231,7 @@ gunicorn app:app
 ### "Usuário ou senha inválidos"
 Confira se digitou o login corretamente.
 Se for o primeiro acesso, teste:
-- usuário: `admin@fazendamirim.local`
+- usuário: `admin@fazendaaquasmart.local`
 - senha: `admin123`
 
 ### "Acesso negado"
