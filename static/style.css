@@ -25,6 +25,7 @@ a{text-decoration:none;color:inherit}
 .sidebar{background:linear-gradient(180deg,var(--nav) 0%, #111827 100%);color:#fff;padding:24px 18px;display:flex;flex-direction:column;gap:20px;position:sticky;top:0;height:100vh}
 .brand-wrap{display:flex;gap:14px;align-items:center;padding:10px 8px}
 .brand-mark{width:48px;height:48px;border-radius:16px;background:linear-gradient(135deg,#14b8a6,#2563eb);display:grid;place-items:center;font-weight:800;letter-spacing:.05em;box-shadow:0 12px 30px rgba(37,99,235,.25)}
+.brand-logo{width:54px;height:54px;border-radius:16px;object-fit:cover;box-shadow:0 12px 30px rgba(37,99,235,.22);background:#fff;padding:2px}
 .brand{font-size:24px;font-weight:800;line-height:1.1}
 .brand-sub{font-size:13px;color:#bfdbfe;margin-top:4px}
 .user-chip{margin:0 8px;padding:14px 16px;border-radius:16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.08)}
