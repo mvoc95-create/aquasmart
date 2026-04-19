@@ -1,12 +1,12 @@
 {% extends 'base.html' %}
 {% block page_title %}Gráficos{% endblock %}
-{% block page_subtitle %}Acompanhe a evolução dos principais parâmetros ao longo do tempo, com filtro por viveiro e faixa ideal destacada.{% endblock %}
+{% block page_subtitle %}Agora a visualização fica mais isolada: você escolhe o viveiro, o período e o parâmetro para analisar com mais clareza.{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-head">
-    <div><p class="panel-kicker">Filtros</p><h2>Visualização por viveiro</h2></div>
+    <div><p class="panel-kicker">Filtros</p><h2>Visualização por parâmetro</h2></div>
   </div>
-  <form method="get" class="form-grid compact-form">
+  <form method="get" class="form-grid compact-form chart-filter-form">
     <label>Viveiro/unidade
       <select name="unit_id">
         <option value="">Todos</option>
@@ -22,90 +22,105 @@
         {% endfor %}
       </select>
     </label>
-    <div class="form-actions"><button type="submit">Atualizar gráficos</button></div>
+    <label class="full">Parâmetro
+      <select name="parameter">
+        {% for key, option in parameter_options.items() %}
+        <option value="{{ key }}" {% if selected_parameter_key == key %}selected{% endif %}>{{ option.title }}{% if option.unit %} ({{ option.unit }}){% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="form-actions"><button type="submit">Atualizar gráfico</button></div>
   </form>
-  <p class="empty-state">Exibindo: <strong>{{ selected_unit.name if selected_unit else 'Todos os viveiros' }}</strong> · Período: <strong>{{ days }} dias</strong>.</p>
+  <p class="empty-state">Exibindo: <strong>{{ selected_unit.name if selected_unit else 'Todos os viveiros' }}</strong> · Período: <strong>{{ days }} dias</strong> · Parâmetro: <strong>{{ chart_data.parameter.title }}{% if chart_data.parameter.unit %} ({{ chart_data.parameter.unit }}){% endif %}</strong> · Pontos no gráfico: <strong>{{ chart_data.point_count }}</strong>.</p>
 </section>
 
-<div class="cards compact-cards">
-  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Água</p><h2>OD x tempo</h2></div></div><canvas id="chart-od"></canvas></section>
-  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Água</p><h2>Salinidade x tempo</h2></div></div><canvas id="chart-salinity"></canvas></section>
-  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Água</p><h2>Temperatura x tempo</h2></div></div><canvas id="chart-temperature"></canvas></section>
-  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Água</p><h2>pH x tempo</h2></div></div><canvas id="chart-ph"></canvas></section>
-</div>
-
-<div class="cards compact-cards">
-  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Manejo</p><h2>Ração ofertada x tempo</h2></div></div><canvas id="chart-feed-offered"></canvas></section>
-  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Manejo</p><h2>Ração consumida x tempo</h2></div></div><canvas id="chart-feed-consumed"></canvas></section>
-  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Manejo</p><h2>Mortalidade x tempo</h2></div></div><canvas id="chart-mortality"></canvas></section>
-  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Manejo</p><h2>Peso médio x tempo</h2></div></div><canvas id="chart-average-weight"></canvas></section>
-</div>
+<section class="panel full-width-panel chart-focus-panel">
+  <div class="panel-head chart-head-stack">
+    <div>
+      <p class="panel-kicker">{{ 'Água' if chart_data.parameter.group == 'water' else 'Manejo' }}</p>
+      <h2>{{ chart_data.parameter.title }}</h2>
+    </div>
+    <div class="chart-note-box">
+      <strong>Leitura isolada</strong>
+      <small>O gráfico foi ampliado e mostra um parâmetro por vez para facilitar a conferência dos dados.</small>
+    </div>
+  </div>
+  {% if chart_data.point_count == 0 %}
+  <p class="empty-state">Ainda não há dados para esse filtro.</p>
+  {% else %}
+  <div class="single-chart-wrap">
+    <canvas id="main-chart"></canvas>
+  </div>
+  <div class="chart-legend-hint">
+    <span>As colunas representam os lançamentos no tempo.</span>
+    {% if chart_data.threshold %}
+    <span>As linhas pontilhadas indicam a faixa ideal de referência.</span>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 <script>
 const chartData = {{ chart_data|tojson }};
-
-function buildThresholdDatasets(points, threshold, label) {
-  if (!threshold || points.length === 0) return [];
-  const xs = points.map(p => p.x);
-  const datasets = [];
-  if (threshold.min !== null && threshold.min !== undefined) {
-    datasets.push({
-      label: threshold.max != null ? `${label} (mín)` : label,
-      data: xs.map(x => ({x, y: threshold.min})),
-      borderDash: [6, 6],
-      pointRadius: 0,
-      borderWidth: 1,
-      tension: 0,
-    });
-  }
-  if (threshold.max !== null && threshold.max !== undefined) {
-    datasets.push({
-      label: `${label} (máx)`,
-      data: xs.map(x => ({x, y: threshold.max})),
-      borderDash: [6, 6],
-      pointRadius: 0,
-      borderWidth: 1,
-      tension: 0,
-    });
-  }
-  return datasets;
-}
-
-function createLineChart(canvasId, points, label, unitLabel='', thresholdKey=null) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas) return;
-  const fullLabel = unitLabel ? `${label} (${unitLabel})` : label;
+const canvas = document.getElementById('main-chart');
+if (canvas && chartData.point_count > 0) {
+  const labels = chartData.points.map(point => point.label);
+  const values = chartData.points.map(point => point.value);
   const datasets = [{
-    label: fullLabel,
-    data: points,
-    parsing: false,
-    pointRadius: 3,
-    borderWidth: 2,
-    tension: 0.25,
+    type: 'bar',
+    label: `${chartData.parameter.label}${chartData.parameter.unit ? ` (${chartData.parameter.unit})` : ''}`,
+    data: values,
+    borderWidth: 1,
   }];
-  if (thresholdKey) {
-    const threshold = chartData.thresholds[thresholdKey];
-    datasets.push(...buildThresholdDatasets(points, threshold, threshold.label));
+
+  if (chartData.threshold) {
+    if (chartData.threshold.min !== null && chartData.threshold.min !== undefined) {
+      datasets.push({
+        type: 'line',
+        label: chartData.threshold.max != null ? `${chartData.threshold.label} (mín)` : chartData.threshold.label,
+        data: labels.map(() => chartData.threshold.min),
+        borderDash: [6, 6],
+        pointRadius: 0,
+        borderWidth: 2,
+        fill: false,
+      });
+    }
+    if (chartData.threshold.max !== null && chartData.threshold.max !== undefined) {
+      datasets.push({
+        type: 'line',
+        label: `${chartData.threshold.label} (máx)`,
+        data: labels.map(() => chartData.threshold.max),
+        borderDash: [6, 6],
+        pointRadius: 0,
+        borderWidth: 2,
+        fill: false,
+      });
+    }
   }
+
   new Chart(canvas, {
-    type: 'line',
-    data: { datasets },
+    data: {
+      labels,
+      datasets,
+    },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: true },
         tooltip: {
           callbacks: {
             afterBody(items) {
-              const raw = items[0]?.raw;
-              if (!raw) return '';
+              const idx = items?.[0]?.dataIndex;
+              const point = chartData.points[idx];
+              if (!point) return '';
               const extras = [];
-              if (raw.unit) extras.push(`Unidade: ${raw.unit}`);
-              if (raw.shift) extras.push(`Turno: ${raw.shift}`);
-              if (raw.time) extras.push(`Hora: ${raw.time}`);
+              if (point.unit) extras.push(`Unidade: ${point.unit}`);
+              if (point.date) extras.push(`Data: ${point.date}`);
+              if (point.shift) extras.push(`Turno: ${point.shift}`);
+              if (point.time) extras.push(`Hora: ${point.time}`);
               return extras;
             }
           }
@@ -113,24 +128,22 @@ function createLineChart(canvasId, points, label, unitLabel='', thresholdKey=nul
       },
       scales: {
         x: {
-          type: 'time',
-          time: { tooltipFormat: 'dd/MM/yyyy HH:mm', displayFormats: { day: 'dd/MM', hour: 'dd/MM HH:mm' } }
+          ticks: {
+            autoSkip: true,
+            maxRotation: 45,
+            minRotation: 45,
+          }
         },
         y: {
-          title: { display: true, text: fullLabel }
+          beginAtZero: false,
+          title: {
+            display: true,
+            text: `${chartData.parameter.label}${chartData.parameter.unit ? ` (${chartData.parameter.unit})` : ''}`,
+          }
         }
       }
     }
   });
 }
-
-createLineChart('chart-od', chartData.water.od, chartData.meta.water.od.label, chartData.meta.water.od.unit, 'dissolved_oxygen');
-createLineChart('chart-salinity', chartData.water.salinity, chartData.meta.water.salinity.label, chartData.meta.water.salinity.unit, 'salinity');
-createLineChart('chart-temperature', chartData.water.temperature, chartData.meta.water.temperature.label, chartData.meta.water.temperature.unit, 'temperature_c');
-createLineChart('chart-ph', chartData.water.ph, chartData.meta.water.ph.label, chartData.meta.water.ph.unit, 'ph');
-createLineChart('chart-feed-offered', chartData.management.feed_offered, chartData.meta.management.feed_offered.label, chartData.meta.management.feed_offered.unit);
-createLineChart('chart-feed-consumed', chartData.management.feed_consumed, chartData.meta.management.feed_consumed.label, chartData.meta.management.feed_consumed.unit);
-createLineChart('chart-mortality', chartData.management.mortality, chartData.meta.management.mortality.label, chartData.meta.management.mortality.unit);
-createLineChart('chart-average-weight', chartData.management.average_weight, chartData.meta.management.average_weight.label, chartData.meta.management.average_weight.unit);
 </script>
 {% endblock %}

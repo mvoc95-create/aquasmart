@@ -5,29 +5,35 @@
 <div class="grid-2">
 <section class="panel">
 <div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>Novo manejo</h2></div></div>
-<form method="post" class="form-grid">
-  <label>Data<input type="date" name="manage_date" value="{{ today.isoformat() }}" required></label>
-  <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
-  <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg"></label>
-  <label>Ração consumida (kg)<input type="number" step="0.01" name="feed_consumed_kg"></label>
-  <label>Mortalidade (un)<input type="number" name="mortality_qty"></label>
-  <label>Peso médio (g)<input type="number" step="0.01" name="average_weight_g"></label>
-  <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg"></label>
-  <label class="full">Observação<textarea name="notes"></textarea></label>
+<form method="post" class="form-grid" id="management-form">
+  <label>Data<input type="date" name="manage_date" id="manage_date" value="{{ today.isoformat() }}" required></label>
+  <label>Unidade<select name="unit_id" id="management_unit_id">{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
+  <div class="full inline-actions-row">
+    <button type="button" class="secondary-button" id="copy-previous-btn">Repetir informações do dia anterior</button>
+    <span class="inline-hint">O sistema busca o último manejo anterior desse viveiro e preenche o formulário para você revisar.</span>
+  </div>
+  <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg" id="feed_offered_kg"></label>
+  <label>Ração consumida (kg)<input type="number" step="0.01" name="feed_consumed_kg" id="feed_consumed_kg"></label>
+  <label>Mortalidade (un)<input type="number" name="mortality_qty" id="mortality_qty"></label>
+  <label>Peso médio (g)<input type="number" step="0.01" name="average_weight_g" id="average_weight_g"></label>
+  <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg" id="estimated_biomass_kg"></label>
+  <label class="full">Observação<textarea name="notes" id="notes"></textarea></label>
   <div class="form-actions"><button type="submit">Salvar manejo</button></div>
 </form>
+<div id="copy-previous-message" class="copy-message" hidden></div>
 </section>
 <section class="panel">
 <div class="panel-head"><div><p class="panel-kicker">Últimos registros</p><h2>Histórico recente</h2></div></div>
 <div class="table-wrap">
 <table>
-<thead><tr><th>Data</th><th>Unidade</th><th>Ração ofertada (kg)</th><th>Mortalidade (un)</th><th>Peso médio (g)</th><th>Biomassa (kg)</th><th></th></tr></thead>
+<thead><tr><th>Data</th><th>Unidade</th><th>Ração ofertada (kg)</th><th>Ração consumida (kg)</th><th>Mortalidade (un)</th><th>Peso médio (g)</th><th>Biomassa (kg)</th><th></th></tr></thead>
 <tbody>
 {% for r in records %}
 <tr>
   <td>{{ r.manage_date|brdate }}</td>
   <td>{{ r.unit.name }}</td>
   <td>{{ r.feed_offered_kg }}</td>
+  <td>{{ r.feed_consumed_kg }}</td>
   <td>{{ r.mortality_qty }}</td>
   <td>{{ r.average_weight_g or '' }}</td>
   <td>{{ r.estimated_biomass_kg or '' }}</td>
@@ -65,4 +71,42 @@
 {% endif %}
 </section>
 </div>
+
+<script>
+const copyBtn = document.getElementById('copy-previous-btn');
+const messageBox = document.getElementById('copy-previous-message');
+if (copyBtn) {
+  copyBtn.addEventListener('click', async () => {
+    const unitId = document.getElementById('management_unit_id').value;
+    const manageDate = document.getElementById('manage_date').value;
+    messageBox.hidden = true;
+    copyBtn.disabled = true;
+    copyBtn.textContent = 'Buscando...';
+    try {
+      const response = await fetch(`{{ url_for('previous_management_data') }}?unit_id=${encodeURIComponent(unitId)}&manage_date=${encodeURIComponent(manageDate)}`);
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || 'Não foi possível copiar o manejo anterior.');
+      }
+      const data = payload.record;
+      document.getElementById('feed_offered_kg').value = data.feed_offered_kg ?? '';
+      document.getElementById('feed_consumed_kg').value = data.feed_consumed_kg ?? '';
+      document.getElementById('mortality_qty').value = data.mortality_qty ?? '';
+      document.getElementById('average_weight_g').value = data.average_weight_g ?? '';
+      document.getElementById('estimated_biomass_kg').value = data.estimated_biomass_kg ?? '';
+      document.getElementById('notes').value = data.notes ?? '';
+      messageBox.textContent = payload.message;
+      messageBox.className = 'copy-message success-message';
+      messageBox.hidden = false;
+    } catch (error) {
+      messageBox.textContent = error.message;
+      messageBox.className = 'copy-message error-message';
+      messageBox.hidden = false;
+    } finally {
+      copyBtn.disabled = false;
+      copyBtn.textContent = 'Repetir informações do dia anterior';
+    }
+  });
+}
+</script>
 {% endblock %}
