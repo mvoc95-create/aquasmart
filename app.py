@@ -1,8 +1,8 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 import os
 from functools import wraps
 
-from flask import Flask, abort, flash, redirect, render_template, request, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -35,6 +35,8 @@ TARGET_PH_MIN = float(os.getenv('TARGET_PH_MIN', '7.5'))
 TARGET_PH_MAX = float(os.getenv('TARGET_PH_MAX', '8.5'))
 TARGET_TEMP_MIN = float(os.getenv('TARGET_TEMP_MIN', '28'))
 TARGET_TEMP_MAX = float(os.getenv('TARGET_TEMP_MAX', '32'))
+TARGET_SALINITY_MIN = float(os.getenv('TARGET_SALINITY_MIN', '0'))
+TARGET_SALINITY_MAX = float(os.getenv('TARGET_SALINITY_MAX', '40'))
 
 ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@fazendaaquasmart.local')
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
@@ -127,6 +129,7 @@ class Lot(db.Model):
 class WaterMonitoring(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     monitor_date = db.Column(db.Date, nullable=False)
+    monitor_time = db.Column(db.Time)
     shift = db.Column(db.String(20), nullable=False)  # manha/tarde/noite
     unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'), nullable=False)
     lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
@@ -220,6 +223,13 @@ def shift_label(value):
     return {'manha': 'Manhã', 'tarde': 'Tarde', 'noite': 'Noite'}.get(value, value)
 
 
+@app.template_filter('brtime')
+def brtime_filter(value):
+    if not value:
+        return ''
+    return value.strftime('%H:%M')
+
+
 @app.template_filter('status_label')
 def status_label(value):
     return {'ativo': 'Ativo', 'encerrado': 'Encerrado'}.get(value, value)
@@ -239,6 +249,7 @@ def inject_layout_context():
         'current_endpoint': request.endpoint,
         'current_user_obj': current_user,
         'role_labels': ROLE_LABELS,
+        'can_manage_units': getattr(current_user, 'is_authenticated', False) and getattr(current_user, 'role', None) in {'admin', 'gerente'},
     }
 
 
@@ -258,6 +269,26 @@ def parse_date(value, default=None):
     if not value:
         return default
     return datetime.strptime(value, '%Y-%m-%d').date()
+
+
+def parse_time(value, default=None):
+    if not value:
+        return default
+    return datetime.strptime(value, '%H:%M').time()
+
+
+def combine_monitor_datetime(record):
+    return datetime.combine(record.monitor_date, record.monitor_time or time.min)
+
+
+def suggest_unit_code(name: str) -> str:
+    raw = ''.join(ch if ch.isalnum() else '_' for ch in (name or '').upper()).strip('_')
+    raw = '_'.join(part for part in raw.split('_') if part)
+    return raw[:50] or f'VIVEIRO_{int(datetime.utcnow().timestamp())}'
+
+
+def user_can_manage_units(user) -> bool:
+    return getattr(user, 'is_authenticated', False) and getattr(user, 'role', None) in {'admin', 'gerente'}
 
 
 def seed_units():
@@ -323,6 +354,13 @@ def run_lightweight_migrations():
     add_column_if_missing('created_at', f"ALTER TABLE user ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE "user" ADD COLUMN created_at TIMESTAMP')
     add_column_if_missing('is_active_user', 'ALTER TABLE user ADD COLUMN is_active_user BOOLEAN DEFAULT 1', 'ALTER TABLE "user" ADD COLUMN is_active_user BOOLEAN DEFAULT TRUE')
 
+    if 'water_monitoring' in tables:
+        water_columns = {col['name'] for col in inspector.get_columns('water_monitoring')}
+        if 'monitor_time' not in water_columns:
+            sql = 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME' if dialect == 'sqlite' else 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME'
+            with db.engine.begin() as conn:
+                conn.execute(text(sql))
+
 
 def init_db():
     with app.app_context():
@@ -337,7 +375,7 @@ def active_lot_for_unit(unit_id):
 
 
 def latest_water(unit_id):
-    return WaterMonitoring.query.filter_by(unit_id=unit_id).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.id.desc()).first()
+    return WaterMonitoring.query.filter_by(unit_id=unit_id).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.monitor_time.desc(), WaterMonitoring.id.desc()).first()
 
 
 def latest_mgmt(unit_id):
@@ -477,10 +515,33 @@ def index():
     return render_template('dashboard.html', data=dashboard_data())
 
 
-@app.route('/units')
+@app.route('/units', methods=['GET', 'POST'])
 @login_required
 @requires_permission('units_view')
 def units_page():
+    if request.method == 'POST':
+        if not user_can_manage_units(current_user):
+            abort(403)
+        name = request.form.get('name', '').strip()
+        if not name:
+            flash('Informe o nome do viveiro/unidade.', 'danger')
+            return redirect(url_for('units_page'))
+        code = (request.form.get('code') or '').strip().upper() or suggest_unit_code(name)
+        if Unit.query.filter(func.lower(Unit.code) == code.lower()).first():
+            flash('Já existe uma unidade com esse código.', 'danger')
+            return redirect(url_for('units_page'))
+        unit = Unit(
+            code=code,
+            name=name,
+            area_m2=float(request.form.get('area_m2') or 0),
+            phase=request.form.get('phase') or 'engorda',
+            structure_type=request.form.get('structure_type') or 'escavado',
+            active=bool(request.form.get('active', '1') == '1')
+        )
+        db.session.add(unit)
+        db.session.commit()
+        flash('Unidade cadastrada com sucesso.', 'success')
+        return redirect(url_for('units_page'))
     units = Unit.query.order_by(Unit.phase, Unit.name).all()
     return render_template('units.html', units=units)
 
@@ -518,6 +579,7 @@ def water_page():
         rec = WaterMonitoring(
             monitor_date=parse_date(request.form['monitor_date'], date.today()),
             shift=request.form['shift'],
+            monitor_time=parse_time(request.form.get('monitor_time')),
             unit_id=unit_id,
             lot_id=lot.id if lot else None,
             temperature_c=float(request.form['temperature_c']) if request.form.get('temperature_c') else None,
@@ -534,8 +596,10 @@ def water_page():
         flash('Monitoramento da água lançado.', 'success')
         return redirect(url_for('water_page'))
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
-    records = WaterMonitoring.query.order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.id.desc()).limit(50).all()
-    return render_template('water.html', units=units, records=records, today=date.today())
+    records = WaterMonitoring.query.order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.monitor_time.desc(), WaterMonitoring.id.desc()).limit(50).all()
+    edit_id = request.args.get('edit_id', type=int)
+    edit_record = db.session.get(WaterMonitoring, edit_id) if edit_id else None
+    return render_template('water.html', units=units, records=records, today=date.today(), edit_record=edit_record)
 
 
 @app.route('/management', methods=['GET', 'POST'])
@@ -562,7 +626,187 @@ def management_page():
         return redirect(url_for('management_page'))
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     records = DailyManagement.query.order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).limit(50).all()
-    return render_template('management.html', units=units, records=records, today=date.today())
+    edit_id = request.args.get('edit_id', type=int)
+    edit_record = db.session.get(DailyManagement, edit_id) if edit_id else None
+    return render_template('management.html', units=units, records=records, today=date.today(), edit_record=edit_record)
+
+
+@app.post('/water/<int:record_id>/edit')
+@login_required
+@requires_permission('water_manage')
+def edit_water_record(record_id):
+    rec = db.session.get(WaterMonitoring, record_id)
+    if not rec:
+        flash('Registro de água não encontrado.', 'warning')
+        return redirect(url_for('water_page'))
+    unit_id = int(request.form['unit_id'])
+    lot = active_lot_for_unit(unit_id)
+    rec.monitor_date = parse_date(request.form['monitor_date'], rec.monitor_date)
+    rec.shift = request.form['shift']
+    rec.monitor_time = parse_time(request.form.get('monitor_time'))
+    rec.unit_id = unit_id
+    rec.lot_id = lot.id if lot else None
+    rec.temperature_c = float(request.form['temperature_c']) if request.form.get('temperature_c') else None
+    rec.dissolved_oxygen = float(request.form['dissolved_oxygen']) if request.form.get('dissolved_oxygen') else None
+    rec.ph = float(request.form['ph']) if request.form.get('ph') else None
+    rec.salinity = float(request.form['salinity']) if request.form.get('salinity') else None
+    rec.transparency_cm = float(request.form['transparency_cm']) if request.form.get('transparency_cm') else None
+    rec.ammonia = float(request.form['ammonia']) if request.form.get('ammonia') else None
+    rec.nitrite = float(request.form['nitrite']) if request.form.get('nitrite') else None
+    rec.observation = request.form.get('observation')
+    db.session.commit()
+    flash('Registro de água atualizado.', 'success')
+    return redirect(url_for('water_page'))
+
+
+@app.post('/management/<int:record_id>/edit')
+@login_required
+@requires_permission('management_manage')
+def edit_management_record(record_id):
+    rec = db.session.get(DailyManagement, record_id)
+    if not rec:
+        flash('Registro de manejo não encontrado.', 'warning')
+        return redirect(url_for('management_page'))
+    unit_id = int(request.form['unit_id'])
+    lot = active_lot_for_unit(unit_id)
+    rec.manage_date = parse_date(request.form['manage_date'], rec.manage_date)
+    rec.unit_id = unit_id
+    rec.lot_id = lot.id if lot else None
+    rec.feed_offered_kg = float(request.form['feed_offered_kg'] or 0)
+    rec.feed_consumed_kg = float(request.form['feed_consumed_kg'] or 0)
+    rec.mortality_qty = int(request.form['mortality_qty'] or 0)
+    rec.average_weight_g = float(request.form['average_weight_g']) if request.form.get('average_weight_g') else None
+    rec.estimated_biomass_kg = float(request.form['estimated_biomass_kg']) if request.form.get('estimated_biomass_kg') else None
+    rec.notes = request.form.get('notes')
+    db.session.commit()
+    flash('Registro de manejo atualizado.', 'success')
+    return redirect(url_for('management_page'))
+
+
+@app.post('/water/<int:record_id>/delete')
+@login_required
+@requires_permission('water_manage')
+def delete_water_record(record_id):
+    rec = db.session.get(WaterMonitoring, record_id)
+    if not rec:
+        flash('Registro de água não encontrado.', 'warning')
+        return redirect(url_for('water_page'))
+    db.session.delete(rec)
+    db.session.commit()
+    flash('Registro de água excluído.', 'success')
+    return redirect(url_for('water_page'))
+
+
+@app.post('/management/<int:record_id>/delete')
+@login_required
+@requires_permission('management_manage')
+def delete_management_record(record_id):
+    rec = db.session.get(DailyManagement, record_id)
+    if not rec:
+        flash('Registro de manejo não encontrado.', 'warning')
+        return redirect(url_for('management_page'))
+    db.session.delete(rec)
+    db.session.commit()
+    flash('Registro de manejo excluído.', 'success')
+    return redirect(url_for('management_page'))
+
+
+def build_chart_thresholds():
+    return {
+        'dissolved_oxygen': {'label': 'OD mínimo ideal', 'min': TARGET_OD_MIN, 'max': None},
+        'ph': {'label': 'Faixa ideal de pH', 'min': TARGET_PH_MIN, 'max': TARGET_PH_MAX},
+        'temperature_c': {'label': 'Faixa ideal de temperatura', 'min': TARGET_TEMP_MIN, 'max': TARGET_TEMP_MAX},
+        'salinity': {'label': 'Faixa de salinidade alvo', 'min': TARGET_SALINITY_MIN, 'max': TARGET_SALINITY_MAX},
+    }
+
+
+
+
+def build_chart_meta():
+    return {
+        'water': {
+            'od': {'label': 'OD', 'unit': 'mg/L'},
+            'salinity': {'label': 'Salinidade', 'unit': '‰'},
+            'temperature': {'label': 'Temperatura', 'unit': '°C'},
+            'ph': {'label': 'pH', 'unit': ''},
+        },
+        'management': {
+            'feed_offered': {'label': 'Ração ofertada', 'unit': 'kg'},
+            'feed_consumed': {'label': 'Ração consumida', 'unit': 'kg'},
+            'mortality': {'label': 'Mortalidade', 'unit': 'un'},
+            'average_weight': {'label': 'Peso médio', 'unit': 'g'},
+        }
+    }
+
+def serialize_water_series(records, field):
+    pts = []
+    for r in records:
+        value = getattr(r, field)
+        if value is None:
+            continue
+        pts.append({
+            'x': combine_monitor_datetime(r).isoformat(),
+            'y': value,
+            'unit': r.unit.name if r.unit else '',
+            'shift': shift_label(r.shift),
+            'time': (r.monitor_time.strftime('%H:%M') if r.monitor_time else '--:--'),
+        })
+    return pts
+
+
+def serialize_management_series(records, field):
+    pts = []
+    for r in records:
+        value = getattr(r, field)
+        if value is None:
+            continue
+        pts.append({
+            'x': datetime.combine(r.manage_date, time.min).isoformat(),
+            'y': value,
+            'unit': r.unit.name if r.unit else '',
+        })
+    return pts
+
+
+@app.route('/charts')
+@login_required
+@requires_permission('dashboard')
+def charts_page():
+    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+    unit_id = request.args.get('unit_id', type=int)
+    days = request.args.get('days', default=30, type=int)
+    if days not in {7, 15, 30, 60, 90}:
+        days = 30
+    start_date = date.today() - timedelta(days=days - 1)
+
+    water_query = WaterMonitoring.query.join(Unit).filter(WaterMonitoring.monitor_date >= start_date)
+    mgmt_query = DailyManagement.query.join(Unit).filter(DailyManagement.manage_date >= start_date)
+    if unit_id:
+        water_query = water_query.filter(WaterMonitoring.unit_id == unit_id)
+        mgmt_query = mgmt_query.filter(DailyManagement.unit_id == unit_id)
+
+    water_records = water_query.order_by(WaterMonitoring.monitor_date.asc(), WaterMonitoring.monitor_time.asc(), WaterMonitoring.id.asc()).all()
+    mgmt_records = mgmt_query.order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()
+
+    selected_unit = db.session.get(Unit, unit_id) if unit_id else None
+    chart_data = {
+        'water': {
+            'od': serialize_water_series(water_records, 'dissolved_oxygen'),
+            'salinity': serialize_water_series(water_records, 'salinity'),
+            'temperature': serialize_water_series(water_records, 'temperature_c'),
+            'ph': serialize_water_series(water_records, 'ph'),
+        },
+        'management': {
+            'feed_offered': serialize_management_series(mgmt_records, 'feed_offered_kg'),
+            'feed_consumed': serialize_management_series(mgmt_records, 'feed_consumed_kg'),
+            'mortality': serialize_management_series(mgmt_records, 'mortality_qty'),
+            'average_weight': serialize_management_series(mgmt_records, 'average_weight_g'),
+        },
+        'thresholds': build_chart_thresholds(),
+        'meta': build_chart_meta(),
+    }
+
+    return render_template('charts.html', units=units, selected_unit=selected_unit, selected_unit_id=unit_id, days=days, chart_data=chart_data)
 
 
 @app.route('/transfers', methods=['GET', 'POST'])
