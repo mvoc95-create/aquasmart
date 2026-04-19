@@ -1,0 +1,136 @@
+{% extends 'base.html' %}
+{% block page_title %}Gráficos{% endblock %}
+{% block page_subtitle %}Acompanhe a evolução dos principais parâmetros ao longo do tempo, com filtro por viveiro e faixa ideal destacada.{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <div><p class="panel-kicker">Filtros</p><h2>Visualização por viveiro</h2></div>
+  </div>
+  <form method="get" class="form-grid compact-form">
+    <label>Viveiro/unidade
+      <select name="unit_id">
+        <option value="">Todos</option>
+        {% for u in units %}
+        <option value="{{ u.id }}" {% if selected_unit_id == u.id %}selected{% endif %}>{{ u.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Período
+      <select name="days">
+        {% for option in [7, 15, 30, 60, 90] %}
+        <option value="{{ option }}" {% if days == option %}selected{% endif %}>Últimos {{ option }} dias</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="form-actions"><button type="submit">Atualizar gráficos</button></div>
+  </form>
+  <p class="empty-state">Exibindo: <strong>{{ selected_unit.name if selected_unit else 'Todos os viveiros' }}</strong> · Período: <strong>{{ days }} dias</strong>.</p>
+</section>
+
+<div class="cards compact-cards">
+  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Água</p><h2>OD x tempo</h2></div></div><canvas id="chart-od"></canvas></section>
+  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Água</p><h2>Salinidade x tempo</h2></div></div><canvas id="chart-salinity"></canvas></section>
+  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Água</p><h2>Temperatura x tempo</h2></div></div><canvas id="chart-temperature"></canvas></section>
+  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Água</p><h2>pH x tempo</h2></div></div><canvas id="chart-ph"></canvas></section>
+</div>
+
+<div class="cards compact-cards">
+  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Manejo</p><h2>Ração ofertada x tempo</h2></div></div><canvas id="chart-feed-offered"></canvas></section>
+  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Manejo</p><h2>Ração consumida x tempo</h2></div></div><canvas id="chart-feed-consumed"></canvas></section>
+  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Manejo</p><h2>Mortalidade x tempo</h2></div></div><canvas id="chart-mortality"></canvas></section>
+  <section class="panel chart-panel"><div class="panel-head"><div><p class="panel-kicker">Manejo</p><h2>Peso médio x tempo</h2></div></div><canvas id="chart-average-weight"></canvas></section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+<script>
+const chartData = {{ chart_data|tojson }};
+
+function buildThresholdDatasets(points, threshold, label) {
+  if (!threshold || points.length === 0) return [];
+  const xs = points.map(p => p.x);
+  const datasets = [];
+  if (threshold.min !== null && threshold.min !== undefined) {
+    datasets.push({
+      label: threshold.max != null ? `${label} (mín)` : label,
+      data: xs.map(x => ({x, y: threshold.min})),
+      borderDash: [6, 6],
+      pointRadius: 0,
+      borderWidth: 1,
+      tension: 0,
+    });
+  }
+  if (threshold.max !== null && threshold.max !== undefined) {
+    datasets.push({
+      label: `${label} (máx)`,
+      data: xs.map(x => ({x, y: threshold.max})),
+      borderDash: [6, 6],
+      pointRadius: 0,
+      borderWidth: 1,
+      tension: 0,
+    });
+  }
+  return datasets;
+}
+
+function createLineChart(canvasId, points, label, unitLabel='', thresholdKey=null) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const fullLabel = unitLabel ? `${label} (${unitLabel})` : label;
+  const datasets = [{
+    label: fullLabel,
+    data: points,
+    parsing: false,
+    pointRadius: 3,
+    borderWidth: 2,
+    tension: 0.25,
+  }];
+  if (thresholdKey) {
+    const threshold = chartData.thresholds[thresholdKey];
+    datasets.push(...buildThresholdDatasets(points, threshold, threshold.label));
+  }
+  new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true },
+        tooltip: {
+          callbacks: {
+            afterBody(items) {
+              const raw = items[0]?.raw;
+              if (!raw) return '';
+              const extras = [];
+              if (raw.unit) extras.push(`Unidade: ${raw.unit}`);
+              if (raw.shift) extras.push(`Turno: ${raw.shift}`);
+              if (raw.time) extras.push(`Hora: ${raw.time}`);
+              return extras;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'time',
+          time: { tooltipFormat: 'dd/MM/yyyy HH:mm', displayFormats: { day: 'dd/MM', hour: 'dd/MM HH:mm' } }
+        },
+        y: {
+          title: { display: true, text: fullLabel }
+        }
+      }
+    }
+  });
+}
+
+createLineChart('chart-od', chartData.water.od, chartData.meta.water.od.label, chartData.meta.water.od.unit, 'dissolved_oxygen');
+createLineChart('chart-salinity', chartData.water.salinity, chartData.meta.water.salinity.label, chartData.meta.water.salinity.unit, 'salinity');
+createLineChart('chart-temperature', chartData.water.temperature, chartData.meta.water.temperature.label, chartData.meta.water.temperature.unit, 'temperature_c');
+createLineChart('chart-ph', chartData.water.ph, chartData.meta.water.ph.label, chartData.meta.water.ph.unit, 'ph');
+createLineChart('chart-feed-offered', chartData.management.feed_offered, chartData.meta.management.feed_offered.label, chartData.meta.management.feed_offered.unit);
+createLineChart('chart-feed-consumed', chartData.management.feed_consumed, chartData.meta.management.feed_consumed.label, chartData.meta.management.feed_consumed.unit);
+createLineChart('chart-mortality', chartData.management.mortality, chartData.meta.management.mortality.label, chartData.meta.management.mortality.unit);
+createLineChart('chart-average-weight', chartData.management.average_weight, chartData.meta.management.average_weight.label, chartData.meta.management.average_weight.unit);
+</script>
+{% endblock %}
