@@ -6,7 +6,7 @@ import re
 import unicodedata
 from functools import wraps
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -514,6 +514,70 @@ def extract_water_sheet_data_with_openai(file_bytes: bytes, filename: str, conte
     if not isinstance(readings, list):
         raise ValueError('Formato inválido retornado pela IA.')
     return readings
+
+
+def build_water_import_preview(readings, units, sheet_type: str, sheet_date: date):
+    preview_rows = []
+    warnings = []
+    seen_unknown_rows = []
+
+    for item in readings:
+        row_name = (item.get('row_name') or '').strip()
+        slot_label = (item.get('time') or '').strip()
+        if slot_label not in water_sheet_supported_times(sheet_type):
+            warnings.append(f"Horário ignorado por não fazer parte da ficha: {slot_label or 'vazio'}")
+            continue
+
+        values = {
+            'dissolved_oxygen': parse_float(item.get('dissolved_oxygen')) if item.get('dissolved_oxygen') is not None else None,
+            'temperature_c': parse_float(item.get('temperature_c')) if item.get('temperature_c') is not None else None,
+            'ph': parse_float(item.get('ph')) if item.get('ph') is not None else None,
+            'ammonia': parse_float(item.get('ammonia')) if item.get('ammonia') is not None else None,
+            'nitrite': parse_float(item.get('nitrite')) if item.get('nitrite') is not None else None,
+        }
+        if all(values.get(field) is None for field in ['dissolved_oxygen', 'temperature_c', 'ph', 'ammonia', 'nitrite']):
+            continue
+
+        unit = match_unit_from_sheet_row(row_name, units)
+        if not unit and row_name:
+            seen_unknown_rows.append(row_name)
+
+        slot_date = water_sheet_time_to_date(sheet_date, sheet_type, slot_label)
+        preview_rows.append({
+            'row_name': row_name,
+            'unit_id': unit.id if unit else '',
+            'unit_name': unit.name if unit else '',
+            'time': slot_label,
+            'monitor_date': slot_date.isoformat(),
+            'dissolved_oxygen': values['dissolved_oxygen'],
+            'temperature_c': values['temperature_c'],
+            'ph': values['ph'],
+            'ammonia': values['ammonia'],
+            'nitrite': values['nitrite'],
+            'selected': True,
+        })
+
+    if seen_unknown_rows:
+        warnings.append('Algumas linhas não bateram com os viveiros cadastrados: ' + ', '.join(sorted(set(seen_unknown_rows))))
+
+    return preview_rows, warnings
+
+
+def store_pending_water_import(sheet_type: str, sheet_date: date, preview_rows, warnings):
+    session['pending_water_import'] = {
+        'sheet_type': sheet_type,
+        'sheet_date': sheet_date.isoformat(),
+        'rows': preview_rows,
+        'warnings': warnings,
+    }
+
+
+def pop_pending_water_import():
+    return session.pop('pending_water_import', None)
+
+
+def get_pending_water_import():
+    return session.get('pending_water_import')
 
 
 def upsert_water_reading(unit_id: int, slot_date: date, slot_time, values: dict):
@@ -1155,52 +1219,87 @@ def import_water_sheet():
             sheet_date=sheet_date,
             units=units,
         )
+        preview_rows, warnings = build_water_import_preview(readings, units, sheet_type, sheet_date)
     except Exception as exc:
         flash(f'Não consegui ler a ficha automaticamente: {exc}', 'danger')
         return redirect(url_for('water_page'))
 
+    if not preview_rows:
+        flash('Não encontrei leituras válidas na ficha para montar a prévia.', 'warning')
+        return redirect(url_for('water_page'))
+
+    store_pending_water_import(sheet_type, sheet_date, preview_rows, warnings)
+    flash('Prévia da importação gerada. Confira os dados antes de confirmar.', 'success')
+    return redirect(url_for('water_page', show_import_preview=1))
+
+
+@app.post('/water/import-sheet/confirm')
+@login_required
+@requires_permission('water_manage')
+def confirm_import_water_sheet():
+    pending = get_pending_water_import()
+    if not pending:
+        flash('A prévia da importação expirou. Gere a leitura da ficha novamente.', 'warning')
+        return redirect(url_for('water_page'))
+
+    selected_indices = {int(value) for value in request.form.getlist('selected_indices') if str(value).isdigit()}
+    unit_ids = request.form.getlist('unit_id')
+    monitor_dates = request.form.getlist('monitor_date')
+    slot_times = request.form.getlist('time')
+    row_names = request.form.getlist('row_name')
+    oxygens = request.form.getlist('dissolved_oxygen')
+    temperatures = request.form.getlist('temperature_c')
+    ph_values = request.form.getlist('ph')
+    ammonias = request.form.getlist('ammonia')
+    nitrites = request.form.getlist('nitrite')
+
     created = 0
     updated = 0
     ignored = 0
-    unknown_rows = []
 
-    for item in readings:
-        row_name = (item.get('row_name') or '').strip()
-        slot_label = (item.get('time') or '').strip()
-        if slot_label not in water_sheet_supported_times(sheet_type):
-            ignored += 1
-            continue
-        unit = match_unit_from_sheet_row(row_name, units)
-        if not unit:
-            if row_name:
-                unknown_rows.append(row_name)
+    total_rows = len(slot_times)
+    for idx in range(total_rows):
+        if idx not in selected_indices:
             ignored += 1
             continue
 
-        slot_time = parse_time(slot_label)
-        slot_date = water_sheet_time_to_date(sheet_date, sheet_type, slot_label)
+        unit_id = parse_int(unit_ids[idx])
+        slot_time = parse_time(slot_times[idx])
+        monitor_date = parse_date(monitor_dates[idx], date.today())
+        if not unit_id or not slot_time:
+            ignored += 1
+            continue
+
         values = {
-            'dissolved_oxygen': parse_float(item.get('dissolved_oxygen')) if item.get('dissolved_oxygen') is not None else None,
-            'temperature_c': parse_float(item.get('temperature_c')) if item.get('temperature_c') is not None else None,
-            'ph': parse_float(item.get('ph')) if item.get('ph') is not None else None,
-            'ammonia': parse_float(item.get('ammonia')) if item.get('ammonia') is not None else None,
-            'nitrite': parse_float(item.get('nitrite')) if item.get('nitrite') is not None else None,
-            'observation': f'Importado de ficha {"diurna" if sheet_type == "day" else "noturna"} em {datetime.utcnow().strftime("%d/%m/%Y %H:%M")}',
+            'dissolved_oxygen': parse_float(oxygens[idx]),
+            'temperature_c': parse_float(temperatures[idx]),
+            'ph': parse_float(ph_values[idx]),
+            'ammonia': parse_float(ammonias[idx]),
+            'nitrite': parse_float(nitrites[idx]),
+            'observation': f'Importado de ficha {"diurna" if pending.get("sheet_type") == "day" else "noturna"} em {datetime.utcnow().strftime("%d/%m/%Y %H:%M")}',
         }
         if all(values.get(field) is None for field in ['dissolved_oxygen', 'temperature_c', 'ph', 'ammonia', 'nitrite']):
             ignored += 1
             continue
-        result = upsert_water_reading(unit.id, slot_date, slot_time, values)
+
+        result = upsert_water_reading(unit_id, monitor_date, slot_time, values)
         if result == 'created':
             created += 1
         else:
             updated += 1
 
     db.session.commit()
+    pop_pending_water_import()
+    flash(f'Importação confirmada. {created} leitura(s) criada(s), {updated} atualizada(s) e {ignored} ignorada(s).', 'success')
+    return redirect(url_for('water_page'))
 
-    if unknown_rows:
-        flash('Algumas linhas da ficha não bateram com os viveiros cadastrados: ' + ', '.join(sorted(set(unknown_rows))), 'warning')
-    flash(f'Importação concluída. {created} leitura(s) criada(s), {updated} atualizada(s) e {ignored} ignorada(s).', 'success')
+
+@app.post('/water/import-sheet/cancel')
+@login_required
+@requires_permission('water_manage')
+def cancel_import_water_sheet():
+    pop_pending_water_import()
+    flash('Prévia da importação cancelada.', 'warning')
     return redirect(url_for('water_page'))
 
 
