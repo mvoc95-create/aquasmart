@@ -28,7 +28,7 @@
 
       <nav class="nav-list">
         {% if current_user.is_authenticated and current_user.has_permission('dashboard') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'index' else '' }}" href="{{ url_for('index') }}">Painel operacional</a>
+        <a class="nav-link {{ 'active' if current_endpoint in ['index', 'dashboard_detail'] else '' }}" href="{{ url_for('index') }}">Painel operacional</a>
         <a class="nav-link {{ 'active' if current_endpoint == 'charts_page' else '' }}" href="{{ url_for('charts_page') }}">Gráficos</a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('units_view') %}

@@ -15,36 +15,36 @@
 </section>
 
 <div class="cards">
-  <div class="metric-card">
+  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='water-pending') }}">
     <span class="metric-label">Pendências de água</span>
     <strong>{{ data.water_pending }}</strong>
-    <small>Unidades com lote ativo sem leitura hoje</small>
-  </div>
-  <div class="metric-card danger">
+    <small>Unidades com lote ativo sem leitura hoje. Clique para abrir a lista.</small>
+  </a>
+  <a class="metric-card metric-link danger" href="{{ url_for('dashboard_detail', kind='water-alerts') }}">
     <span class="metric-label">Alertas de água hoje</span>
     <strong>{{ data.water_alerts }}</strong>
-    <small>OD, pH ou temperatura fora da faixa</small>
-  </div>
-  <div class="metric-card">
+    <small>Parâmetros fora da faixa. Clique para ver quais foram e em quais viveiros.</small>
+  </a>
+  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='management-pending') }}">
     <span class="metric-label">Pendências de manejo</span>
     <strong>{{ data.management_pending }}</strong>
-    <small>Lançamentos operacionais ainda faltando</small>
-  </div>
-  <div class="metric-card">
+    <small>Lançamentos operacionais ainda faltando. Clique para detalhar.</small>
+  </a>
+  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='nursery-ready') }}">
     <span class="metric-label">Berçários prontos</span>
     <strong>{{ data.nursery_ready|length }}</strong>
-    <small>Unidades elegíveis para transferência</small>
-  </div>
-  <div class="metric-card">
+    <small>Unidades elegíveis para transferência. Clique para ver os berçários.</small>
+  </a>
+  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='feed-stock') }}">
     <span class="metric-label">Estoque de ração</span>
     <strong>{{ data.feed_stock_kg }} kg</strong>
-    <small>Saldo consolidado do estoque</small>
-  </div>
-  <div class="metric-card">
+    <small>Saldo consolidado do estoque. Clique para abrir o detalhamento.</small>
+  </a>
+  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='feed-coverage') }}">
     <span class="metric-label">Cobertura de ração</span>
     <strong>{{ data.feed_coverage_days if data.feed_coverage_days is not none else 'N/D' }} dias</strong>
-    <small>Com base na média recente de oferta</small>
-  </div>
+    <small>Com base na média recente de oferta. Clique para ver a conta.</small>
+  </a>
 </div>
 
 <div class="grid-2">
@@ -72,10 +72,10 @@
     {% if data.nursery_ready %}
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Berçário</th><th>Lote</th><th>Dias</th></tr></thead>
+        <thead><tr><th>Berçário</th><th>Lote</th><th>Início</th><th>Dias</th></tr></thead>
         <tbody>
-        {% for name, lot, days in data.nursery_ready %}
-          <tr><td>{{ name }}</td><td>{{ lot }}</td><td>{{ days }}</td></tr>
+        {% for item in data.nursery_ready %}
+          <tr><td>{{ item.unit_name }}</td><td>{{ item.lot_code }}</td><td>{{ item.start_date|brdate }}</td><td>{{ item.days }}</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -114,6 +114,21 @@
       {% endfor %}
       </tbody>
     </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <p class="panel-kicker">Legenda do semáforo</p>
+      <h2>Como interpretar as cores</h2>
+    </div>
+  </div>
+  <div class="status-legend">
+    <div class="legend-item"><span class="badge verde">VERDE</span><div><strong>Operação em dia</strong><small>Lote ativo com rotina regular e sem alerta de parâmetro.</small></div></div>
+    <div class="legend-item"><span class="badge amarelo">AMARELO</span><div><strong>Atenção</strong><small>Pendência operacional, como água ou manejo faltando, ou berçário pronto para transferência.</small></div></div>
+    <div class="legend-item"><span class="badge vermelho">VERMELHO</span><div><strong>Fora da faixa</strong><small>Pelo menos um parâmetro de água está fora da referência configurada.</small></div></div>
+    <div class="legend-item"><span class="badge cinza">CINZA</span><div><strong>Sem lote</strong><small>Unidade sem lote ativo no momento.</small></div></div>
   </div>
 </section>
 {% endblock %}

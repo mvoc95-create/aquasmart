@@ -1,0 +1,181 @@
+{% extends 'base.html' %}
+{% block page_title %}{{ title }}{% endblock %}
+{% block page_subtitle %}{{ subtitle }}{% endblock %}
+{% block content %}
+<section class="hero-panel">
+  <div>
+    <p class="hero-kicker">Detalhamento</p>
+    <h2>{{ title }}</h2>
+    <p class="hero-text">{{ subtitle }}</p>
+  </div>
+  <div class="hero-meta">
+    <div><span>Data base</span><strong>{{ today|brdate }}</strong></div>
+    <div><span>Total</span><strong>{{ metric_value }}</strong><small>{{ metric_suffix }}</small></div>
+  </div>
+</section>
+
+<div class="panel-actions-row">
+  <a class="secondary-link-button" href="{{ url_for('index') }}">← Voltar ao painel</a>
+</div>
+
+{% if kind == 'water-pending' %}
+<section class="panel">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Unidade</th><th>Fase</th><th>Lote</th><th>Última água</th><th>Observação</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.unit_name }}</td>
+          <td>{{ row.phase_label }}</td>
+          <td>{{ row.lot_code }}</td>
+          <td>{% if row.last_water_date %}{{ row.last_water_date|brdate }} / {{ row.last_water_shift }}{% else %}—{% endif %}</td>
+          <td>{{ row.observation }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty-cell">Nenhuma pendência de água hoje.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% elif kind == 'water-alerts' %}
+<section class="panel">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Unidade</th><th>Lote</th><th>Data</th><th>Hora</th><th>Turno</th><th>Parâmetro</th><th>Leitura</th><th>Referência</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.unit_name }}</td>
+          <td>{{ row.lot_code }}</td>
+          <td>{{ row.monitor_date|brdate }}</td>
+          <td>{{ row.monitor_time|brtime or '--:--' }}</td>
+          <td>{{ row.shift_label }}</td>
+          <td>{{ row.parameter_label }}</td>
+          <td>{{ row.reading_value }}</td>
+          <td>{{ row.reference_text }}</td>
+          <td>{{ row.message }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="empty-cell">Nenhum alerta de água hoje.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% elif kind == 'management-pending' %}
+<section class="panel">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Unidade</th><th>Fase</th><th>Lote</th><th>Último manejo</th><th>Observação</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.unit_name }}</td>
+          <td>{{ row.phase_label }}</td>
+          <td>{{ row.lot_code }}</td>
+          <td>{{ row.last_management_date|brdate if row.last_management_date else '—' }}</td>
+          <td>{{ row.observation }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty-cell">Nenhuma pendência de manejo hoje.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% elif kind == 'nursery-ready' %}
+<section class="panel">
+  <p class="empty-state compact-state">Meta atual para prontidão: <strong>{{ target_nursery_days }} dias</strong>.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Berçário</th><th>Lote</th><th>Data de início</th><th>Dias acumulados</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.unit_name }}</td>
+          <td>{{ row.lot_code }}</td>
+          <td>{{ row.start_date|brdate }}</td>
+          <td>{{ row.days }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty-cell">Nenhum berçário pronto no momento.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% elif kind == 'feed-stock' %}
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Saldo por item</p><h2>Estoque consolidado</h2></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Ração</th><th>Saldo (kg)</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr><td>{{ row.feed_name }}</td><td>{{ row.stock_kg }}</td></tr>
+        {% else %}
+        <tr><td colspan="2" class="empty-cell">Nenhum movimento de ração lançado ainda.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos movimentos</h2></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Ração</th><th>Tipo</th><th>Quantidade (kg)</th><th>Observação</th></tr></thead>
+      <tbody>
+        {% for item in movement_rows %}
+        <tr>
+          <td>{{ item.movement_date|brdate }}</td>
+          <td>{{ item.feed_name }}</td>
+          <td>{{ item.movement_type|title }}</td>
+          <td>{{ item.quantity_kg }}</td>
+          <td>{{ item.notes or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty-cell">Nenhum movimento registrado.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% elif kind == 'feed-coverage' %}
+<div class="cards compact-cards">
+  <div class="metric-card">
+    <span class="metric-label">Estoque atual</span>
+    <strong>{{ feed_stock_kg }} kg</strong>
+    <small>Saldo consolidado no estoque.</small>
+  </div>
+  <div class="metric-card">
+    <span class="metric-label">Média recente de oferta</span>
+    <strong>{{ avg_daily_feed_kg }} kg/dia</strong>
+    <small>Média dos últimos 7 dias de manejo.</small>
+  </div>
+</div>
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Base do cálculo</p><h2>Manejos usados na média recente</h2></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Unidade</th><th>Lote</th><th>Ração ofertada (kg)</th><th>Ração consumida (kg)</th></tr></thead>
+      <tbody>
+        {% for item in rows %}
+        <tr>
+          <td>{{ item.manage_date|brdate }}</td>
+          <td>{{ item.unit.name if item.unit else '—' }}</td>
+          <td>{{ item.lot.lot_code if item.lot else 'Sem lote' }}</td>
+          <td>{{ item.feed_offered_kg }}</td>
+          <td>{{ item.feed_consumed_kg }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty-cell">Ainda não há lançamentos suficientes para calcular cobertura.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

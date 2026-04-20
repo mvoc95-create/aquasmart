@@ -1,7 +1,46 @@
 {% extends 'base.html' %}
 {% block page_title %}Monitoramento da água{% endblock %}
-{% block page_subtitle %}Agora você pode lançar várias leituras do mesmo viveiro na mesma tela, o que ajuda bastante quando registra toda a manhã ou toda a noite de uma vez.{% endblock %}
+{% block page_subtitle %}Agora você pode lançar várias leituras do mesmo viveiro na mesma tela, ajustar as faixas de referência e acompanhar o histórico mais rápido.{% endblock %}
 {% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <p class="panel-kicker">Faixas de referência</p>
+      <h2>Parâmetros que alimentam os alertas do painel</h2>
+    </div>
+  </div>
+  <p class="empty-state compact-state">Tudo que estiver fora dessas faixas pode aparecer em <strong>alertas de água</strong> no painel operacional.</p>
+  <form method="post" action="{{ url_for('update_water_reference_ranges', unit_id=selected_unit_id) }}" class="form-grid reference-grid">
+    <label>OD mín. (mg/L)<input type="number" step="0.01" name="od_min" value="{{ reference_config.od_min if reference_config.od_min is not none else '' }}"></label>
+    <label>OD máx. (mg/L)<input type="number" step="0.01" name="od_max" value="{{ reference_config.od_max if reference_config.od_max is not none else '' }}"></label>
+    <label>pH mín.<input type="number" step="0.01" name="ph_min" value="{{ reference_config.ph_min if reference_config.ph_min is not none else '' }}"></label>
+    <label>pH máx.<input type="number" step="0.01" name="ph_max" value="{{ reference_config.ph_max if reference_config.ph_max is not none else '' }}"></label>
+    <label>Temperatura mín. (°C)<input type="number" step="0.01" name="temperature_min" value="{{ reference_config.temperature_min if reference_config.temperature_min is not none else '' }}"></label>
+    <label>Temperatura máx. (°C)<input type="number" step="0.01" name="temperature_max" value="{{ reference_config.temperature_max if reference_config.temperature_max is not none else '' }}"></label>
+    <label>Salinidade mín. (‰)<input type="number" step="0.01" name="salinity_min" value="{{ reference_config.salinity_min if reference_config.salinity_min is not none else '' }}"></label>
+    <label>Salinidade máx. (‰)<input type="number" step="0.01" name="salinity_max" value="{{ reference_config.salinity_max if reference_config.salinity_max is not none else '' }}"></label>
+    <label>Transparência mín. (cm)<input type="number" step="0.01" name="transparency_min" value="{{ reference_config.transparency_min if reference_config.transparency_min is not none else '' }}"></label>
+    <label>Transparência máx. (cm)<input type="number" step="0.01" name="transparency_max" value="{{ reference_config.transparency_max if reference_config.transparency_max is not none else '' }}"></label>
+    <label>Amônia mín. (mg/L)<input type="number" step="0.01" name="ammonia_min" value="{{ reference_config.ammonia_min if reference_config.ammonia_min is not none else '' }}"></label>
+    <label>Amônia máx. (mg/L)<input type="number" step="0.01" name="ammonia_max" value="{{ reference_config.ammonia_max if reference_config.ammonia_max is not none else '' }}"></label>
+    <label>Nitrito mín. (mg/L)<input type="number" step="0.01" name="nitrite_min" value="{{ reference_config.nitrite_min if reference_config.nitrite_min is not none else '' }}"></label>
+    <label>Nitrito máx. (mg/L)<input type="number" step="0.01" name="nitrite_max" value="{{ reference_config.nitrite_max if reference_config.nitrite_max is not none else '' }}"></label>
+    <div class="form-actions action-row-between full">
+      <button type="submit">Salvar faixas de referência</button>
+      <span class="inline-hint">Última atualização: {{ reference_config.updated_at.strftime('%d/%m/%Y %H:%M') if reference_config.updated_at else '—' }}</span>
+    </div>
+  </form>
+
+  <div class="reference-summary-grid">
+    {% for item in reference_summary %}
+    <div class="reference-summary-card">
+      <strong>{{ item.label }}</strong>
+      <small>{{ item.range_text }}</small>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
 <div class="grid-2 water-grid-layout">
 <section class="panel">
   <div class="panel-head"><div><p class="panel-kicker">Lançamento em lote</p><h2>Vários horários na mesma tela</h2></div></div>
