@@ -13,6 +13,7 @@ from flask_login import (
 )
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import case, func, inspect, text
+from sqlalchemy.orm import joinedload
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 import io
@@ -40,6 +41,19 @@ TARGET_TEMP_MIN = float(os.getenv('TARGET_TEMP_MIN', '28'))
 TARGET_TEMP_MAX = float(os.getenv('TARGET_TEMP_MAX', '32'))
 TARGET_SALINITY_MIN = float(os.getenv('TARGET_SALINITY_MIN', '0'))
 TARGET_SALINITY_MAX = float(os.getenv('TARGET_SALINITY_MAX', '40'))
+TARGET_AMMONIA_MAX = float(os.getenv('TARGET_AMMONIA_MAX', '0.5'))
+TARGET_NITRITE_MAX = float(os.getenv('TARGET_NITRITE_MAX', '1.0'))
+
+
+def optional_env_float(name: str, default=None):
+    value = os.getenv(name)
+    if value in (None, ''):
+        return default
+    return float(value)
+
+
+TARGET_TRANSPARENCY_MIN = optional_env_float('TARGET_TRANSPARENCY_MIN')
+TARGET_TRANSPARENCY_MAX = optional_env_float('TARGET_TRANSPARENCY_MAX')
 
 ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@fazendaaquasmart.local')
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
@@ -189,6 +203,27 @@ class FarmDocument(db.Model):
     uploaded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     uploaded_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     uploaded_by = db.relationship('User', foreign_keys=[uploaded_by_id])
+
+
+class WaterReferenceConfig(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    od_min = db.Column(db.Float, default=TARGET_OD_MIN)
+    od_max = db.Column(db.Float)
+    ph_min = db.Column(db.Float, default=TARGET_PH_MIN)
+    ph_max = db.Column(db.Float, default=TARGET_PH_MAX)
+    temperature_min = db.Column(db.Float, default=TARGET_TEMP_MIN)
+    temperature_max = db.Column(db.Float, default=TARGET_TEMP_MAX)
+    salinity_min = db.Column(db.Float, default=TARGET_SALINITY_MIN)
+    salinity_max = db.Column(db.Float, default=TARGET_SALINITY_MAX)
+    transparency_min = db.Column(db.Float, default=TARGET_TRANSPARENCY_MIN)
+    transparency_max = db.Column(db.Float, default=TARGET_TRANSPARENCY_MAX)
+    ammonia_min = db.Column(db.Float)
+    ammonia_max = db.Column(db.Float, default=TARGET_AMMONIA_MAX)
+    nitrite_min = db.Column(db.Float)
+    nitrite_max = db.Column(db.Float, default=TARGET_NITRITE_MAX)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
 
 
 class Transfer(db.Model):
@@ -342,6 +377,74 @@ def allowed_protocol_file(filename: str) -> bool:
 def batch_monitor_slots():
     return ['00:00', '02:00', '04:00', '07:00', '16:00', '18:00']
 
+
+WATER_PARAMETER_SPECS = [
+    {
+        'field': 'dissolved_oxygen',
+        'label': 'OD',
+        'unit': 'mg/L',
+        'min_attr': 'od_min',
+        'max_attr': 'od_max',
+        'short_status_low': 'OD baixo',
+        'short_status_high': 'OD alto',
+    },
+    {
+        'field': 'ph',
+        'label': 'pH',
+        'unit': '',
+        'min_attr': 'ph_min',
+        'max_attr': 'ph_max',
+        'short_status_low': 'pH baixo',
+        'short_status_high': 'pH alto',
+    },
+    {
+        'field': 'temperature_c',
+        'label': 'Temperatura',
+        'unit': '°C',
+        'min_attr': 'temperature_min',
+        'max_attr': 'temperature_max',
+        'short_status_low': 'temperatura baixa',
+        'short_status_high': 'temperatura alta',
+    },
+    {
+        'field': 'salinity',
+        'label': 'Salinidade',
+        'unit': '‰',
+        'min_attr': 'salinity_min',
+        'max_attr': 'salinity_max',
+        'short_status_low': 'salinidade baixa',
+        'short_status_high': 'salinidade alta',
+    },
+    {
+        'field': 'transparency_cm',
+        'label': 'Transparência',
+        'unit': 'cm',
+        'min_attr': 'transparency_min',
+        'max_attr': 'transparency_max',
+        'short_status_low': 'transparência baixa',
+        'short_status_high': 'transparência alta',
+    },
+    {
+        'field': 'ammonia',
+        'label': 'Amônia',
+        'unit': 'mg/L',
+        'min_attr': 'ammonia_min',
+        'max_attr': 'ammonia_max',
+        'short_status_low': 'amônia baixa',
+        'short_status_high': 'amônia alta',
+    },
+    {
+        'field': 'nitrite',
+        'label': 'Nitrito',
+        'unit': 'mg/L',
+        'min_attr': 'nitrite_min',
+        'max_attr': 'nitrite_max',
+        'short_status_low': 'nitrito baixo',
+        'short_status_high': 'nitrito alto',
+    },
+]
+
+
 def parse_float(value, default=None):
     if value is None:
         return default
@@ -372,6 +475,129 @@ def suggest_unit_code(name: str) -> str:
 
 def user_can_manage_units(user) -> bool:
     return getattr(user, 'is_authenticated', False) and getattr(user, 'role', None) in {'admin', 'gerente'}
+
+
+def format_reference_range(min_value, max_value, unit=''):
+    def fmt(value):
+        if value is None:
+            return None
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(round(value, 2)).replace('.', ',')
+
+    unit_suffix = f' {unit}' if unit else ''
+    if min_value is not None and max_value is not None:
+        return f'{fmt(min_value)} a {fmt(max_value)}{unit_suffix}'
+    if min_value is not None:
+        return f'Mín. {fmt(min_value)}{unit_suffix}'
+    if max_value is not None:
+        return f'Máx. {fmt(max_value)}{unit_suffix}'
+    return 'Sem faixa definida'
+
+
+def format_parameter_value(value):
+    if value is None:
+        return ''
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(round(value, 2)).replace('.', ',')
+
+
+def get_water_reference_config():
+    config = WaterReferenceConfig.query.order_by(WaterReferenceConfig.id.asc()).first()
+    if config:
+        return config
+
+    config = WaterReferenceConfig(
+        od_min=TARGET_OD_MIN,
+        ph_min=TARGET_PH_MIN,
+        ph_max=TARGET_PH_MAX,
+        temperature_min=TARGET_TEMP_MIN,
+        temperature_max=TARGET_TEMP_MAX,
+        salinity_min=TARGET_SALINITY_MIN,
+        salinity_max=TARGET_SALINITY_MAX,
+        transparency_min=TARGET_TRANSPARENCY_MIN,
+        transparency_max=TARGET_TRANSPARENCY_MAX,
+        ammonia_max=TARGET_AMMONIA_MAX,
+        nitrite_max=TARGET_NITRITE_MAX,
+    )
+    db.session.add(config)
+    db.session.commit()
+    return config
+
+
+def water_alerts_for_record(rec, config=None):
+    if not rec:
+        return []
+    config = config or get_water_reference_config()
+    alerts = []
+    for spec in WATER_PARAMETER_SPECS:
+        value = getattr(rec, spec['field'])
+        if value is None:
+            continue
+        min_value = getattr(config, spec['min_attr'])
+        max_value = getattr(config, spec['max_attr'])
+        if min_value is not None and value < min_value:
+            alerts.append({
+                'field': spec['field'],
+                'label': spec['label'],
+                'unit': spec['unit'],
+                'value': value,
+                'value_label': format_parameter_value(value),
+                'min_value': min_value,
+                'max_value': max_value,
+                'reference_text': format_reference_range(min_value, max_value, spec['unit']),
+                'direction': 'low',
+                'message': spec['short_status_low'],
+            })
+        elif max_value is not None and value > max_value:
+            alerts.append({
+                'field': spec['field'],
+                'label': spec['label'],
+                'unit': spec['unit'],
+                'value': value,
+                'value_label': format_parameter_value(value),
+                'min_value': min_value,
+                'max_value': max_value,
+                'reference_text': format_reference_range(min_value, max_value, spec['unit']),
+                'direction': 'high',
+                'message': spec['short_status_high'],
+            })
+    return alerts
+
+
+def build_water_alert_rows(records, config=None):
+    config = config or get_water_reference_config()
+    rows = []
+    for record in records:
+        alerts = water_alerts_for_record(record, config)
+        for alert in alerts:
+            rows.append({
+                'unit_name': record.unit.name if record.unit else 'Sem unidade',
+                'phase_label': phase_label(record.unit.phase) if record.unit else '',
+                'lot_code': record.lot.lot_code if record.lot else 'Sem lote',
+                'monitor_date': record.monitor_date,
+                'monitor_time': record.monitor_time,
+                'shift_label': shift_label(record.shift),
+                'parameter_label': alert['label'],
+                'reading_value': f"{alert['value_label']} {alert['unit']}".strip(),
+                'reference_text': alert['reference_text'],
+                'message': alert['message'],
+            })
+    rows.sort(key=lambda row: (row['monitor_date'], row['monitor_time'] or time.min, row['unit_name'], row['parameter_label']), reverse=True)
+    return rows
+
+
+def build_reference_summary(config=None):
+    config = config or get_water_reference_config()
+    summary = []
+    for spec in WATER_PARAMETER_SPECS:
+        summary.append({
+            'label': spec['label'],
+            'unit': spec['unit'],
+            'range_text': format_reference_range(getattr(config, spec['min_attr']), getattr(config, spec['max_attr']), spec['unit']),
+        })
+    return summary
 
 
 def seed_units():
@@ -418,11 +644,18 @@ def seed_admin_user():
 def run_lightweight_migrations():
     """Creates missing tables and columns without Alembic for easier setup by non-technical users."""
     inspector = inspect(db.engine)
-    tables = inspector.get_table_names()
+    tables = set(inspector.get_table_names())
+    dialect = db.engine.dialect.name
+
+    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig):
+        table_name = model.__table__.name
+        if table_name not in tables:
+            model.__table__.create(bind=db.engine)
+            tables.add(table_name)
+
     if 'user' not in tables:
         return
     columns = {col['name'] for col in inspector.get_columns('user')}
-    dialect = db.engine.dialect.name
 
     def add_column_if_missing(name: str, sql_sqlite: str, sql_pg: str | None = None):
         if name in columns:
@@ -440,7 +673,7 @@ def run_lightweight_migrations():
     if 'water_monitoring' in tables:
         water_columns = {col['name'] for col in inspector.get_columns('water_monitoring')}
         if 'monitor_time' not in water_columns:
-            sql = 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME' if dialect == 'sqlite' else 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME'
+            sql = 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME'
             with db.engine.begin() as conn:
                 conn.execute(text(sql))
 
@@ -451,6 +684,7 @@ def init_db():
         run_lightweight_migrations()
         seed_units()
         seed_admin_user()
+        get_water_reference_config()
 
 
 def active_lot_for_unit(unit_id):
@@ -465,36 +699,22 @@ def latest_mgmt(unit_id):
     return DailyManagement.query.filter_by(unit_id=unit_id).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).first()
 
 
-def water_status(rec):
+def water_status(rec, config=None):
     if not rec:
         return 'sem leitura'
-    alerts = []
-    if rec.dissolved_oxygen is not None and rec.dissolved_oxygen < TARGET_OD_MIN:
-        alerts.append('OD baixo')
-    if rec.ph is not None and (rec.ph < TARGET_PH_MIN or rec.ph > TARGET_PH_MAX):
-        alerts.append('pH fora')
-    if rec.temperature_c is not None and (rec.temperature_c < TARGET_TEMP_MIN or rec.temperature_c > TARGET_TEMP_MAX):
-        alerts.append('temperatura fora')
-    return ' | '.join(alerts) if alerts else 'ok'
+    alerts = water_alerts_for_record(rec, config)
+    return ' | '.join(alert['message'] for alert in alerts) if alerts else 'ok'
 
 
 def dashboard_data():
     today = date.today()
+    config = get_water_reference_config()
     units = Unit.query.filter_by(active=True).order_by(Unit.phase, Unit.name).all()
 
-    water_today_unit_ids = {u for (u,) in db.session.query(WaterMonitoring.unit_id).filter(WaterMonitoring.monitor_date == today).distinct().all()}
+    water_today_records = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit), joinedload(WaterMonitoring.lot)).filter(WaterMonitoring.monitor_date == today).all()
+    water_today_unit_ids = {record.unit_id for record in water_today_records}
     mgmt_today_unit_ids = {u for (u,) in db.session.query(DailyManagement.unit_id).filter(DailyManagement.manage_date == today).distinct().all()}
-
-    water_alerts = db.session.query(WaterMonitoring).filter(
-        WaterMonitoring.monitor_date == today,
-        db.or_(
-            WaterMonitoring.dissolved_oxygen < TARGET_OD_MIN,
-            WaterMonitoring.ph < TARGET_PH_MIN,
-            WaterMonitoring.ph > TARGET_PH_MAX,
-            WaterMonitoring.temperature_c < TARGET_TEMP_MIN,
-            WaterMonitoring.temperature_c > TARGET_TEMP_MAX,
-        )
-    ).count()
+    water_alert_rows = build_water_alert_rows(water_today_records, config)
 
     nursery_ready = []
     semaforo = []
@@ -508,18 +728,25 @@ def dashboard_data():
             if unit.phase == 'bercario':
                 days = (today - lot.start_date).days
                 if days >= TARGET_NURSERY_DAYS:
-                    nursery_ready.append((unit.name, lot.lot_code, days))
+                    nursery_ready.append({
+                        'unit_name': unit.name,
+                        'lot_code': lot.lot_code,
+                        'days': days,
+                        'start_date': lot.start_date,
+                    })
                     status = 'amarelo'
                     reasons.append('pronto p/ transferência')
-            current_water_status = water_status(water)
+            current_water_status = water_status(water, config)
             if current_water_status != 'ok':
                 status = 'vermelho'
                 reasons.append(current_water_status)
             if unit.id not in water_today_unit_ids:
-                status = 'amarelo' if status != 'vermelho' else status
+                if status != 'vermelho':
+                    status = 'amarelo'
                 reasons.append('sem água hoje')
             if unit.id not in mgmt_today_unit_ids:
-                status = 'amarelo' if status != 'vermelho' else status
+                if status != 'vermelho':
+                    status = 'amarelo'
                 reasons.append('sem manejo hoje')
         else:
             status = 'cinza'
@@ -530,7 +757,7 @@ def dashboard_data():
             'status': status,
             'water': water,
             'mgmt': mgmt,
-            'reasons': ', '.join(reasons)
+            'reasons': ', '.join(dict.fromkeys(reasons)),
         })
 
     total_stock = db.session.query(
@@ -546,11 +773,14 @@ def dashboard_data():
         'units': units,
         'water_pending': sum(1 for s in semaforo if s['lot'] and s['unit'].id not in water_today_unit_ids),
         'management_pending': sum(1 for s in semaforo if s['lot'] and s['unit'].id not in mgmt_today_unit_ids),
-        'water_alerts': water_alerts,
+        'water_alerts': len(water_alert_rows),
+        'water_alert_rows': water_alert_rows,
         'nursery_ready': nursery_ready,
         'feed_stock_kg': round(total_stock, 1),
         'feed_coverage_days': feed_coverage,
+        'avg_daily_feed_kg': round(avg_daily_feed, 1),
         'semaforo': semaforo,
+        'reference_summary': build_reference_summary(config),
     }
 
 
@@ -596,6 +826,83 @@ def logout():
 @requires_permission('dashboard')
 def index():
     return render_template('dashboard.html', data=dashboard_data())
+
+
+@app.get('/dashboard/detail/<kind>')
+@login_required
+@requires_permission('dashboard')
+def dashboard_detail(kind):
+    data = dashboard_data()
+    today = data['today']
+
+    if kind == 'water-pending':
+        rows = []
+        for row in data['semaforo']:
+            if row['lot'] and 'sem água hoje' in row['reasons']:
+                rows.append({
+                    'unit_name': row['unit'].name,
+                    'phase_label': phase_label(row['unit'].phase),
+                    'lot_code': row['lot'].lot_code,
+                    'last_water_date': row['water'].monitor_date if row['water'] else None,
+                    'last_water_shift': shift_label(row['water'].shift) if row['water'] else '—',
+                    'observation': 'Sem leitura lançada hoje',
+                })
+        return render_template('dashboard_detail.html', kind=kind, title='Pendências de água', subtitle='Unidades com lote ativo e sem leitura registrada hoje.', metric_value=len(rows), metric_suffix='unidades', rows=rows, today=today)
+
+    if kind == 'water-alerts':
+        return render_template('dashboard_detail.html', kind=kind, title='Alertas de água do dia', subtitle='Detalhe dos parâmetros fora da faixa e em qual viveiro isso aconteceu.', metric_value=len(data['water_alert_rows']), metric_suffix='alertas', rows=data['water_alert_rows'], today=today)
+
+    if kind == 'management-pending':
+        rows = []
+        for row in data['semaforo']:
+            if row['lot'] and 'sem manejo hoje' in row['reasons']:
+                rows.append({
+                    'unit_name': row['unit'].name,
+                    'phase_label': phase_label(row['unit'].phase),
+                    'lot_code': row['lot'].lot_code,
+                    'last_management_date': row['mgmt'].manage_date if row['mgmt'] else None,
+                    'observation': 'Sem lançamento operacional hoje',
+                })
+        return render_template('dashboard_detail.html', kind=kind, title='Pendências de manejo', subtitle='Unidades com lote ativo e sem lançamento de manejo no dia.', metric_value=len(rows), metric_suffix='unidades', rows=rows, today=today)
+
+    if kind == 'nursery-ready':
+        rows = data['nursery_ready']
+        return render_template('dashboard_detail.html', kind=kind, title='Berçários prontos para transferência', subtitle='Berçários que já atingiram a meta configurada para saída à engorda.', metric_value=len(rows), metric_suffix='berçários', rows=rows, today=today, target_nursery_days=TARGET_NURSERY_DAYS)
+
+    if kind == 'feed-stock':
+        all_movements = FeedInventory.query.order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).all()
+        grouped = {}
+        for movement in all_movements:
+            grouped.setdefault(movement.feed_name, 0)
+            grouped[movement.feed_name] += movement.quantity_kg if movement.movement_type == 'entrada' else -movement.quantity_kg
+        stock_rows = [{'feed_name': name, 'stock_kg': round(value, 1)} for name, value in sorted(grouped.items())]
+        movement_rows = all_movements[:100]
+        return render_template('dashboard_detail.html', kind=kind, title='Estoque de ração', subtitle='Saldo consolidado por tipo de ração e últimos movimentos lançados.', metric_value=data['feed_stock_kg'], metric_suffix='kg', rows=stock_rows, movement_rows=movement_rows, today=today)
+
+    if kind == 'feed-coverage':
+        recent_management = DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.lot)).filter(DailyManagement.manage_date >= today - timedelta(days=7)).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).all()
+        return render_template('dashboard_detail.html', kind=kind, title='Cobertura de ração', subtitle='Estimativa baseada no estoque atual e na média recente de oferta de ração.', metric_value=data['feed_coverage_days'] if data['feed_coverage_days'] is not None else 'N/D', metric_suffix='dias', rows=recent_management, today=today, avg_daily_feed_kg=data['avg_daily_feed_kg'], feed_stock_kg=data['feed_stock_kg'])
+
+    abort(404)
+
+
+@app.post('/water/reference-ranges')
+@login_required
+@requires_permission('water_manage')
+def update_water_reference_ranges():
+    config = get_water_reference_config()
+    fields = [
+        'od_min', 'od_max', 'ph_min', 'ph_max', 'temperature_min', 'temperature_max',
+        'salinity_min', 'salinity_max', 'transparency_min', 'transparency_max',
+        'ammonia_min', 'ammonia_max', 'nitrite_min', 'nitrite_max',
+    ]
+    for field in fields:
+        setattr(config, field, parse_float(request.form.get(field)))
+    config.updated_at = datetime.utcnow()
+    config.updated_by_id = getattr(current_user, 'id', None)
+    db.session.commit()
+    flash('Faixas de referência da água atualizadas.', 'success')
+    return redirect(url_for('water_page', unit_id=request.args.get('unit_id', type=int)))
 
 
 @app.route('/units', methods=['GET', 'POST'])
@@ -765,6 +1072,8 @@ def water_page():
         sort_indicator=sort_indicator,
         build_sort_url=build_sort_url,
         batch_slots=batch_monitor_slots(),
+        reference_config=get_water_reference_config(),
+        reference_summary=build_reference_summary(),
     )
 
 
@@ -956,11 +1265,12 @@ def chart_parameter_options():
 
 
 def build_chart_thresholds():
+    config = get_water_reference_config()
     return {
-        'dissolved_oxygen': {'label': 'OD mínimo ideal', 'min': TARGET_OD_MIN, 'max': None},
-        'ph': {'label': 'Faixa ideal de pH', 'min': TARGET_PH_MIN, 'max': TARGET_PH_MAX},
-        'temperature_c': {'label': 'Faixa ideal de temperatura', 'min': TARGET_TEMP_MIN, 'max': TARGET_TEMP_MAX},
-        'salinity': {'label': 'Faixa de salinidade alvo', 'min': TARGET_SALINITY_MIN, 'max': TARGET_SALINITY_MAX},
+        'dissolved_oxygen': {'label': 'Faixa ideal de OD', 'min': config.od_min, 'max': config.od_max},
+        'ph': {'label': 'Faixa ideal de pH', 'min': config.ph_min, 'max': config.ph_max},
+        'temperature_c': {'label': 'Faixa ideal de temperatura', 'min': config.temperature_min, 'max': config.temperature_max},
+        'salinity': {'label': 'Faixa de salinidade alvo', 'min': config.salinity_min, 'max': config.salinity_max},
     }
 
 
