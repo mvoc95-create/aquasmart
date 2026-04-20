@@ -3,13 +3,36 @@
 {% block page_subtitle %}Agora você pode lançar várias leituras do mesmo viveiro na mesma tela, ajustar as faixas de referência e acompanhar o histórico mais rápido.{% endblock %}
 {% block content %}
 <section class="panel">
-  <div class="panel-head">
-    <div>
-      <p class="panel-kicker">Faixas de referência</p>
-      <h2>Parâmetros que alimentam os alertas do painel</h2>
+  <details class="reference-collapse">
+    <summary class="reference-collapse-summary">
+      <div>
+        <p class="panel-kicker">Faixas de referência</p>
+        <h2>Editar faixas de referência</h2>
+      </div>
+      <span class="inline-hint">Clique para abrir ou recolher</span>
+    </summary>
+    <p class="empty-state compact-state">Tudo que estiver fora dessas faixas pode aparecer em <strong>alertas de água</strong> no painel operacional.</p>
+    <form method="post" action="{{ url_for('update_water_reference_ranges', unit_id=selected_unit_id) }}" class="form-grid reference-grid">
+    <label>OD mín. (mg/L)<input type="number" step="0.01" name="od_min" value="{{ reference_config.od_min if reference_config.od_min is not none else '' }}"></label>
+    <label>OD máx. (mg/L)<input type="number" step="0.01" name="od_max" value="{{ reference_config.od_max if reference_config.od_max is not none else '' }}"></label>
+    <label>pH mín.<input type="number" step="0.01" name="ph_min" value="{{ reference_config.ph_min if reference_config.ph_min is not none else '' }}"></label>
+    <label>pH máx.<input type="number" step="0.01" name="ph_max" value="{{ reference_config.ph_max if reference_config.ph_max is not none else '' }}"></label>
+    <label>Temperatura mín. (°C)<input type="number" step="0.01" name="temperature_min" value="{{ reference_config.temperature_min if reference_config.temperature_min is not none else '' }}"></label>
+    <label>Temperatura máx. (°C)<input type="number" step="0.01" name="temperature_max" value="{{ reference_config.temperature_max if reference_config.temperature_max is not none else '' }}"></label>
+    <label>Salinidade mín. (‰)<input type="number" step="0.01" name="salinity_min" value="{{ reference_config.salinity_min if reference_config.salinity_min is not none else '' }}"></label>
+    <label>Salinidade máx. (‰)<input type="number" step="0.01" name="salinity_max" value="{{ reference_config.salinity_max if reference_config.salinity_max is not none else '' }}"></label>
+    <label>Transparência mín. (cm)<input type="number" step="0.01" name="transparency_min" value="{{ reference_config.transparency_min if reference_config.transparency_min is not none else '' }}"></label>
+    <label>Transparência máx. (cm)<input type="number" step="0.01" name="transparency_max" value="{{ reference_config.transparency_max if reference_config.transparency_max is not none else '' }}"></label>
+    <label>Amônia mín. (mg/L)<input type="number" step="0.01" name="ammonia_min" value="{{ reference_config.ammonia_min if reference_config.ammonia_min is not none else '' }}"></label>
+    <label>Amônia máx. (mg/L)<input type="number" step="0.01" name="ammonia_max" value="{{ reference_config.ammonia_max if reference_config.ammonia_max is not none else '' }}"></label>
+    <label>Nitrito mín. (mg/L)<input type="number" step="0.01" name="nitrite_min" value="{{ reference_config.nitrite_min if reference_config.nitrite_min is not none else '' }}"></label>
+    <label>Nitrito máx. (mg/L)<input type="number" step="0.01" name="nitrite_max" value="{{ reference_config.nitrite_max if reference_config.nitrite_max is not none else '' }}"></label>
+    <div class="form-actions action-row-between full">
+      <button type="submit">Salvar faixas de referência</button>
+      <span class="inline-hint">Última atualização: {{ reference_config.updated_at.strftime('%d/%m/%Y %H:%M') if reference_config.updated_at else '—' }}</span>
     </div>
-  </div>
-  <p class="empty-state compact-state">Tudo que estiver fora dessas faixas pode aparecer em <strong>alertas de água</strong> no painel operacional.</p>
+  </form>
+  </details>
 
   <div class="reference-summary-grid">
     {% for item in reference_summary %}
@@ -19,138 +42,29 @@
     </div>
     {% endfor %}
   </div>
-
-  <details class="collapsible-panel reference-collapse">
-    <summary>Editar faixas de referência</summary>
-    <form method="post" action="{{ url_for('update_water_reference_ranges', unit_id=selected_unit_id) }}" class="form-grid reference-grid collapsible-form">
-      <label>OD mín. (mg/L)<input type="number" step="0.01" name="od_min" value="{{ reference_config.od_min if reference_config.od_min is not none else '' }}"></label>
-      <label>OD máx. (mg/L)<input type="number" step="0.01" name="od_max" value="{{ reference_config.od_max if reference_config.od_max is not none else '' }}"></label>
-      <label>pH mín.<input type="number" step="0.01" name="ph_min" value="{{ reference_config.ph_min if reference_config.ph_min is not none else '' }}"></label>
-      <label>pH máx.<input type="number" step="0.01" name="ph_max" value="{{ reference_config.ph_max if reference_config.ph_max is not none else '' }}"></label>
-      <label>Temperatura mín. (°C)<input type="number" step="0.01" name="temperature_min" value="{{ reference_config.temperature_min if reference_config.temperature_min is not none else '' }}"></label>
-      <label>Temperatura máx. (°C)<input type="number" step="0.01" name="temperature_max" value="{{ reference_config.temperature_max if reference_config.temperature_max is not none else '' }}"></label>
-      <label>Salinidade mín. (‰)<input type="number" step="0.01" name="salinity_min" value="{{ reference_config.salinity_min if reference_config.salinity_min is not none else '' }}"></label>
-      <label>Salinidade máx. (‰)<input type="number" step="0.01" name="salinity_max" value="{{ reference_config.salinity_max if reference_config.salinity_max is not none else '' }}"></label>
-      <label>Transparência mín. (cm)<input type="number" step="0.01" name="transparency_min" value="{{ reference_config.transparency_min if reference_config.transparency_min is not none else '' }}"></label>
-      <label>Transparência máx. (cm)<input type="number" step="0.01" name="transparency_max" value="{{ reference_config.transparency_max if reference_config.transparency_max is not none else '' }}"></label>
-      <label>Amônia mín. (mg/L)<input type="number" step="0.01" name="ammonia_min" value="{{ reference_config.ammonia_min if reference_config.ammonia_min is not none else '' }}"></label>
-      <label>Amônia máx. (mg/L)<input type="number" step="0.01" name="ammonia_max" value="{{ reference_config.ammonia_max if reference_config.ammonia_max is not none else '' }}"></label>
-      <label>Nitrito mín. (mg/L)<input type="number" step="0.01" name="nitrite_min" value="{{ reference_config.nitrite_min if reference_config.nitrite_min is not none else '' }}"></label>
-      <label>Nitrito máx. (mg/L)<input type="number" step="0.01" name="nitrite_max" value="{{ reference_config.nitrite_max if reference_config.nitrite_max is not none else '' }}"></label>
-      <div class="form-actions action-row-between full">
-        <button type="submit">Salvar faixas de referência</button>
-        <span class="inline-hint">Última atualização: {{ reference_config.updated_at.strftime('%d/%m/%Y %H:%M') if reference_config.updated_at else '—' }}</span>
-      </div>
-    </form>
-  </details>
 </section>
 
 <section class="panel">
-  <div class="panel-head">
-    <div>
-      <p class="panel-kicker">Importação assistida por foto</p>
-      <h2>Ler ficha diurna ou noturna sem salvar a foto no banco</h2>
-    </div>
-  </div>
-  <p class="empty-state compact-state">Envie a foto, escolha o tipo da ficha e confira a prévia antes de gravar. Na ficha <strong>noturna</strong>, os horários <strong>00:00, 02:00 e 04:00</strong> entram automaticamente no <strong>dia seguinte</strong>.</p>
-  <form method="post" enctype="multipart/form-data" class="form-grid import-photo-form">
-    <input type="hidden" name="entry_mode" value="import_parse">
-    <label>Data-base da ficha
-      <input type="date" name="base_date" value="{{ import_base_date.isoformat() if import_base_date else today.isoformat() }}" required>
-    </label>
-    <label>Tipo de ficha
-      <select name="sheet_kind">
-        <option value="night" {% if import_sheet_kind == 'night' %}selected{% endif %}>Noturna (18:00 / 00:00 / 02:00 / 04:00)</option>
-        <option value="day" {% if import_sheet_kind == 'day' %}selected{% endif %}>Diurna (07:00 / 16:00)</option>
+  <div class="panel-head"><div><p class="panel-kicker">Importação por foto com IA</p><h2>Ler ficha automaticamente</h2></div></div>
+  <p class="empty-state compact-state">Envie a foto da ficha e a IA devolve os dados estruturados. Na ficha <strong>noturna</strong>, os horários de <strong>00:00, 02:00 e 04:00</strong> entram automaticamente no <strong>dia seguinte</strong>. A foto não é salva no banco.</p>
+  <form method="post" action="{{ url_for('import_water_sheet') }}" enctype="multipart/form-data" class="form-grid">
+    <label>Tipo da ficha
+      <select name="sheet_type" required>
+        <option value="day">Diurna (07:00 e 16:00)</option>
+        <option value="night">Noturna (18:00, 00:00, 02:00 e 04:00)</option>
       </select>
     </label>
+    <label>Data escrita na ficha
+      <input type="date" name="sheet_date" value="{{ today.isoformat() }}" required>
+    </label>
     <label class="full">Foto da ficha
-      <input type="file" name="sheet_photo" accept="image/png,image/jpeg,image/webp" required>
+      <input type="file" name="sheet_image" accept="image/*" required>
     </label>
     <div class="form-actions action-row-between full">
-      <button type="submit">Montar prévia da importação</button>
-      <span class="inline-hint">A foto é usada só para montar esta tela de conferência e não fica gravada no banco.</span>
+      <button type="submit">Importar foto da ficha</button>
+      <span class="inline-hint">Configure OPENAI_API_KEY no Render para habilitar.</span>
     </div>
   </form>
-
-  {% if import_warnings %}
-  <div class="import-warnings-stack">
-    {% for message in import_warnings %}
-    <p class="empty-state compact-state">{{ message }}</p>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  {% if import_preview_rows %}
-  <hr class="panel-divider">
-  <div class="panel-head import-preview-head">
-    <div>
-      <p class="panel-kicker">Prévia para conferência</p>
-      <h2>Revise os valores antes de salvar</h2>
-    </div>
-  </div>
-  <div class="import-preview-layout">
-    {% if import_preview_image %}
-    <div class="import-preview-image-wrap">
-      <img src="{{ import_preview_image }}" alt="Prévia da ficha enviada" class="import-preview-image">
-    </div>
-    {% endif %}
-    <div class="table-wrap import-preview-table-wrap">
-      <form method="post">
-        <input type="hidden" name="entry_mode" value="import_confirm">
-        <input type="hidden" name="sheet_kind" value="{{ import_sheet_kind }}">
-        <table class="import-preview-table">
-          <thead>
-            <tr>
-              <th>Unidade</th>
-              <th>Data</th>
-              <th>Hora</th>
-              <th>OD</th>
-              <th>Temp.</th>
-              <th>pH</th>
-              <th>Sal.</th>
-              <th>Transp.</th>
-              <th>Amônia</th>
-              <th>Nitrito</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in import_preview_rows %}
-            <tr>
-              <td>
-                <select name="preview_unit_id">
-                  <option value="">Ignorar linha</option>
-                  {% for u in units %}
-                  <option value="{{ u.id }}" {% if row.unit_id == u.id %}selected{% endif %}>{{ u.name }}</option>
-                  {% endfor %}
-                </select>
-                <small class="cell-hint">{{ row.unit_label }}</small>
-              </td>
-              <td>
-                <input type="date" name="preview_monitor_date" value="{{ row.monitor_date.isoformat() }}" required>
-              </td>
-              <td>
-                <input type="time" name="preview_monitor_time" value="{{ row.monitor_time }}" required>
-              </td>
-              <td><input type="number" step="0.1" name="preview_dissolved_oxygen" value="{{ row.dissolved_oxygen if row.dissolved_oxygen is not none else '' }}"></td>
-              <td><input type="number" step="0.1" name="preview_temperature_c" value="{{ row.temperature_c if row.temperature_c is not none else '' }}"></td>
-              <td><input type="number" step="0.1" name="preview_ph" value="{{ row.ph if row.ph is not none else '' }}"></td>
-              <td><input type="number" step="0.1" name="preview_salinity" value="{{ row.salinity if row.salinity is not none else '' }}"></td>
-              <td><input type="number" step="0.1" name="preview_transparency_cm" value="{{ row.transparency_cm if row.transparency_cm is not none else '' }}"></td>
-              <td><input type="number" step="0.01" name="preview_ammonia" value="{{ row.ammonia if row.ammonia is not none else '' }}"></td>
-              <td><input type="number" step="0.01" name="preview_nitrite" value="{{ row.nitrite if row.nitrite is not none else '' }}"></td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        <div class="form-actions action-row-between import-preview-actions">
-          <button type="submit">Confirmar importação</button>
-          <span class="inline-hint">Linhas sem unidade selecionada ou sem valor serão ignoradas.</span>
-        </div>
-      </form>
-    </div>
-  </div>
-  {% endif %}
 </section>
 
 <div class="grid-2 water-grid-layout">
