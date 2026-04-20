@@ -1,168 +1,37 @@
 {% extends 'base.html' %}
 {% block page_title %}Monitoramento da água{% endblock %}
-{% block page_subtitle %}Agora você pode lançar várias leituras do mesmo viveiro na mesma tela, o que ajuda bastante quando registra toda a manhã ou toda a noite de uma vez.{% endblock %}
+{% block page_subtitle %}Lance as leituras físico-químicas por unidade e turno.{% endblock %}
 {% block content %}
-<div class="grid-2 water-grid-layout">
+<div class="grid-2">
 <section class="panel">
-  <div class="panel-head"><div><p class="panel-kicker">Lançamento em lote</p><h2>Vários horários na mesma tela</h2></div></div>
-  <p class="empty-state compact-state">Use esta área quando quiser digitar de uma vez as leituras de 00:00, 02:00, 04:00, 07:00, 16:00 e 18:00. Preencha só os horários que tiver medido.</p>
-  <form method="post" class="form-grid water-batch-form">
-    <input type="hidden" name="entry_mode" value="batch">
-    <label>Data<input type="date" name="monitor_date" value="{{ today.isoformat() }}" required></label>
-    <label>Unidade / viveiro
-      <select name="unit_id" required>
-        {% for u in units %}
-        <option value="{{u.id}}" {% if selected_unit_id == u.id %}selected{% endif %}>{{u.name}}</option>
-        {% endfor %}
-      </select>
-    </label>
-
-    <div class="full batch-table-wrap">
-      <table class="batch-entry-table">
-        <thead>
-          <tr>
-            <th>Hora</th>
-            <th>Temp. (°C)</th>
-            <th>OD (mg/L)</th>
-            <th>pH</th>
-            <th>Sal. (‰)</th>
-            <th>Transp. (cm)</th>
-            <th>Amônia (mg/L)</th>
-            <th>Nitrito (mg/L)</th>
-            <th>Obs.</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for slot in batch_slots %}
-          <tr>
-            <td>
-              <input type="hidden" name="slot_time" value="{{ slot }}">
-              <strong>{{ slot }}</strong>
-            </td>
-            <td><input type="number" step="0.1" name="temperature_c" placeholder="--"></td>
-            <td><input type="number" step="0.1" name="dissolved_oxygen" placeholder="--"></td>
-            <td><input type="number" step="0.1" name="ph" placeholder="--"></td>
-            <td><input type="number" step="0.1" name="salinity" placeholder="--"></td>
-            <td><input type="number" step="0.1" name="transparency_cm" placeholder="--"></td>
-            <td><input type="number" step="0.01" name="ammonia" placeholder="--"></td>
-            <td><input type="number" step="0.01" name="nitrite" placeholder="--"></td>
-            <td><input type="text" name="observation" placeholder="Opcional"></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    <div class="form-actions action-row-between full">
-      <button type="submit">Salvar leituras em lote</button>
-      <span class="inline-hint">O sistema cria um registro separado para cada horário preenchido.</span>
-    </div>
-  </form>
-</section>
-
-<section class="panel">
-  <div class="panel-head"><div><p class="panel-kicker">Lançamento individual</p><h2>Leitura avulsa</h2></div></div>
-  <form method="post" class="form-grid">
-    <input type="hidden" name="entry_mode" value="single">
-    <label>Data<input type="date" name="monitor_date" value="{{ today.isoformat() }}" required></label>
-    <label>Turno<select name="shift"><option value="manha">Manhã</option><option value="tarde">Tarde</option><option value="noite">Noite</option></select></label>
-    <label>Hora da leitura<input type="time" name="monitor_time"></label>
-    <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if selected_unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
-    <label>Temperatura (°C)<input type="number" step="0.1" name="temperature_c"></label>
-    <label>OD (mg/L)<input type="number" step="0.1" name="dissolved_oxygen"></label>
-    <label>pH<input type="number" step="0.1" name="ph"></label>
-    <label>Salinidade (‰)<input type="number" step="0.1" name="salinity"></label>
-    <label>Transparência (cm)<input type="number" step="0.1" name="transparency_cm"></label>
-    <label>Amônia (mg/L)<input type="number" step="0.01" name="ammonia"></label>
-    <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite"></label>
-    <label class="full">Observação<textarea name="observation"></textarea></label>
-    <div class="form-actions"><button type="submit">Salvar leitura avulsa</button></div>
-  </form>
-</section>
-</div>
-
-<section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Leituras recentes</h2></div></div>
-<form method="get" class="form-grid compact-form history-toolbar">
-  <label>Filtrar por viveiro
-    <select name="unit_id">
-      <option value="">Todos</option>
-      {% for u in units %}
-      <option value="{{ u.id }}" {% if selected_unit_id == u.id %}selected{% endif %}>{{ u.name }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <input type="hidden" name="sort_by" value="{{ sort_by }}">
-  <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
-  <div class="form-actions history-toolbar-actions">
-    <button type="submit">Aplicar filtro</button>
-    <a class="secondary-link-button" href="{{ url_for('water_page') }}">Limpar</a>
-  </div>
+<div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>Nova leitura</h2></div></div>
+<form method="post" class="form-grid">
+  <label>Data<input type="date" name="monitor_date" value="{{ today.isoformat() }}" required></label>
+  <label>Turno<select name="shift"><option value="manha">Manhã</option><option value="tarde">Tarde</option><option value="noite">Noite</option></select></label>
+  <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
+  <label>Temperatura (°C)<input type="number" step="0.1" name="temperature_c"></label>
+  <label>OD (mg/L)<input type="number" step="0.1" name="dissolved_oxygen"></label>
+  <label>pH<input type="number" step="0.1" name="ph"></label>
+  <label>Salinidade (‰)<input type="number" step="0.1" name="salinity"></label>
+  <label>Transparência (cm)<input type="number" step="0.1" name="transparency_cm"></label>
+  <label>Amônia<input type="number" step="0.01" name="ammonia"></label>
+  <label>Nitrito<input type="number" step="0.01" name="nitrite"></label>
+  <label class="full">Observação<textarea name="observation"></textarea></label>
+  <div class="form-actions"><button type="submit">Salvar leitura</button></div>
 </form>
-<p class="empty-state compact-state">Exibindo: <strong>{{ selected_unit.name if selected_unit else 'Todos os viveiros' }}</strong> · Clique no título da coluna para ordenar crescente ou decrescente.</p>
+</section>
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Últimos registros</p><h2>Histórico recente</h2></div></div>
 <div class="table-wrap">
 <table>
-<thead>
-  <tr>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'monitor_date') }}">Data <span>{{ sort_indicator('monitor_date', sort_by, sort_dir) }}</span></a></th>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'monitor_time') }}">Hora <span>{{ sort_indicator('monitor_time', sort_by, sort_dir) }}</span></a></th>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'shift') }}">Turno <span>{{ sort_indicator('shift', sort_by, sort_dir) }}</span></a></th>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'unit') }}">Unidade <span>{{ sort_indicator('unit', sort_by, sort_dir) }}</span></a></th>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'od') }}">OD (mg/L) <span>{{ sort_indicator('od', sort_by, sort_dir) }}</span></a></th>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'ph') }}">pH <span>{{ sort_indicator('ph', sort_by, sort_dir) }}</span></a></th>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'temperature') }}">Temp. (°C) <span>{{ sort_indicator('temperature', sort_by, sort_dir) }}</span></a></th>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'salinity') }}">Sal. (‰) <span>{{ sort_indicator('salinity', sort_by, sort_dir) }}</span></a></th>
-    <th></th>
-  </tr>
-</thead>
+<thead><tr><th>Data</th><th>Turno</th><th>Unidade</th><th>OD</th><th>pH</th><th>Temp.</th></tr></thead>
 <tbody>
 {% for r in records %}
-<tr>
-  <td>{{ r.monitor_date|brdate }}</td>
-  <td>{{ r.monitor_time|brtime or '--:--' }}</td>
-  <td>{{ r.shift|shift_label }}</td>
-  <td>{{ r.unit.name }}</td>
-  <td>{{ r.dissolved_oxygen or '' }}</td>
-  <td>{{ r.ph or '' }}</td>
-  <td>{{ r.temperature_c or '' }}</td>
-  <td>{{ r.salinity or '' }}</td>
-  <td class="actions-cell">
-    <div class="action-stack">
-      <a class="link-button small-button" href="{{ url_for('water_page', unit_id=selected_unit_id, sort_by=sort_by, sort_dir=sort_dir, edit_id=r.id) }}">Editar</a>
-      <form method="post" action="{{ url_for('delete_water_record', record_id=r.id) }}" onsubmit="return confirm('Excluir este registro de água?');">
-        <button type="submit" class="danger-button small-button">Excluir</button>
-      </form>
-    </div>
-  </td>
-</tr>
-{% else %}
-<tr><td colspan="9" class="empty-cell">Nenhum registro encontrado para esse filtro.</td></tr>
+<tr><td>{{ r.monitor_date|brdate }}</td><td>{{ r.shift|shift_label }}</td><td>{{ r.unit.name }}</td><td>{{ r.dissolved_oxygen or '' }}</td><td>{{ r.ph or '' }}</td><td>{{ r.temperature_c or '' }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
-
-{% if edit_record %}
-<hr class="panel-divider">
-<div class="panel-head"><div><p class="panel-kicker">Edição</p><h2>Editar leitura selecionada</h2></div></div>
-<form method="post" action="{{ url_for('edit_water_record', record_id=edit_record.id) }}" class="form-grid">
-  <label>Data<input type="date" name="monitor_date" value="{{ edit_record.monitor_date.isoformat() }}" required></label>
-  <label>Turno<select name="shift"><option value="manha" {% if edit_record.shift == 'manha' %}selected{% endif %}>Manhã</option><option value="tarde" {% if edit_record.shift == 'tarde' %}selected{% endif %}>Tarde</option><option value="noite" {% if edit_record.shift == 'noite' %}selected{% endif %}>Noite</option></select></label>
-  <label>Hora da leitura<input type="time" name="monitor_time" value="{{ edit_record.monitor_time.strftime('%H:%M') if edit_record.monitor_time else '' }}"></label>
-  <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if edit_record.unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
-  <label>Temperatura (°C)<input type="number" step="0.1" name="temperature_c" value="{{ edit_record.temperature_c if edit_record.temperature_c is not none else '' }}"></label>
-  <label>OD (mg/L)<input type="number" step="0.1" name="dissolved_oxygen" value="{{ edit_record.dissolved_oxygen if edit_record.dissolved_oxygen is not none else '' }}"></label>
-  <label>pH<input type="number" step="0.1" name="ph" value="{{ edit_record.ph if edit_record.ph is not none else '' }}"></label>
-  <label>Salinidade (‰)<input type="number" step="0.1" name="salinity" value="{{ edit_record.salinity if edit_record.salinity is not none else '' }}"></label>
-  <label>Transparência (cm)<input type="number" step="0.1" name="transparency_cm" value="{{ edit_record.transparency_cm if edit_record.transparency_cm is not none else '' }}"></label>
-  <label>Amônia (mg/L)<input type="number" step="0.01" name="ammonia" value="{{ edit_record.ammonia if edit_record.ammonia is not none else '' }}"></label>
-  <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite" value="{{ edit_record.nitrite if edit_record.nitrite is not none else '' }}"></label>
-  <label class="full">Observação<textarea name="observation">{{ edit_record.observation or '' }}</textarea></label>
-  <div class="form-actions action-row-between">
-    <button type="submit">Salvar alterações</button>
-    <a class="secondary-link-button" href="{{ url_for('water_page', unit_id=selected_unit_id, sort_by=sort_by, sort_dir=sort_dir) }}">Cancelar edição</a>
-  </div>
-</form>
-{% endif %}
 </section>
+</div>
 {% endblock %}

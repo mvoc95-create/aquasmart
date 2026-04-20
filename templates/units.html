@@ -1,39 +1,20 @@
 {% extends 'base.html' %}
 {% block page_title %}Unidades{% endblock %}
-{% block page_subtitle %}Cadastro-base dos viveiros e demais estruturas produtivas da fazenda.{% endblock %}
+{% block page_subtitle %}Cadastro-base das estruturas produtivas da fazenda.{% endblock %}
 {% block content %}
-<div class="grid-2">
-  {% if can_manage_units %}
-  <section class="panel">
-    <div class="panel-head">
-      <div><p class="panel-kicker">Expansão da fazenda</p><h2>Adicionar novo viveiro/unidade</h2></div>
-    </div>
-    <form method="post" class="form-grid">
-      <label>Nome<input type="text" name="name" placeholder="Ex.: Viveiro 04" required></label>
-      <label>Código (opcional)<input type="text" name="code" placeholder="Ex.: VIVEIRO_04"></label>
-      <label>Área (m²)<input type="number" step="0.01" name="area_m2" required></label>
-      <label>Fase<select name="phase"><option value="engorda">Engorda</option><option value="bercario">Berçário</option></select></label>
-      <label>Tipo<select name="structure_type"><option value="escavado">Escavado</option><option value="estufa">Estufa</option></select></label>
-      <label>Status<select name="active"><option value="1">Ativa</option><option value="0">Inativa</option></select></label>
-      <div class="form-actions"><button type="submit">Cadastrar unidade</button></div>
-    </form>
-  </section>
-  {% endif %}
-
-  <section class="panel {% if not can_manage_units %}full-width-panel{% endif %}">
-    <div class="panel-head">
-      <div><p class="panel-kicker">Cadastro</p><h2>Unidades ativas e classificações</h2></div>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Código</th><th>Nome</th><th>Área (m²)</th><th>Fase</th><th>Tipo</th><th>Status</th></tr></thead>
-        <tbody>
-        {% for u in units %}
-          <tr><td>{{ u.code }}</td><td>{{ u.name }}</td><td>{{ u.area_m2 }}</td><td>{{ u.phase|phase_label }}</td><td>{{ u.structure_type|title }}</td><td>{{ 'Ativa' if u.active else 'Inativa' }}</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-</div>
+<section class="panel">
+  <div class="panel-head">
+    <div><p class="panel-kicker">Cadastro</p><h2>Unidades ativas e classificações</h2></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Código</th><th>Nome</th><th>Área (m²)</th><th>Fase</th><th>Tipo</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for u in units %}
+        <tr><td>{{ u.code }}</td><td>{{ u.name }}</td><td>{{ u.area_m2 }}</td><td>{{ u.phase|phase_label }}</td><td>{{ u.structure_type|title }}</td><td>{{ 'Ativa' if u.active else 'Inativa' }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endblock %}

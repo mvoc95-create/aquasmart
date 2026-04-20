@@ -29,7 +29,6 @@
       <nav class="nav-list">
         {% if current_user.is_authenticated and current_user.has_permission('dashboard') %}
         <a class="nav-link {{ 'active' if current_endpoint == 'index' else '' }}" href="{{ url_for('index') }}">Painel operacional</a>
-        <a class="nav-link {{ 'active' if current_endpoint == 'charts_page' else '' }}" href="{{ url_for('charts_page') }}">Gráficos</a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('units_view') %}
         <a class="nav-link {{ 'active' if current_endpoint == 'units_page' else '' }}" href="{{ url_for('units_page') }}">Unidades</a>
@@ -52,8 +51,8 @@
         {% if current_user.is_authenticated and current_user.has_permission('sales_manage') %}
         <a class="nav-link {{ 'active' if current_endpoint == 'sales_page' else '' }}" href="{{ url_for('sales_page') }}">Despesca e vendas</a>
         {% endif %}
-        {% if current_user.is_authenticated and current_user.has_permission('protocols_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'protocols_page' else '' }}" href="{{ url_for('protocols_page') }}">Protocolos</a>
+        {% if current_user.is_authenticated and current_user.has_permission('documents_manage') %}
+        <a class="nav-link {{ 'active' if current_endpoint == 'documents_page' else '' }}" href="{{ url_for('documents_page') }}">Documentos da fazenda</a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('users_manage') %}
         <a class="nav-link {{ 'active' if current_endpoint == 'users_page' else '' }}" href="{{ url_for('users_page') }}">Usuários e acessos</a>
