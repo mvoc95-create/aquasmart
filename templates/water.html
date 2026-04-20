@@ -67,6 +67,74 @@
   </form>
 </section>
 
+{% if pending_water_import and pending_water_import.rows %}
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Prévia da importação</p><h2>Confira e ajuste antes de salvar</h2></div></div>
+  <p class="empty-state compact-state">Revise os viveiros, datas, horários e valores lidos pela IA. Desmarque as linhas que não quiser importar.</p>
+  {% if pending_water_import.warnings %}
+  <div class="warning-list">
+    {% for warning in pending_water_import.warnings %}
+    <div class="warning-chip">{{ warning }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <form method="post" action="{{ url_for('confirm_import_water_sheet') }}" class="form-grid">
+    <div class="full batch-table-wrap">
+      <table class="batch-entry-table import-preview-table">
+        <thead>
+          <tr>
+            <th>Importar</th>
+            <th>Linha da ficha</th>
+            <th>Viveiro</th>
+            <th>Data</th>
+            <th>Hora</th>
+            <th>OD</th>
+            <th>Temp.</th>
+            <th>pH</th>
+            <th>Amônia</th>
+            <th>Nitrito</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in pending_water_import.rows %}
+          <tr>
+            <td>
+              <input type="checkbox" name="selected_indices" value="{{ loop.index0 }}" {% if row.selected %}checked{% endif %}>
+              <input type="hidden" name="row_name" value="{{ row.row_name }}">
+            </td>
+            <td>{{ row.row_name or '—' }}</td>
+            <td>
+              <select name="unit_id" required>
+                <option value="">Selecione</option>
+                {% for u in units %}
+                <option value="{{ u.id }}" {% if row.unit_id|string == u.id|string %}selected{% endif %}>{{ u.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td><input type="date" name="monitor_date" value="{{ row.monitor_date }}" required></td>
+            <td><input type="time" name="time" value="{{ row.time }}" required></td>
+            <td><input type="number" step="0.1" name="dissolved_oxygen" value="{{ row.dissolved_oxygen if row.dissolved_oxygen is not none else '' }}"></td>
+            <td><input type="number" step="0.1" name="temperature_c" value="{{ row.temperature_c if row.temperature_c is not none else '' }}"></td>
+            <td><input type="number" step="0.1" name="ph" value="{{ row.ph if row.ph is not none else '' }}"></td>
+            <td><input type="number" step="0.01" name="ammonia" value="{{ row.ammonia if row.ammonia is not none else '' }}"></td>
+            <td><input type="number" step="0.01" name="nitrite" value="{{ row.nitrite if row.nitrite is not none else '' }}"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="form-actions action-row-between full">
+      <button type="submit">Confirmar importação</button>
+      <div class="action-stack horizontal-stack">
+        <button type="button" class="secondary-link-button" onclick="document.getElementById('cancel-import-form').submit();">Cancelar prévia</button>
+      </div>
+    </div>
+  </form>
+  <form id="cancel-import-form" method="post" action="{{ url_for('cancel_import_water_sheet') }}"></form>
+</section>
+{% endif %}
+
 <div class="grid-2 water-grid-layout">
 <section class="panel">
   <div class="panel-head"><div><p class="panel-kicker">Lançamento em lote</p><h2>Vários horários na mesma tela</h2></div></div>
