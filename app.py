@@ -2,7 +2,7 @@ from datetime import date, datetime, time, timedelta
 import os
 from functools import wraps
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -13,6 +13,9 @@ from flask_login import (
 )
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import case, func, inspect, text
+from werkzeug.datastructures import FileStorage
+from werkzeug.utils import secure_filename
+import io
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
@@ -52,17 +55,17 @@ ROLE_LABELS = {
 ROLE_PERMISSIONS = {
     'admin': {
         'dashboard', 'units_view', 'lots_manage', 'water_manage', 'management_manage',
-        'transfers_manage', 'feed_manage', 'sales_manage', 'users_manage'
+        'transfers_manage', 'feed_manage', 'sales_manage', 'users_manage', 'protocols_manage'
     },
     'gerente': {
         'dashboard', 'units_view', 'lots_manage', 'water_manage', 'management_manage',
-        'transfers_manage', 'feed_manage', 'sales_manage'
+        'transfers_manage', 'feed_manage', 'sales_manage', 'protocols_manage'
     },
     'operador': {
         'dashboard', 'units_view', 'water_manage', 'management_manage',
-        'transfers_manage', 'feed_manage'
+        'transfers_manage', 'feed_manage', 'protocols_manage'
     },
-    'consulta': {'dashboard', 'units_view'},
+    'consulta': {'dashboard', 'units_view', 'protocols_manage'},
 }
 
 
@@ -158,6 +161,20 @@ class DailyManagement(db.Model):
     notes = db.Column(db.Text)
     unit = db.relationship('Unit')
     lot = db.relationship('Lot')
+
+
+class ProtocolDocument(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(160), nullable=False)
+    category = db.Column(db.String(80), nullable=False, default='Geral')
+    notes = db.Column(db.Text)
+    original_filename = db.Column(db.String(255), nullable=False)
+    mime_type = db.Column(db.String(120))
+    file_size = db.Column(db.Integer, nullable=False, default=0)
+    file_data = db.Column(db.LargeBinary, nullable=False)
+    uploaded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    uploaded_by = db.relationship('User')
 
 
 class Transfer(db.Model):
@@ -277,6 +294,39 @@ def parse_time(value, default=None):
     return datetime.strptime(value, '%H:%M').time()
 
 
+
+
+
+def infer_shift_from_time(monitor_time):
+    if not monitor_time:
+        return 'manha'
+    if monitor_time.hour < 6:
+        return 'noite'
+    if monitor_time.hour < 12:
+        return 'manha'
+    if monitor_time.hour < 18:
+        return 'tarde'
+    return 'noite'
+
+
+def parse_multi_float_list(values):
+    parsed = []
+    for value in values:
+        value = (value or '').strip()
+        if not value:
+            parsed.append(None)
+            continue
+        parsed.append(parse_float(value))
+    return parsed
+
+
+def allowed_protocol_file(filename: str) -> bool:
+    ext = (filename.rsplit('.', 1)[-1].lower() if '.' in filename else '')
+    return ext in {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg', 'webp', 'txt'}
+
+
+def batch_monitor_slots():
+    return ['00:00', '02:00', '04:00', '07:00', '16:00', '18:00']
 
 def parse_float(value, default=None):
     if value is None:
@@ -593,10 +643,57 @@ def lots_page():
 @requires_permission('water_manage')
 def water_page():
     if request.method == 'POST':
+        mode = request.form.get('entry_mode', 'single')
         unit_id = int(request.form['unit_id'])
         lot = active_lot_for_unit(unit_id)
+        monitor_date = parse_date(request.form.get('monitor_date'), date.today())
+
+        if mode == 'batch':
+            slot_times = request.form.getlist('slot_time')
+            temperatures = parse_multi_float_list(request.form.getlist('temperature_c'))
+            oxygens = parse_multi_float_list(request.form.getlist('dissolved_oxygen'))
+            ph_values = parse_multi_float_list(request.form.getlist('ph'))
+            salinities = parse_multi_float_list(request.form.getlist('salinity'))
+            transparencies = parse_multi_float_list(request.form.getlist('transparency_cm'))
+            ammonias = parse_multi_float_list(request.form.getlist('ammonia'))
+            nitrites = parse_multi_float_list(request.form.getlist('nitrite'))
+            observations = request.form.getlist('observation')
+
+            created = 0
+            for idx, slot in enumerate(slot_times):
+                values = [temperatures[idx], oxygens[idx], ph_values[idx], salinities[idx], transparencies[idx], ammonias[idx], nitrites[idx], (observations[idx] or '').strip()]
+                has_data = any(v not in (None, '') for v in values)
+                if not has_data:
+                    continue
+                monitor_time = parse_time(slot)
+                rec = WaterMonitoring(
+                    monitor_date=monitor_date,
+                    shift=infer_shift_from_time(monitor_time),
+                    monitor_time=monitor_time,
+                    unit_id=unit_id,
+                    lot_id=lot.id if lot else None,
+                    temperature_c=temperatures[idx],
+                    dissolved_oxygen=oxygens[idx],
+                    ph=ph_values[idx],
+                    salinity=salinities[idx],
+                    transparency_cm=transparencies[idx],
+                    ammonia=ammonias[idx],
+                    nitrite=nitrites[idx],
+                    observation=(observations[idx] or '').strip() or None,
+                )
+                db.session.add(rec)
+                created += 1
+
+            if created == 0:
+                flash('Preencha pelo menos um horário no lançamento em lote.', 'warning')
+                return redirect(url_for('water_page', unit_id=unit_id))
+
+            db.session.commit()
+            flash(f'{created} leituras de água salvas em lote.', 'success')
+            return redirect(url_for('water_page', unit_id=unit_id))
+
         rec = WaterMonitoring(
-            monitor_date=parse_date(request.form['monitor_date'], date.today()),
+            monitor_date=monitor_date,
             shift=request.form['shift'],
             monitor_time=parse_time(request.form.get('monitor_time')),
             unit_id=unit_id,
@@ -613,7 +710,7 @@ def water_page():
         db.session.add(rec)
         db.session.commit()
         flash('Monitoramento da água lançado.', 'success')
-        return redirect(url_for('water_page'))
+        return redirect(url_for('water_page', unit_id=unit_id))
 
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     selected_unit_id = request.args.get('unit_id', type=int)
@@ -653,6 +750,7 @@ def water_page():
         sort_dir=sort_dir,
         sort_indicator=sort_indicator,
         build_sort_url=build_sort_url,
+        batch_slots=batch_monitor_slots(),
     )
 
 
@@ -950,6 +1048,115 @@ def charts_page():
         parameter_options=parameter_options,
         selected_parameter_key=selected_parameter_key,
     )
+
+
+@app.route('/protocols', methods=['GET', 'POST'])
+@login_required
+@requires_permission('protocols_manage')
+def protocols_page():
+    if request.method == 'POST':
+        uploaded_file: FileStorage | None = request.files.get('protocol_file')
+        title = (request.form.get('title') or '').strip()
+        category = (request.form.get('category') or 'Geral').strip() or 'Geral'
+        notes = (request.form.get('notes') or '').strip()
+
+        if not uploaded_file or not uploaded_file.filename:
+            flash('Selecione um arquivo para enviar.', 'warning')
+            return redirect(url_for('protocols_page'))
+
+        safe_name = secure_filename(uploaded_file.filename)
+        if not allowed_protocol_file(safe_name):
+            flash('Formato não permitido. Use PDF, Office, imagem ou TXT.', 'danger')
+            return redirect(url_for('protocols_page'))
+
+        file_bytes = uploaded_file.read()
+        if not file_bytes:
+            flash('O arquivo enviado está vazio.', 'warning')
+            return redirect(url_for('protocols_page'))
+        if len(file_bytes) > 15 * 1024 * 1024:
+            flash('O arquivo excede 15 MB. Envie uma versão menor.', 'danger')
+            return redirect(url_for('protocols_page'))
+
+        title = title or os.path.splitext(safe_name)[0]
+        protocol = ProtocolDocument(
+            title=title,
+            category=category,
+            notes=notes or None,
+            original_filename=safe_name,
+            mime_type=uploaded_file.mimetype or 'application/octet-stream',
+            file_size=len(file_bytes),
+            file_data=file_bytes,
+            uploaded_by_id=getattr(current_user, 'id', None),
+        )
+        db.session.add(protocol)
+        db.session.commit()
+        flash('Protocolo salvo com sucesso.', 'success')
+        return redirect(url_for('protocols_page'))
+
+    search = (request.args.get('q') or '').strip()
+    category_filter = (request.args.get('category') or '').strip()
+    protocols_query = ProtocolDocument.query
+    if search:
+        protocols_query = protocols_query.filter(db.or_(
+            ProtocolDocument.title.ilike(f'%{search}%'),
+            ProtocolDocument.category.ilike(f'%{search}%'),
+            ProtocolDocument.notes.ilike(f'%{search}%'),
+            ProtocolDocument.original_filename.ilike(f'%{search}%'),
+        ))
+    if category_filter:
+        protocols_query = protocols_query.filter(ProtocolDocument.category == category_filter)
+    protocols = protocols_query.order_by(ProtocolDocument.uploaded_at.desc(), ProtocolDocument.id.desc()).all()
+    categories = [row[0] for row in db.session.query(ProtocolDocument.category).distinct().order_by(ProtocolDocument.category.asc()).all() if row[0]]
+    return render_template('protocols.html', protocols=protocols, categories=categories, search=search, category_filter=category_filter)
+
+
+@app.get('/protocols/<int:protocol_id>/download')
+@login_required
+@requires_permission('protocols_manage')
+def download_protocol(protocol_id):
+    protocol = db.session.get(ProtocolDocument, protocol_id)
+    if not protocol:
+        flash('Protocolo não encontrado.', 'warning')
+        return redirect(url_for('protocols_page'))
+
+    return send_file(
+        io.BytesIO(protocol.file_data),
+        mimetype=protocol.mime_type or 'application/octet-stream',
+        as_attachment=True,
+        download_name=protocol.original_filename,
+    )
+
+
+
+
+@app.get('/protocols/<int:protocol_id>/view')
+@login_required
+@requires_permission('protocols_manage')
+def view_protocol(protocol_id):
+    protocol = db.session.get(ProtocolDocument, protocol_id)
+    if not protocol:
+        flash('Protocolo não encontrado.', 'warning')
+        return redirect(url_for('protocols_page'))
+
+    return send_file(
+        io.BytesIO(protocol.file_data),
+        mimetype=protocol.mime_type or 'application/octet-stream',
+        as_attachment=False,
+        download_name=protocol.original_filename,
+    )
+
+@app.post('/protocols/<int:protocol_id>/delete')
+@login_required
+@requires_permission('protocols_manage')
+def delete_protocol(protocol_id):
+    protocol = db.session.get(ProtocolDocument, protocol_id)
+    if not protocol:
+        flash('Protocolo não encontrado.', 'warning')
+        return redirect(url_for('protocols_page'))
+    db.session.delete(protocol)
+    db.session.commit()
+    flash('Protocolo removido.', 'success')
+    return redirect(url_for('protocols_page'))
 
 
 @app.route('/transfers', methods=['GET', 'POST'])
