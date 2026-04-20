@@ -1418,6 +1418,7 @@ def water_page():
         batch_slots=batch_monitor_slots(),
         reference_config=get_water_reference_config(),
         reference_summary=build_reference_summary(),
+        pending_water_import=get_pending_water_import(),
     )
 
 
