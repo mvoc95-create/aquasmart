@@ -187,20 +187,10 @@ button:hover{transform:translateY(-1px)}
 .reference-summary-card small{display:block;color:var(--muted);line-height:1.5}
 @media (max-width:1200px){.reference-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:720px){.reference-grid{grid-template-columns:1fr}}
-.collapsible-panel{margin-top:18px;border:1px solid var(--line);border-radius:18px;background:#f8fbff;padding:0 16px}
-.collapsible-panel summary{cursor:pointer;list-style:none;padding:16px 4px;font-weight:800;color:var(--text)}
-.collapsible-panel summary::-webkit-details-marker{display:none}
-.collapsible-panel[open] summary{padding-bottom:12px}
-.collapsible-form{padding:0 4px 16px}
-.reference-collapse{margin-top:16px}
-.import-photo-form{align-items:end}
-.import-warnings-stack{display:grid;gap:10px;margin-top:16px}
-.import-preview-layout{display:grid;grid-template-columns:minmax(260px,380px) 1fr;gap:18px;align-items:start}
-.import-preview-image-wrap{border:1px solid var(--line);border-radius:18px;background:#fff;padding:12px;position:sticky;top:12px}
-.import-preview-image{display:block;width:100%;height:auto;border-radius:12px}
-.import-preview-table-wrap{min-width:0}
-.import-preview-table{min-width:1080px}
-.import-preview-table input,.import-preview-table select{padding:10px 10px;border-radius:10px}
-.import-preview-table .cell-hint{display:block;margin-top:6px;color:var(--muted);line-height:1.4}
-.import-preview-actions{padding:14px}
-@media (max-width:1100px){.import-preview-layout{grid-template-columns:1fr}.import-preview-image-wrap{position:static}}
+
+.reference-collapse{border:1px solid var(--line);border-radius:18px;padding:14px 16px;background:var(--panel-soft);margin-bottom:14px}
+.reference-collapse[open]{padding-bottom:18px}
+.reference-collapse-summary{list-style:none;display:flex;justify-content:space-between;gap:12px;align-items:center;cursor:pointer}
+.reference-collapse-summary::-webkit-details-marker{display:none}
+.reference-collapse-summary h2{margin:0;font-size:22px}
+.reference-collapse-summary .panel-kicker{margin-bottom:6px}
