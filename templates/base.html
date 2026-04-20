@@ -52,6 +52,9 @@
         {% if current_user.is_authenticated and current_user.has_permission('sales_manage') %}
         <a class="nav-link {{ 'active' if current_endpoint == 'sales_page' else '' }}" href="{{ url_for('sales_page') }}">Despesca e vendas</a>
         {% endif %}
+        {% if current_user.is_authenticated and current_user.has_permission('protocols_manage') %}
+        <a class="nav-link {{ 'active' if current_endpoint == 'protocols_page' else '' }}" href="{{ url_for('protocols_page') }}">Protocolos</a>
+        {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('users_manage') %}
         <a class="nav-link {{ 'active' if current_endpoint == 'users_page' else '' }}" href="{{ url_for('users_page') }}">Usuários e acessos</a>
         {% endif %}

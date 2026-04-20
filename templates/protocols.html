@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block page_title %}Protocolos{% endblock %}
+{% block page_subtitle %}Guarde aqui POPs, protocolos de probiótico, rotinas e materiais técnicos para consultar depois sem depender de procurar arquivos fora do sistema.{% endblock %}
+{% block content %}
+<div class="grid-2">
+  <section class="panel">
+    <div class="panel-head"><div><p class="panel-kicker">Biblioteca técnica</p><h2>Novo protocolo</h2></div></div>
+    <form method="post" enctype="multipart/form-data" class="form-grid">
+      <label>Título<input type="text" name="title" placeholder="Ex.: Protocolo de probiótico para berçário"></label>
+      <label>Categoria<input type="text" name="category" placeholder="Ex.: Probiótico, Desinfecção, POP"></label>
+      <label class="full">Arquivo<input type="file" name="protocol_file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt" required></label>
+      <label class="full">Observações<textarea name="notes" placeholder="Resumo rápido, dose, quando usar, restrições..."></textarea></label>
+      <div class="form-actions"><button type="submit">Salvar protocolo</button></div>
+    </form>
+    <p class="empty-state compact-state">Formatos aceitos: PDF, Word, Excel, imagens e TXT. Limite: 15 MB por arquivo.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><p class="panel-kicker">Consulta</p><h2>Protocolos salvos</h2></div></div>
+    <form method="get" class="form-grid compact-form history-toolbar">
+      <label>Buscar
+        <input type="text" name="q" value="{{ search or '' }}" placeholder="Título, categoria, observação ou arquivo">
+      </label>
+      <label>Categoria
+        <select name="category">
+          <option value="">Todas</option>
+          {% for category in categories %}
+          <option value="{{ category }}" {% if category_filter == category %}selected{% endif %}>{{ category }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="form-actions history-toolbar-actions">
+        <button type="submit">Filtrar</button>
+        <a class="secondary-link-button" href="{{ url_for('protocols_page') }}">Limpar</a>
+      </div>
+    </form>
+
+    {% if protocols %}
+    <div class="protocol-list">
+      {% for protocol in protocols %}
+      <article class="protocol-card">
+        <div class="protocol-card-top">
+          <div>
+            <p class="panel-kicker">{{ protocol.category }}</p>
+            <h3>{{ protocol.title }}</h3>
+            <p class="protocol-meta">{{ protocol.original_filename }} · {{ (protocol.file_size / 1024)|round(1) }} KB · enviado em {{ protocol.uploaded_at.strftime('%d/%m/%Y %H:%M') }}</p>
+          </div>
+        </div>
+        {% if protocol.notes %}
+        <p class="protocol-notes">{{ protocol.notes }}</p>
+        {% endif %}
+        <div class="action-stack horizontal-actions">
+          <a class="link-button small-button" href="{{ url_for('view_protocol', protocol_id=protocol.id) }}" target="_blank" rel="noopener">Abrir</a>
+          <a class="secondary-link-button small-button" href="{{ url_for('download_protocol', protocol_id=protocol.id) }}">Baixar</a>
+          <form method="post" action="{{ url_for('delete_protocol', protocol_id=protocol.id) }}" onsubmit="return confirm('Excluir este protocolo?');">
+            <button type="submit" class="danger-button small-button">Excluir</button>
+          </form>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">Nenhum protocolo encontrado com esse filtro.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
