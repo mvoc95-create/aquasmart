@@ -1,5 +1,7 @@
 from datetime import date, datetime, time, timedelta
+import base64
 import os
+import unicodedata
 from functools import wraps
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
@@ -18,6 +20,19 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 import io
 from werkzeug.security import check_password_hash, generate_password_hash
+
+try:
+    import cv2
+    import numpy as np
+    import pytesseract
+    from PIL import Image
+    OCR_IMAGE_IMPORT_AVAILABLE = True
+except Exception:
+    cv2 = None
+    np = None
+    pytesseract = None
+    Image = None
+    OCR_IMAGE_IMPORT_AVAILABLE = False
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'fazenda-aqua-smart-demo')
@@ -461,6 +476,457 @@ def parse_int(value, default=None):
     if value == '':
         return default
     return int(value)
+
+
+def normalize_key(value: str) -> str:
+    value = unicodedata.normalize('NFKD', str(value or '')).encode('ascii', 'ignore').decode('ascii')
+    cleaned = []
+    for ch in value.upper():
+        cleaned.append(ch if ch.isalnum() else ' ')
+    return ' '.join(''.join(cleaned).split())
+
+
+IMPORT_UNIT_ALIASES = {
+    'STA RITA': 'Viveiro Santa Rita',
+    'STA RITA VIVEIRO': 'Viveiro Santa Rita',
+    'SANTA RITA': 'Viveiro Santa Rita',
+    'SAPE': 'Viveiro Sapé',
+    'CR ESP SANTO': 'Viveiro Cruz do Espírito Santo',
+    'CRUZ DO ESPIRITO SANTO': 'Viveiro Cruz do Espírito Santo',
+    'CONDE': 'Viveiro Conde',
+    'BELEM': 'Viveiro Belém',
+    'NATUBA': 'Viveiro Natuba',
+    'CAMPINA GRANDE': 'Viveiro Campina Grande',
+    'LUCENA': 'Viveiro Lucena',
+    'SP1': 'Estufa São Paulo 1',
+    'SP 1': 'Estufa São Paulo 1',
+    'SP2': 'Estufa São Paulo 2',
+    'SP 2': 'Estufa São Paulo 2',
+    'SP3': 'Estufa São Paulo 3',
+    'SP 3': 'Estufa São Paulo 3',
+    'RIO G DO SUL 1': 'Estufa Rio Grande do Sul 1',
+    'RIO G DO SUL1': 'Estufa Rio Grande do Sul 1',
+    'RIO GRANDE DO SUL 1': 'Estufa Rio Grande do Sul 1',
+    'RIO G DO SUL 2': 'Estufa Rio Grande do Sul 2',
+    'RIO G DO SUL2': 'Estufa Rio Grande do Sul 2',
+    'RIO GRANDE DO SUL 2': 'Estufa Rio Grande do Sul 2',
+}
+
+
+IMPORT_TEMPLATES = {
+    'night': {
+        'label': 'Ficha noturna',
+        'rows': [
+            'Viveiro Santa Rita', 'Viveiro Sapé', 'Viveiro Cruz do Espírito Santo', 'Viveiro Conde',
+            'Viveiro Belém', 'Viveiro Natuba', 'Viveiro Campina Grande', 'Viveiro Lucena',
+            'Estufa São Paulo 1', 'Estufa São Paulo 2', 'Estufa São Paulo 3',
+            'Estufa Rio Grande do Sul 1', 'Estufa Rio Grande do Sul 2',
+        ],
+        'times': ['18:00', '00:00', '02:00', '04:00'],
+        'fields_by_time': {
+            '18:00': ['dissolved_oxygen', 'temperature_c'],
+            '00:00': ['dissolved_oxygen', 'temperature_c'],
+            '02:00': ['dissolved_oxygen', 'temperature_c'],
+            '04:00': ['dissolved_oxygen', 'temperature_c'],
+        },
+        'ocr': {
+            'base_size': (900, 1600),
+            'rows': [
+                (267, 309), (309, 351), (351, 393), (393, 435), (435, 477), (477, 519),
+                (519, 561), (561, 603), (603, 645), (645, 687), (687, 729), (729, 771), (771, 813),
+            ],
+            'cells': {
+                '18:00': {'dissolved_oxygen': (118, 203), 'temperature_c': (203, 292)},
+                '00:00': {'dissolved_oxygen': (292, 379), 'temperature_c': (379, 466)},
+                '02:00': {'dissolved_oxygen': (466, 554), 'temperature_c': (554, 643)},
+                '04:00': {'dissolved_oxygen': (643, 729), 'temperature_c': (729, 816)},
+            },
+            'inner_margin': {'left': 0.08, 'right': 0.06, 'top': 0.06, 'bottom': 0.08},
+        },
+    },
+    'day': {
+        'label': 'Ficha diurna',
+        'sections': [
+            {
+                'rows': [
+                    'Viveiro Santa Rita', 'Viveiro Sapé', 'Viveiro Cruz do Espírito Santo', 'Viveiro Conde',
+                    'Viveiro Belém', 'Viveiro Natuba', 'Viveiro Campina Grande', 'Viveiro Lucena',
+                ],
+                'times': ['07:00', '16:00'],
+                'fields_by_time': {
+                    '07:00': ['dissolved_oxygen', 'temperature_c', 'ph'],
+                    '16:00': ['dissolved_oxygen', 'temperature_c'],
+                },
+                'ocr_rows': [
+                    (333, 384), (384, 435), (435, 486), (486, 537), (537, 588), (588, 639), (639, 690), (690, 741),
+                ],
+                'ocr_cells': {
+                    '07:00': {'dissolved_oxygen': (239, 357), 'temperature_c': (357, 474), 'ph': (474, 560)},
+                    '16:00': {'dissolved_oxygen': (560, 659), 'temperature_c': (659, 761)},
+                },
+            },
+            {
+                'rows': ['Estufa São Paulo 1', 'Estufa São Paulo 2', 'Estufa São Paulo 3', 'Estufa Rio Grande do Sul 1'],
+                'times': ['07:00', '16:00'],
+                'fields_by_time': {
+                    '07:00': ['dissolved_oxygen', 'temperature_c', 'ph', 'ammonia', 'nitrite'],
+                    '16:00': ['dissolved_oxygen', 'temperature_c'],
+                },
+                'ocr_rows': [
+                    (759, 809), (809, 859), (859, 909), (909, 959),
+                ],
+                'ocr_cells': {
+                    '07:00': {
+                        'dissolved_oxygen': (239, 357), 'temperature_c': (357, 474), 'ph': (474, 560),
+                        'ammonia': (560, 646), 'nitrite': (646, 732),
+                    },
+                },
+            },
+        ],
+        'ocr': {
+            'base_size': (899, 1599),
+            'inner_margin': {'left': 0.08, 'right': 0.06, 'top': 0.06, 'bottom': 0.08},
+        },
+    },
+}
+
+
+def allowed_image_file(filename: str) -> bool:
+    ext = (filename.rsplit('.', 1)[-1].lower() if '.' in filename else '')
+    return ext in {'png', 'jpg', 'jpeg', 'webp'}
+
+
+def build_import_unit_lookup(units):
+    lookup = {}
+    for unit in units:
+        lookup[normalize_key(unit.name)] = unit.id
+    for alias, target_name in IMPORT_UNIT_ALIASES.items():
+        normalized_target = normalize_key(target_name)
+        if normalized_target in lookup:
+            lookup[normalize_key(alias)] = lookup[normalized_target]
+    return lookup
+
+
+def resolve_import_unit_id(unit_label, unit_lookup):
+    if not unit_label:
+        return None
+    return unit_lookup.get(normalize_key(unit_label))
+
+
+def preview_image_data_uri(image_bytes: bytes, mimetype: str) -> str:
+    if not image_bytes:
+        return ''
+    encoded = base64.b64encode(image_bytes).decode('ascii')
+    return f'data:{mimetype or "image/jpeg"};base64,{encoded}'
+
+
+def scale_box(box, size, base_size):
+    base_w, base_h = base_size
+    width, height = size
+    x0, x1 = box
+    return int(round(x0 / base_w * width)), int(round(x1 / base_w * width))
+
+
+def scale_row(row_bounds, size, base_size):
+    base_w, base_h = base_size
+    width, height = size
+    y0, y1 = row_bounds
+    return int(round(y0 / base_h * height)), int(round(y1 / base_h * height))
+
+
+def build_blank_import_rows(sheet_kind, base_date, units):
+    unit_lookup = build_import_unit_lookup(units)
+    rows = []
+    template = IMPORT_TEMPLATES[sheet_kind]
+    sections = template.get('sections') or [template]
+    for section in sections:
+        for unit_label in section['rows']:
+            unit_id = resolve_import_unit_id(unit_label, unit_lookup)
+            for time_label in section['times']:
+                monitor_date = base_date
+                if sheet_kind == 'night' and time_label in {'00:00', '02:00', '04:00'}:
+                    monitor_date = base_date + timedelta(days=1)
+                rows.append({
+                    'sheet_kind': sheet_kind,
+                    'unit_label': unit_label,
+                    'unit_id': unit_id,
+                    'monitor_date': monitor_date,
+                    'monitor_time': time_label,
+                    'dissolved_oxygen': None,
+                    'temperature_c': None,
+                    'ph': None,
+                    'salinity': None,
+                    'transparency_cm': None,
+                    'ammonia': None,
+                    'nitrite': None,
+                    'source': 'foto',
+                    'has_detected_value': False,
+                    'expected_fields': list(section['fields_by_time'].get(time_label, [])),
+                })
+    return rows
+
+
+def field_value_limits(field):
+    return {
+        'dissolved_oxygen': (0, 30),
+        'temperature_c': (10, 45),
+        'ph': (4, 10),
+        'salinity': (0, 80),
+        'transparency_cm': (0, 300),
+        'ammonia': (0, 10),
+        'nitrite': (0, 10),
+    }.get(field, (None, None))
+
+
+def coerce_ocr_number(raw_text, field):
+    text = str(raw_text or '').strip()
+    if not text:
+        return None
+    cleaned = []
+    for ch in text.replace('O', '0').replace('o', '0').replace('I', '1').replace('l', '1').replace(':', '.').replace(';', '.').replace(' ', ''):
+        if ch.isdigit() or ch in ',.':
+            cleaned.append(ch)
+    cleaned = ''.join(cleaned)
+    if not cleaned:
+        return None
+
+    digits = ''.join(ch for ch in cleaned if ch.isdigit())
+    candidate_strings = []
+    if any(ch in ',.' for ch in cleaned):
+        first = cleaned.replace(',', '.').replace('..', '.')
+        while '..' in first:
+            first = first.replace('..', '.')
+        if first.count('.') > 1:
+            dot_index = first.find('.')
+            first = first[:dot_index + 1] + first[dot_index + 1:].replace('.', '')
+        candidate_strings.append(first)
+    if digits:
+        if field == 'temperature_c':
+            if len(digits) >= 3:
+                candidate_strings.append(f"{digits[:2]}.{digits[2]}")
+                candidate_strings.append(f"{digits[0]}.{digits[1]}")
+            elif len(digits) == 2:
+                candidate_strings.append(digits)
+                candidate_strings.append(f"{digits[0]}.{digits[1]}")
+            else:
+                candidate_strings.append(digits)
+        else:
+            if len(digits) >= 2:
+                candidate_strings.append(f"{digits[0]}.{digits[1]}")
+                if len(digits) >= 3:
+                    candidate_strings.append(f"{digits[:2]}.{digits[2]}")
+            else:
+                candidate_strings.append(digits)
+
+    min_value, max_value = field_value_limits(field)
+    seen = set()
+    for candidate in candidate_strings:
+        candidate = candidate.strip('.')
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            value = float(candidate)
+        except ValueError:
+            continue
+        if min_value is not None and value < min_value:
+            continue
+        if max_value is not None and value > max_value:
+            continue
+        return round(value, 2)
+    return None
+
+
+def build_handwriting_mask(image_rgb, sheet_kind):
+    hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
+    if sheet_kind == 'night':
+        lower = np.array([90, 30, 20])
+        upper = np.array([170, 255, 255])
+    else:
+        lower = np.array([80, 20, 30])
+        upper = np.array([170, 255, 255])
+    mask = cv2.inRange(hsv, lower, upper)
+    mask = cv2.medianBlur(mask, 3)
+    return mask
+
+
+def ocr_value_from_box(mask, size, base_size, row_bounds, col_bounds, field, margins):
+    if not OCR_IMAGE_IMPORT_AVAILABLE:
+        return None
+    x0, x1 = scale_box(col_bounds, size, base_size)
+    y0, y1 = scale_row(row_bounds, size, base_size)
+    width = max(1, x1 - x0)
+    height = max(1, y1 - y0)
+    left = x0 + int(width * margins.get('left', 0.08))
+    right = x1 - int(width * margins.get('right', 0.06))
+    top = y0 + int(height * margins.get('top', 0.06))
+    bottom = y1 - int(height * margins.get('bottom', 0.08))
+    if right <= left or bottom <= top:
+        return None
+    crop = mask[top:bottom, left:right]
+    ys, xs = np.where(crop > 0)
+    if len(xs) < 8:
+        return None
+    x_start, x_end = xs.min(), xs.max() + 1
+    y_start, y_end = ys.min(), ys.max() + 1
+    cropped = crop[max(0, y_start - 2):min(crop.shape[0], y_end + 2), max(0, x_start - 2):min(crop.shape[1], x_end + 2)]
+    if cropped.size == 0:
+        return None
+    enlarged = cv2.resize(cropped, None, fx=10, fy=10, interpolation=cv2.INTER_CUBIC)
+    enlarged = cv2.GaussianBlur(enlarged, (3, 3), 0)
+    inverted = 255 - enlarged
+    text_variants = [
+        pytesseract.image_to_string(inverted, config='--psm 7 -c tessedit_char_whitelist=0123456789,.').strip(),
+        pytesseract.image_to_string(inverted, config='--psm 13 -c tessedit_char_whitelist=0123456789,.').strip(),
+    ]
+    for candidate in text_variants:
+        value = coerce_ocr_number(candidate, field)
+        if value is not None:
+            return value
+    return None
+
+
+def apply_ocr_to_preview_rows(preview_rows, image_bytes, sheet_kind):
+    warnings = []
+    if not OCR_IMAGE_IMPORT_AVAILABLE:
+        warnings.append('A leitura automática por OCR não está disponível neste ambiente. A grade foi montada para conferência/manual.')
+        return preview_rows, warnings
+    try:
+        image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        image_rgb = np.array(image)
+        mask = build_handwriting_mask(image_rgb, sheet_kind)
+    except Exception:
+        warnings.append('Não foi possível processar a foto enviada. Você ainda pode preencher a grade manualmente.')
+        return preview_rows, warnings
+
+    template = IMPORT_TEMPLATES[sheet_kind]
+    sections = template.get('sections') or [template]
+    size = image.size
+    base_size = template.get('ocr', {}).get('base_size', image.size)
+    margins = template.get('ocr', {}).get('inner_margin', {'left': 0.08, 'right': 0.06, 'top': 0.06, 'bottom': 0.08})
+    row_index = 0
+    for section in sections:
+        ocr_rows = section.get('ocr_rows') or template.get('ocr', {}).get('rows') or []
+        ocr_cells = section.get('ocr_cells') or template.get('ocr', {}).get('cells') or {}
+        for idx, unit_label in enumerate(section['rows']):
+            if idx >= len(ocr_rows):
+                row_index += len(section['times'])
+                continue
+            row_bounds = ocr_rows[idx]
+            for time_label in section['times']:
+                if row_index >= len(preview_rows):
+                    break
+                row = preview_rows[row_index]
+                row_index += 1
+                for field in section['fields_by_time'].get(time_label, []):
+                    col_bounds = (ocr_cells.get(time_label) or {}).get(field)
+                    if not col_bounds:
+                        continue
+                    value = ocr_value_from_box(mask, size, base_size, row_bounds, col_bounds, field, margins)
+                    if value is not None:
+                        row[field] = value
+                        row['has_detected_value'] = True
+    detected = sum(1 for row in preview_rows if row['has_detected_value'])
+    if detected == 0:
+        warnings.append('A foto foi carregada, mas a leitura automática encontrou poucos números. Revise e complete manualmente antes de salvar.')
+    else:
+        warnings.append(f'Leitura automática concluída em modo assistido. {detected} linha(s) vieram com algum valor preenchido e devem ser conferidas antes de salvar.')
+    return preview_rows, warnings
+
+
+def build_import_preview(sheet_kind, base_date, units, image_bytes):
+    preview_rows = build_blank_import_rows(sheet_kind, base_date, units)
+    warnings = []
+    if image_bytes:
+        preview_rows, warnings = apply_ocr_to_preview_rows(preview_rows, image_bytes, sheet_kind)
+    populated = [row for row in preview_rows if row['has_detected_value']]
+    if populated:
+        preview_rows = populated
+    return preview_rows, warnings
+
+
+def row_has_any_value(row):
+    for field in ('dissolved_oxygen', 'temperature_c', 'ph', 'salinity', 'transparency_cm', 'ammonia', 'nitrite'):
+        if row.get(field) not in (None, ''):
+            return True
+    return False
+
+
+def upsert_imported_water_row(row, lot=None):
+    monitor_time = parse_time(row['monitor_time'])
+    existing = WaterMonitoring.query.filter_by(
+        unit_id=row['unit_id'],
+        monitor_date=row['monitor_date'],
+        monitor_time=monitor_time,
+    ).order_by(WaterMonitoring.id.desc()).first()
+    target = existing or WaterMonitoring(
+        unit_id=row['unit_id'],
+        monitor_date=row['monitor_date'],
+        monitor_time=monitor_time,
+    )
+    target.shift = infer_shift_from_time(monitor_time)
+    target.lot_id = lot.id if lot else None
+    target.temperature_c = parse_float(row.get('temperature_c'))
+    target.dissolved_oxygen = parse_float(row.get('dissolved_oxygen'))
+    target.ph = parse_float(row.get('ph'))
+    target.salinity = parse_float(row.get('salinity'))
+    target.transparency_cm = parse_float(row.get('transparency_cm'))
+    target.ammonia = parse_float(row.get('ammonia'))
+    target.nitrite = parse_float(row.get('nitrite'))
+    if existing is None:
+        db.session.add(target)
+    return existing is None
+
+
+def render_water_page(import_preview_rows=None, import_warnings=None, import_sheet_kind='night', import_base_date=None, import_preview_image=None):
+    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+    selected_unit_id = request.args.get('unit_id', type=int)
+    sort_by = request.args.get('sort_by', 'monitor_date')
+    sort_dir = 'asc' if request.args.get('sort_dir', 'desc').lower() == 'asc' else 'desc'
+
+    records_query = WaterMonitoring.query.join(Unit)
+    if selected_unit_id:
+        records_query = records_query.filter(WaterMonitoring.unit_id == selected_unit_id)
+
+    sort_map = {
+        'monitor_date': [WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'monitor_time': [WaterMonitoring.monitor_time, WaterMonitoring.monitor_date, WaterMonitoring.id],
+        'shift': [WaterMonitoring.shift, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'unit': [func.lower(Unit.name), WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'od': [WaterMonitoring.dissolved_oxygen, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'ph': [WaterMonitoring.ph, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'temperature': [WaterMonitoring.temperature_c, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'salinity': [WaterMonitoring.salinity, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+    }
+    order_columns = sort_map.get(sort_by, sort_map['monitor_date'])
+    ordered = [col.asc().nullslast() if sort_dir == 'asc' else col.desc().nullslast() for col in order_columns]
+    records = records_query.order_by(*ordered).limit(100).all()
+
+    edit_id = request.args.get('edit_id', type=int)
+    edit_record = db.session.get(WaterMonitoring, edit_id) if edit_id else None
+    selected_unit = db.session.get(Unit, selected_unit_id) if selected_unit_id else None
+    return render_template(
+        'water.html',
+        units=units,
+        records=records,
+        today=date.today(),
+        edit_record=edit_record,
+        selected_unit_id=selected_unit_id,
+        selected_unit=selected_unit,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        sort_indicator=sort_indicator,
+        build_sort_url=build_sort_url,
+        batch_slots=batch_monitor_slots(),
+        reference_config=get_water_reference_config(),
+        reference_summary=build_reference_summary(),
+        import_preview_rows=import_preview_rows or [],
+        import_warnings=import_warnings or [],
+        import_sheet_kind=import_sheet_kind,
+        import_base_date=import_base_date or date.today(),
+        import_preview_image=import_preview_image,
+        ocr_import_available=OCR_IMAGE_IMPORT_AVAILABLE,
+    )
 
 
 def combine_monitor_datetime(record):
@@ -965,6 +1431,84 @@ def lots_page():
 def water_page():
     if request.method == 'POST':
         mode = request.form.get('entry_mode', 'single')
+
+        if mode == 'import_parse':
+            units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+            sheet_kind = request.form.get('sheet_kind', 'night')
+            if sheet_kind not in IMPORT_TEMPLATES:
+                sheet_kind = 'night'
+            base_date = parse_date(request.form.get('base_date'), date.today())
+            upload = request.files.get('sheet_photo')
+            if not upload or not upload.filename:
+                flash('Envie uma foto da ficha para montar a prévia da importação.', 'warning')
+                return redirect(url_for('water_page'))
+            if not allowed_image_file(upload.filename):
+                flash('Envie a ficha em JPG, PNG ou WEBP.', 'warning')
+                return redirect(url_for('water_page'))
+            image_bytes = upload.read()
+            preview_rows, warnings = build_import_preview(sheet_kind, base_date, units, image_bytes)
+            preview_image = preview_image_data_uri(image_bytes, upload.mimetype or 'image/jpeg')
+            return render_water_page(
+                import_preview_rows=preview_rows,
+                import_warnings=warnings,
+                import_sheet_kind=sheet_kind,
+                import_base_date=base_date,
+                import_preview_image=preview_image,
+            )
+
+        if mode == 'import_confirm':
+            sheet_kind = request.form.get('sheet_kind', 'night')
+            unit_ids = request.form.getlist('preview_unit_id')
+            monitor_dates = request.form.getlist('preview_monitor_date')
+            monitor_times = request.form.getlist('preview_monitor_time')
+            ods = request.form.getlist('preview_dissolved_oxygen')
+            temps = request.form.getlist('preview_temperature_c')
+            phs = request.form.getlist('preview_ph')
+            salinities = request.form.getlist('preview_salinity')
+            transparencies = request.form.getlist('preview_transparency_cm')
+            ammonias = request.form.getlist('preview_ammonia')
+            nitrites = request.form.getlist('preview_nitrite')
+
+            created = 0
+            updated = 0
+            for idx, raw_unit_id in enumerate(unit_ids):
+                unit_id = parse_int(raw_unit_id)
+                if not unit_id:
+                    continue
+                row = {
+                    'unit_id': unit_id,
+                    'monitor_date': parse_date(monitor_dates[idx], date.today()),
+                    'monitor_time': monitor_times[idx],
+                    'dissolved_oxygen': ods[idx],
+                    'temperature_c': temps[idx],
+                    'ph': phs[idx],
+                    'salinity': salinities[idx],
+                    'transparency_cm': transparencies[idx],
+                    'ammonia': ammonias[idx],
+                    'nitrite': nitrites[idx],
+                }
+                if not row_has_any_value(row):
+                    continue
+                lot = active_lot_for_unit(unit_id)
+                was_created = upsert_imported_water_row(row, lot=lot)
+                if was_created:
+                    created += 1
+                else:
+                    updated += 1
+
+            if created == 0 and updated == 0:
+                flash('Nenhuma linha válida foi confirmada na importação.', 'warning')
+                return redirect(url_for('water_page'))
+
+            db.session.commit()
+            extra = []
+            if created:
+                extra.append(f'{created} novo(s)')
+            if updated:
+                extra.append(f'{updated} atualizado(s)')
+            flash(f'Importação da {IMPORT_TEMPLATES.get(sheet_kind, {}).get("label", "ficha").lower()} concluída: ' + ', '.join(extra) + '.', 'success')
+            return redirect(url_for('water_page'))
+
         unit_id = int(request.form['unit_id'])
         lot = active_lot_for_unit(unit_id)
         monitor_date = parse_date(request.form.get('monitor_date'), date.today())
@@ -1033,48 +1577,7 @@ def water_page():
         flash('Monitoramento da água lançado.', 'success')
         return redirect(url_for('water_page', unit_id=unit_id))
 
-    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
-    selected_unit_id = request.args.get('unit_id', type=int)
-    sort_by = request.args.get('sort_by', 'monitor_date')
-    sort_dir = 'asc' if request.args.get('sort_dir', 'desc').lower() == 'asc' else 'desc'
-
-    records_query = WaterMonitoring.query.join(Unit)
-    if selected_unit_id:
-        records_query = records_query.filter(WaterMonitoring.unit_id == selected_unit_id)
-
-    sort_map = {
-        'monitor_date': [WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'monitor_time': [WaterMonitoring.monitor_time, WaterMonitoring.monitor_date, WaterMonitoring.id],
-        'shift': [WaterMonitoring.shift, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'unit': [func.lower(Unit.name), WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'od': [WaterMonitoring.dissolved_oxygen, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'ph': [WaterMonitoring.ph, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'temperature': [WaterMonitoring.temperature_c, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'salinity': [WaterMonitoring.salinity, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-    }
-    order_columns = sort_map.get(sort_by, sort_map['monitor_date'])
-    ordered = [col.asc().nullslast() if sort_dir == 'asc' else col.desc().nullslast() for col in order_columns]
-    records = records_query.order_by(*ordered).limit(100).all()
-
-    edit_id = request.args.get('edit_id', type=int)
-    edit_record = db.session.get(WaterMonitoring, edit_id) if edit_id else None
-    selected_unit = db.session.get(Unit, selected_unit_id) if selected_unit_id else None
-    return render_template(
-        'water.html',
-        units=units,
-        records=records,
-        today=date.today(),
-        edit_record=edit_record,
-        selected_unit_id=selected_unit_id,
-        selected_unit=selected_unit,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
-        sort_indicator=sort_indicator,
-        build_sort_url=build_sort_url,
-        batch_slots=batch_monitor_slots(),
-        reference_config=get_water_reference_config(),
-        reference_summary=build_reference_summary(),
-    )
+    return render_water_page()
 
 
 @app.route('/management', methods=['GET', 'POST'])
