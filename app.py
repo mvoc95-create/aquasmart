@@ -4,6 +4,7 @@ import json
 import os
 import re
 import unicodedata
+from collections import defaultdict
 from functools import wraps
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -176,14 +177,20 @@ class DailyManagement(db.Model):
     manage_date = db.Column(db.Date, nullable=False)
     unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'), nullable=False)
     lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
+    feed_product_id = db.Column(db.Integer, db.ForeignKey('feed_product.id'))
     feed_offered_kg = db.Column(db.Float, default=0)
     feed_consumed_kg = db.Column(db.Float, default=0)
+    feed_unit_cost = db.Column(db.Float)
+    feed_total_cost = db.Column(db.Float, default=0)
     mortality_qty = db.Column(db.Integer, default=0)
     average_weight_g = db.Column(db.Float)
     estimated_biomass_kg = db.Column(db.Float)
     notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     unit = db.relationship('Unit')
     lot = db.relationship('Lot')
+    feed_product = db.relationship('FeedProduct')
 
 
 class ProtocolDocument(db.Model):
@@ -250,14 +257,51 @@ class Transfer(db.Model):
     source_lot = db.relationship('Lot')
 
 
+class FeedProduct(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    brand = db.Column(db.String(120), nullable=False)
+    feed_type = db.Column(db.String(120), nullable=False)
+    protein_pct = db.Column(db.Float)
+    pellet_size_mm = db.Column(db.Float)
+    minimum_stock_kg = db.Column(db.Float, nullable=False, default=0)
+    notes = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    @property
+    def full_name(self):
+        parts = [part.strip() for part in [self.brand, self.feed_type] if part and part.strip()]
+        return ' · '.join(parts) if parts else f'Ração #{self.id}'
+
+    @property
+    def technical_summary(self):
+        details = []
+        if self.protein_pct is not None:
+            details.append(f'{self.protein_pct:g}% PB')
+        if self.pellet_size_mm is not None:
+            details.append(f'{self.pellet_size_mm:g} mm')
+        return ' · '.join(details)
+
+
 class FeedInventory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     movement_date = db.Column(db.Date, nullable=False)
     feed_name = db.Column(db.String(80), nullable=False)
+    feed_product_id = db.Column(db.Integer, db.ForeignKey('feed_product.id'))
     movement_type = db.Column(db.String(20), nullable=False)  # entrada / saida
     quantity_kg = db.Column(db.Float, nullable=False)
     unit_cost = db.Column(db.Float)
     notes = db.Column(db.Text)
+    source_type = db.Column(db.String(30), nullable=False, default='manual')
+    source_ref_id = db.Column(db.Integer)
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'))
+    lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    feed_product = db.relationship('FeedProduct')
+    unit = db.relationship('Unit')
+    lot = db.relationship('Lot')
+    created_by = db.relationship('User')
 
 
 class Sale(db.Model):
@@ -880,7 +924,7 @@ def run_lightweight_migrations():
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
 
-    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig):
+    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct):
         table_name = model.__table__.name
         if table_name not in tables:
             model.__table__.create(bind=db.engine)
@@ -932,6 +976,26 @@ def run_lightweight_migrations():
         add_column_if_missing('farm_document', farm_document_columns, 'uploaded_at', f"ALTER TABLE farm_document ADD COLUMN uploaded_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE farm_document ADD COLUMN uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         add_column_if_missing('farm_document', farm_document_columns, 'uploaded_by_id', 'ALTER TABLE farm_document ADD COLUMN uploaded_by_id INTEGER', 'ALTER TABLE farm_document ADD COLUMN uploaded_by_id INTEGER')
 
+    if 'daily_management' in tables:
+        daily_management_columns = get_columns('daily_management')
+        add_column_if_missing('daily_management', daily_management_columns, 'feed_product_id', 'ALTER TABLE daily_management ADD COLUMN feed_product_id INTEGER', 'ALTER TABLE daily_management ADD COLUMN feed_product_id INTEGER')
+        add_column_if_missing('daily_management', daily_management_columns, 'feed_unit_cost', 'ALTER TABLE daily_management ADD COLUMN feed_unit_cost FLOAT', 'ALTER TABLE daily_management ADD COLUMN feed_unit_cost DOUBLE PRECISION')
+        add_column_if_missing('daily_management', daily_management_columns, 'feed_total_cost', 'ALTER TABLE daily_management ADD COLUMN feed_total_cost FLOAT DEFAULT 0', 'ALTER TABLE daily_management ADD COLUMN feed_total_cost DOUBLE PRECISION DEFAULT 0')
+        add_column_if_missing('daily_management', daily_management_columns, 'created_at', f"ALTER TABLE daily_management ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE daily_management ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+        add_column_if_missing('daily_management', daily_management_columns, 'updated_at', f"ALTER TABLE daily_management ADD COLUMN updated_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE daily_management ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+
+    if 'feed_inventory' in tables:
+        feed_inventory_columns = get_columns('feed_inventory')
+        add_column_if_missing('feed_inventory', feed_inventory_columns, 'feed_product_id', 'ALTER TABLE feed_inventory ADD COLUMN feed_product_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN feed_product_id INTEGER')
+        add_column_if_missing('feed_inventory', feed_inventory_columns, 'source_type', "ALTER TABLE feed_inventory ADD COLUMN source_type VARCHAR(30) DEFAULT 'manual'", "ALTER TABLE feed_inventory ADD COLUMN source_type VARCHAR(30) DEFAULT 'manual'")
+        add_column_if_missing('feed_inventory', feed_inventory_columns, 'source_ref_id', 'ALTER TABLE feed_inventory ADD COLUMN source_ref_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN source_ref_id INTEGER')
+        add_column_if_missing('feed_inventory', feed_inventory_columns, 'unit_id', 'ALTER TABLE feed_inventory ADD COLUMN unit_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN unit_id INTEGER')
+        add_column_if_missing('feed_inventory', feed_inventory_columns, 'lot_id', 'ALTER TABLE feed_inventory ADD COLUMN lot_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN lot_id INTEGER')
+        add_column_if_missing('feed_inventory', feed_inventory_columns, 'created_by_id', 'ALTER TABLE feed_inventory ADD COLUMN created_by_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN created_by_id INTEGER')
+        add_column_if_missing('feed_inventory', feed_inventory_columns, 'created_at', f"ALTER TABLE feed_inventory ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE feed_inventory ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+
+    sync_feed_products_from_legacy_movements()
+
 
 def init_db():
     with app.app_context():
@@ -952,6 +1016,221 @@ def latest_water(unit_id):
 
 def latest_mgmt(unit_id):
     return DailyManagement.query.filter_by(unit_id=unit_id).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).first()
+
+
+def sync_feed_products_from_legacy_movements():
+    existing_products = {
+        normalize_text(f'{product.brand} {product.feed_type}'): product
+        for product in FeedProduct.query.all()
+    }
+
+    legacy_names = [name for (name,) in db.session.query(FeedInventory.feed_name).filter(FeedInventory.feed_name.isnot(None)).distinct().all() if name]
+    created = 0
+    for feed_name in legacy_names:
+        normalized = normalize_text(feed_name)
+        if not normalized or normalized in existing_products:
+            continue
+        product = FeedProduct(brand=feed_name.strip(), feed_type='Geral', active=True)
+        db.session.add(product)
+        db.session.flush()
+        existing_products[normalized] = product
+        created += 1
+
+    if created:
+        db.session.flush()
+
+    for movement in FeedInventory.query.filter(FeedInventory.feed_product_id.is_(None), FeedInventory.feed_name.isnot(None)).all():
+        product = existing_products.get(normalize_text(movement.feed_name))
+        if product:
+            movement.feed_product_id = product.id
+
+    db.session.commit()
+
+
+def feed_product_label(product):
+    if not product:
+        return 'Sem ração vinculada'
+    return product.full_name
+
+
+def movement_origin_label(value: str) -> str:
+    return {
+        'manual': 'Manual',
+        'manejo': 'Manejo diário',
+        'ajuste': 'Ajuste',
+    }.get(value or '', 'Manual')
+
+
+def weighted_feed_unit_cost(feed_product_id: int, up_to_date=None, exclude_movement_id=None):
+    query = FeedInventory.query.filter(
+        FeedInventory.feed_product_id == feed_product_id,
+        FeedInventory.movement_type == 'entrada',
+        FeedInventory.unit_cost.isnot(None),
+    )
+    if up_to_date is not None:
+        query = query.filter(FeedInventory.movement_date <= up_to_date)
+    if exclude_movement_id is not None:
+        query = query.filter(FeedInventory.id != exclude_movement_id)
+    entries = query.all()
+    total_qty = sum(entry.quantity_kg or 0 for entry in entries)
+    if total_qty <= 0:
+        return None
+    total_value = sum((entry.quantity_kg or 0) * (entry.unit_cost or 0) for entry in entries)
+    return round(total_value / total_qty, 4)
+
+
+def build_feed_stock_snapshot():
+    products = {product.id: product for product in FeedProduct.query.order_by(FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()}
+    rows_by_product = {}
+    total_stock = 0.0
+
+    for product in products.values():
+        rows_by_product[product.id] = {
+            'product': product,
+            'feed_name': product.full_name,
+            'brand': product.brand,
+            'feed_type': product.feed_type,
+            'technical_summary': product.technical_summary,
+            'minimum_stock_kg': round(product.minimum_stock_kg or 0, 1),
+            'stock_kg': 0.0,
+            'avg_unit_cost': weighted_feed_unit_cost(product.id),
+            'movement_count': 0,
+        }
+
+    for movement in FeedInventory.query.options(joinedload(FeedInventory.feed_product)).order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).all():
+        sign = 1 if movement.movement_type == 'entrada' else -1
+        stock_change = sign * (movement.quantity_kg or 0)
+        total_stock += stock_change
+        if movement.feed_product_id:
+            row = rows_by_product.setdefault(movement.feed_product_id, {
+                'product': movement.feed_product,
+                'feed_name': movement.feed_product.full_name if movement.feed_product else movement.feed_name,
+                'brand': movement.feed_product.brand if movement.feed_product else movement.feed_name,
+                'feed_type': movement.feed_product.feed_type if movement.feed_product else 'Geral',
+                'technical_summary': movement.feed_product.technical_summary if movement.feed_product else '',
+                'minimum_stock_kg': round((movement.feed_product.minimum_stock_kg if movement.feed_product else 0) or 0, 1),
+                'stock_kg': 0.0,
+                'avg_unit_cost': weighted_feed_unit_cost(movement.feed_product_id) if movement.feed_product_id else None,
+                'movement_count': 0,
+            })
+            row['stock_kg'] += stock_change
+            row['movement_count'] += 1
+
+    snapshot_rows = []
+    low_stock_count = 0
+    active_product_count = 0
+    for row in rows_by_product.values():
+        product = row['product']
+        if not product:
+            continue
+        active_product_count += 1 if product.active else 0
+        row['stock_kg'] = round(row['stock_kg'], 1)
+        minimum_stock = row['minimum_stock_kg'] or 0
+        row['status'] = 'baixo' if row['stock_kg'] <= minimum_stock and minimum_stock > 0 else 'ok'
+        if row['status'] == 'baixo':
+            low_stock_count += 1
+        snapshot_rows.append(row)
+
+    snapshot_rows.sort(key=lambda item: (item['product'].active is False, item['brand'].lower(), item['feed_type'].lower()))
+    return {
+        'rows': snapshot_rows,
+        'total_stock_kg': round(total_stock, 1),
+        'low_stock_count': low_stock_count,
+        'active_product_count': active_product_count,
+    }
+
+
+def available_stock_for_product(feed_product_id: int, exclude_movement_id=None) -> float:
+    total = 0.0
+    query = FeedInventory.query.filter(FeedInventory.feed_product_id == feed_product_id)
+    if exclude_movement_id is not None:
+        query = query.filter(FeedInventory.id != exclude_movement_id)
+    for movement in query.all():
+        total += movement.quantity_kg if movement.movement_type == 'entrada' else -(movement.quantity_kg or 0)
+    return round(total, 4)
+
+
+def get_management_feed_movement(management_id: int):
+    return FeedInventory.query.filter_by(source_type='manejo', source_ref_id=management_id).order_by(FeedInventory.id.desc()).first()
+
+
+def selected_feed_product_from_form():
+    feed_product_id = parse_int(request.form.get('feed_product_id'))
+    return db.session.get(FeedProduct, feed_product_id) if feed_product_id else None
+
+
+def validate_feed_usage(feed_product, offered_kg: float, existing_movement=None):
+    if offered_kg <= 0:
+        return None
+    if not feed_product:
+        return 'Selecione a ração utilizada no manejo.'
+    available_stock = available_stock_for_product(
+        feed_product.id,
+        exclude_movement_id=existing_movement.id if existing_movement else None,
+    )
+    if offered_kg > available_stock:
+        return f'Estoque insuficiente para {feed_product.full_name}. Disponível: {round(available_stock, 1)} kg.'
+    return None
+
+
+def sync_management_feed_movement(management_record: DailyManagement, feed_product, offered_kg: float, existing_movement=None):
+    if offered_kg <= 0 or not feed_product:
+        if existing_movement:
+            db.session.delete(existing_movement)
+        management_record.feed_unit_cost = None
+        management_record.feed_total_cost = 0
+        management_record.feed_product_id = None
+        return
+
+    management_record.feed_product_id = feed_product.id
+    unit_cost = weighted_feed_unit_cost(feed_product.id, up_to_date=management_record.manage_date, exclude_movement_id=existing_movement.id if existing_movement else None)
+    management_record.feed_unit_cost = unit_cost
+    management_record.feed_total_cost = round((unit_cost or 0) * offered_kg, 2)
+
+    movement = existing_movement or FeedInventory(source_type='manejo', source_ref_id=management_record.id)
+    movement.movement_date = management_record.manage_date
+    movement.feed_product_id = feed_product.id
+    movement.feed_name = feed_product.full_name
+    movement.movement_type = 'saida'
+    movement.quantity_kg = offered_kg
+    movement.unit_cost = unit_cost
+    movement.unit_id = management_record.unit_id
+    movement.lot_id = management_record.lot_id
+    movement.created_by_id = getattr(current_user, 'id', None)
+    movement.notes = f'Saída automática pelo manejo diário.'
+    if not existing_movement:
+        db.session.add(movement)
+
+
+def management_cost_summary(selected_unit_id=None):
+    query = DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.lot), joinedload(DailyManagement.feed_product))
+    if selected_unit_id:
+        query = query.filter(DailyManagement.unit_id == selected_unit_id)
+    records = query.order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).all()
+    total_offered = round(sum(record.feed_offered_kg or 0 for record in records), 1)
+    total_cost = round(sum(record.feed_total_cost or 0 for record in records), 2)
+    group_map = defaultdict(lambda: {'offered_kg': 0.0, 'cost_total': 0.0, 'records': 0, 'unit_name': '', 'lot_code': ''})
+    for record in records:
+        key = (record.unit_id, record.lot_id)
+        row = group_map[key]
+        row['unit_name'] = record.unit.name if record.unit else '—'
+        row['lot_code'] = record.lot.lot_code if record.lot else 'Sem lote'
+        row['offered_kg'] += record.feed_offered_kg or 0
+        row['cost_total'] += record.feed_total_cost or 0
+        row['records'] += 1
+    grouped_rows = []
+    for row in group_map.values():
+        row['offered_kg'] = round(row['offered_kg'], 1)
+        row['cost_total'] = round(row['cost_total'], 2)
+        row['avg_cost_per_kg'] = round((row['cost_total'] / row['offered_kg']), 2) if row['offered_kg'] > 0 else None
+        grouped_rows.append(row)
+    grouped_rows.sort(key=lambda item: (-item['cost_total'], item['unit_name']))
+    return {
+        'total_offered_kg': total_offered,
+        'total_cost': total_cost,
+        'avg_cost_per_kg': round((total_cost / total_offered), 2) if total_offered > 0 else None,
+        'grouped_rows': grouped_rows[:20],
+    }
 
 
 def water_status(rec, config=None):
@@ -1015,9 +1294,8 @@ def dashboard_data():
             'reasons': ', '.join(dict.fromkeys(reasons)),
         })
 
-    total_stock = db.session.query(
-        func.coalesce(func.sum(case((FeedInventory.movement_type == 'entrada', FeedInventory.quantity_kg), else_=-FeedInventory.quantity_kg)), 0)
-    ).scalar() or 0
+    feed_snapshot = build_feed_stock_snapshot()
+    total_stock = feed_snapshot['total_stock_kg']
     avg_daily_feed = db.session.query(func.coalesce(func.avg(DailyManagement.feed_offered_kg), 0)).filter(
         DailyManagement.manage_date >= today - timedelta(days=7)
     ).scalar() or 0
@@ -1032,6 +1310,7 @@ def dashboard_data():
         'water_alert_rows': water_alert_rows,
         'nursery_ready': nursery_ready,
         'feed_stock_kg': round(total_stock, 1),
+        'feed_low_stock_count': feed_snapshot['low_stock_count'],
         'feed_coverage_days': feed_coverage,
         'avg_daily_feed_kg': round(avg_daily_feed, 1),
         'semaforo': semaforo,
@@ -1125,17 +1404,12 @@ def dashboard_detail(kind):
         return render_template('dashboard_detail.html', kind=kind, title='Berçários prontos para transferência', subtitle='Berçários que já atingiram a meta configurada para saída à engorda.', metric_value=len(rows), metric_suffix='berçários', rows=rows, today=today, target_nursery_days=TARGET_NURSERY_DAYS)
 
     if kind == 'feed-stock':
-        all_movements = FeedInventory.query.order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).all()
-        grouped = {}
-        for movement in all_movements:
-            grouped.setdefault(movement.feed_name, 0)
-            grouped[movement.feed_name] += movement.quantity_kg if movement.movement_type == 'entrada' else -movement.quantity_kg
-        stock_rows = [{'feed_name': name, 'stock_kg': round(value, 1)} for name, value in sorted(grouped.items())]
-        movement_rows = all_movements[:100]
-        return render_template('dashboard_detail.html', kind=kind, title='Estoque de ração', subtitle='Saldo consolidado por tipo de ração e últimos movimentos lançados.', metric_value=data['feed_stock_kg'], metric_suffix='kg', rows=stock_rows, movement_rows=movement_rows, today=today)
+        snapshot = build_feed_stock_snapshot()
+        movement_rows = FeedInventory.query.options(joinedload(FeedInventory.feed_product), joinedload(FeedInventory.unit), joinedload(FeedInventory.lot)).order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).limit(100).all()
+        return render_template('dashboard_detail.html', kind=kind, title='Estoque de ração', subtitle='Saldo consolidado por produto, alertas de estoque mínimo e últimos movimentos lançados.', metric_value=data['feed_stock_kg'], metric_suffix='kg', rows=snapshot['rows'], movement_rows=movement_rows, today=today, low_stock_count=snapshot['low_stock_count'])
 
     if kind == 'feed-coverage':
-        recent_management = DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.lot)).filter(DailyManagement.manage_date >= today - timedelta(days=7)).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).all()
+        recent_management = DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.lot), joinedload(DailyManagement.feed_product)).filter(DailyManagement.manage_date >= today - timedelta(days=7)).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).all()
         return render_template('dashboard_detail.html', kind=kind, title='Cobertura de ração', subtitle='Estimativa baseada no estoque atual e na média recente de oferta de ração.', metric_value=data['feed_coverage_days'] if data['feed_coverage_days'] is not None else 'N/D', metric_suffix='dias', rows=recent_management, today=today, avg_daily_feed_kg=data['avg_daily_feed_kg'], feed_stock_kg=data['feed_stock_kg'])
 
     abort(404)
@@ -1451,30 +1725,49 @@ def management_page():
     if request.method == 'POST':
         unit_id = int(request.form['unit_id'])
         lot = active_lot_for_unit(unit_id)
+        feed_product = selected_feed_product_from_form()
+        feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
+        feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
+        if feed_consumed_kg > feed_offered_kg and feed_offered_kg > 0:
+            flash('A ração consumida não pode ser maior que a ofertada.', 'danger')
+            return redirect(url_for('management_page', unit_id=unit_id))
+        validation_error = validate_feed_usage(feed_product, feed_offered_kg)
+        if validation_error:
+            flash(validation_error, 'danger')
+            return redirect(url_for('management_page', unit_id=unit_id))
+
         rec = DailyManagement(
             manage_date=parse_date(request.form['manage_date'], date.today()),
             unit_id=unit_id,
             lot_id=lot.id if lot else None,
-            feed_offered_kg=parse_float(request.form.get('feed_offered_kg'), 0) or 0,
-            feed_consumed_kg=parse_float(request.form.get('feed_consumed_kg'), 0) or 0,
+            feed_product_id=feed_product.id if feed_product else None,
+            feed_offered_kg=feed_offered_kg,
+            feed_consumed_kg=feed_consumed_kg,
             mortality_qty=parse_int(request.form.get('mortality_qty'), 0) or 0,
             average_weight_g=parse_float(request.form.get('average_weight_g')),
             estimated_biomass_kg=parse_float(request.form.get('estimated_biomass_kg')),
-            notes=request.form.get('notes')
+            notes=request.form.get('notes'),
+            updated_at=datetime.utcnow(),
         )
         db.session.add(rec)
+        db.session.flush()
+        sync_management_feed_movement(rec, feed_product, feed_offered_kg)
         db.session.commit()
-        flash('Manejo diário lançado.', 'success')
+        flash('Manejo diário lançado com baixa automática da ração.', 'success')
         return redirect(url_for('management_page', unit_id=unit_id))
 
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     selected_unit_id = request.args.get('unit_id', type=int)
-    records_query = DailyManagement.query.join(Unit)
+    records_query = DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.lot), joinedload(DailyManagement.feed_product)).join(Unit)
     if selected_unit_id:
         records_query = records_query.filter(DailyManagement.unit_id == selected_unit_id)
     records = records_query.order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).limit(100).all()
     edit_id = request.args.get('edit_id', type=int)
     edit_record = db.session.get(DailyManagement, edit_id) if edit_id else None
+    feed_snapshot = build_feed_stock_snapshot()
+    stock_by_product = {row['product'].id: row['stock_kg'] for row in feed_snapshot['rows']}
+    feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
+    cost_summary = management_cost_summary(selected_unit_id)
     return render_template(
         'management.html',
         units=units,
@@ -1482,6 +1775,9 @@ def management_page():
         today=date.today(),
         edit_record=edit_record,
         selected_unit_id=selected_unit_id,
+        feed_products=feed_products,
+        stock_by_product=stock_by_product,
+        cost_summary=cost_summary,
     )
 
 
@@ -1506,6 +1802,7 @@ def previous_management_data():
         'ok': True,
         'record': {
             'manage_date': previous_record.manage_date.isoformat(),
+            'feed_product_id': previous_record.feed_product_id,
             'feed_offered_kg': previous_record.feed_offered_kg,
             'feed_consumed_kg': previous_record.feed_consumed_kg,
             'mortality_qty': previous_record.mortality_qty,
@@ -1553,19 +1850,37 @@ def edit_management_record(record_id):
     if not rec:
         flash('Registro de manejo não encontrado.', 'warning')
         return redirect(url_for('management_page'))
+
     unit_id = int(request.form['unit_id'])
     lot = active_lot_for_unit(unit_id)
+    feed_product = selected_feed_product_from_form()
+    feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
+    feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
+    existing_movement = get_management_feed_movement(record_id)
+
+    if feed_consumed_kg > feed_offered_kg and feed_offered_kg > 0:
+        flash('A ração consumida não pode ser maior que a ofertada.', 'danger')
+        return redirect(request.referrer or url_for('management_page'))
+
+    validation_error = validate_feed_usage(feed_product, feed_offered_kg, existing_movement=existing_movement)
+    if validation_error:
+        flash(validation_error, 'danger')
+        return redirect(request.referrer or url_for('management_page'))
+
     rec.manage_date = parse_date(request.form['manage_date'], rec.manage_date)
     rec.unit_id = unit_id
     rec.lot_id = lot.id if lot else None
-    rec.feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
-    rec.feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
+    rec.feed_product_id = feed_product.id if feed_product else None
+    rec.feed_offered_kg = feed_offered_kg
+    rec.feed_consumed_kg = feed_consumed_kg
     rec.mortality_qty = parse_int(request.form.get('mortality_qty'), 0) or 0
     rec.average_weight_g = parse_float(request.form.get('average_weight_g'))
     rec.estimated_biomass_kg = parse_float(request.form.get('estimated_biomass_kg'))
     rec.notes = request.form.get('notes')
+    rec.updated_at = datetime.utcnow()
+    sync_management_feed_movement(rec, feed_product, feed_offered_kg, existing_movement=existing_movement)
     db.session.commit()
-    flash('Registro de manejo atualizado.', 'success')
+    flash('Registro de manejo atualizado com estoque recalculado.', 'success')
     return redirect(request.referrer or url_for('management_page'))
 
 
@@ -1591,9 +1906,12 @@ def delete_management_record(record_id):
     if not rec:
         flash('Registro de manejo não encontrado.', 'warning')
         return redirect(url_for('management_page'))
+    linked_movement = get_management_feed_movement(record_id)
+    if linked_movement:
+        db.session.delete(linked_movement)
     db.session.delete(rec)
     db.session.commit()
-    flash('Registro de manejo excluído.', 'success')
+    flash('Registro de manejo excluído e estoque recalculado.', 'success')
     return redirect(request.referrer or url_for('management_page'))
 
 
@@ -2006,23 +2324,100 @@ def transfers_page():
 @requires_permission('feed_manage')
 def feed_page():
     if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'movement')
+        if form_mode == 'product':
+            brand = (request.form.get('brand') or '').strip()
+            feed_type = (request.form.get('feed_type') or '').strip()
+            if not brand or not feed_type:
+                flash('Informe marca e tipo da ração para cadastrar o produto.', 'danger')
+                return redirect(url_for('feed_page'))
+
+            existing = FeedProduct.query.filter(
+                func.lower(FeedProduct.brand) == brand.lower(),
+                func.lower(FeedProduct.feed_type) == feed_type.lower(),
+            ).first()
+            if existing:
+                flash('Já existe uma ração cadastrada com essa marca e tipo.', 'warning')
+                return redirect(url_for('feed_page'))
+
+            product = FeedProduct(
+                brand=brand,
+                feed_type=feed_type,
+                protein_pct=parse_float(request.form.get('protein_pct')),
+                pellet_size_mm=parse_float(request.form.get('pellet_size_mm')),
+                minimum_stock_kg=parse_float(request.form.get('minimum_stock_kg'), 0) or 0,
+                notes=request.form.get('product_notes'),
+                active=True,
+            )
+            db.session.add(product)
+            db.session.commit()
+            flash('Produto de ração cadastrado com sucesso.', 'success')
+            return redirect(url_for('feed_page'))
+
+        feed_product_id = parse_int(request.form.get('feed_product_id'))
+        feed_product = db.session.get(FeedProduct, feed_product_id) if feed_product_id else None
+        if not feed_product:
+            flash('Selecione a ração que será movimentada.', 'danger')
+            return redirect(url_for('feed_page'))
+
+        movement_type = request.form['movement_type']
+        quantity_kg = parse_float(request.form.get('quantity_kg'))
+        if quantity_kg is None or quantity_kg <= 0:
+            flash('Informe uma quantidade válida em kg.', 'danger')
+            return redirect(url_for('feed_page'))
+
+        if movement_type == 'saida':
+            available_stock = available_stock_for_product(feed_product.id)
+            if quantity_kg > available_stock:
+                flash(f'Estoque insuficiente para {feed_product.full_name}. Disponível: {round(available_stock, 1)} kg.', 'danger')
+                return redirect(url_for('feed_page'))
+
         row = FeedInventory(
             movement_date=parse_date(request.form['movement_date'], date.today()),
-            feed_name=request.form['feed_name'],
-            movement_type=request.form['movement_type'],
-            quantity_kg=float(request.form['quantity_kg']),
-            unit_cost=float(request.form['unit_cost']) if request.form.get('unit_cost') else None,
-            notes=request.form.get('notes')
+            feed_name=feed_product.full_name,
+            feed_product_id=feed_product.id,
+            movement_type=movement_type,
+            quantity_kg=quantity_kg,
+            unit_cost=parse_float(request.form.get('unit_cost')),
+            notes=request.form.get('notes'),
+            source_type='manual',
+            created_by_id=getattr(current_user, 'id', None),
         )
         db.session.add(row)
         db.session.commit()
         flash('Movimentação de ração lançada.', 'success')
         return redirect(url_for('feed_page'))
-    rows = FeedInventory.query.order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).limit(50).all()
-    total_stock = db.session.query(
-        func.coalesce(func.sum(case((FeedInventory.movement_type == 'entrada', FeedInventory.quantity_kg), else_=-FeedInventory.quantity_kg)), 0)
-    ).scalar() or 0
-    return render_template('feed.html', rows=rows, today=date.today(), total_stock=round(total_stock, 1))
+
+    snapshot = build_feed_stock_snapshot()
+    rows = FeedInventory.query.options(joinedload(FeedInventory.feed_product), joinedload(FeedInventory.unit), joinedload(FeedInventory.lot)).order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).limit(80).all()
+    feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
+    stock_by_product = {row['product'].id: row['stock_kg'] for row in snapshot['rows']}
+    return render_template(
+        'feed.html',
+        rows=rows,
+        today=date.today(),
+        total_stock=snapshot['total_stock_kg'],
+        snapshot_rows=snapshot['rows'],
+        low_stock_count=snapshot['low_stock_count'],
+        active_product_count=snapshot['active_product_count'],
+        feed_products=feed_products,
+        stock_by_product=stock_by_product,
+        movement_origin_label=movement_origin_label,
+    )
+
+
+@app.post('/feed/products/<int:product_id>/toggle')
+@login_required
+@requires_permission('feed_manage')
+def toggle_feed_product(product_id):
+    product = db.session.get(FeedProduct, product_id)
+    if not product:
+        flash('Produto de ração não encontrado.', 'warning')
+        return redirect(url_for('feed_page'))
+    product.active = not product.active
+    db.session.commit()
+    flash('Status do produto atualizado.', 'success')
+    return redirect(url_for('feed_page'))
 
 
 @app.route('/sales', methods=['GET', 'POST'])
