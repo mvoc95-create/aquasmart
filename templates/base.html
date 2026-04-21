@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title or 'Sistema Fazenda Aqua Smart' }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 </head>
 <body>
   <div class="app-shell">
@@ -28,38 +29,74 @@
 
       <nav class="nav-list">
         {% if current_user.is_authenticated and current_user.has_permission('dashboard') %}
-        <a class="nav-link {{ 'active' if current_endpoint in ['index', 'dashboard_detail'] else '' }}" href="{{ url_for('index') }}">Painel operacional</a>
-        <a class="nav-link {{ 'active' if current_endpoint == 'charts_page' else '' }}" href="{{ url_for('charts_page') }}">Gráficos</a>
+        <a class="nav-link {{ 'active' if current_endpoint in ['index', 'dashboard_detail'] else '' }}" href="{{ url_for('index') }}">
+          <span class="nav-icon"><i class="fa-solid fa-gauge-high"></i></span>
+          <span class="nav-text">Painel operacional</span>
+        </a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'charts_page' else '' }}" href="{{ url_for('charts_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-chart-line"></i></span>
+          <span class="nav-text">Gráficos</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('units_view') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'units_page' else '' }}" href="{{ url_for('units_page') }}">Unidades</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'units_page' else '' }}" href="{{ url_for('units_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-table-cells-large"></i></span>
+          <span class="nav-text">Unidades</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('lots_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'lots_page' else '' }}" href="{{ url_for('lots_page') }}">Lotes</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'lots_page' else '' }}" href="{{ url_for('lots_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-fish"></i></span>
+          <span class="nav-text">Lotes</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('water_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'water_page' else '' }}" href="{{ url_for('water_page') }}">Monitoramento da água</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'water_page' else '' }}" href="{{ url_for('water_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-droplet"></i></span>
+          <span class="nav-text">Monitoramento da água</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('management_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'management_page' else '' }}" href="{{ url_for('management_page') }}">Manejo diário</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'management_page' else '' }}" href="{{ url_for('management_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-clipboard-list"></i></span>
+          <span class="nav-text">Manejo diário</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('transfers_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'transfers_page' else '' }}" href="{{ url_for('transfers_page') }}">Transferências</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'transfers_page' else '' }}" href="{{ url_for('transfers_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-right-left"></i></span>
+          <span class="nav-text">Transferências</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('feed_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'feed_page' else '' }}" href="{{ url_for('feed_page') }}">Ração</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'feed_page' else '' }}" href="{{ url_for('feed_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-wheat-awn"></i></span>
+          <span class="nav-text">Ração</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('sales_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'sales_page' else '' }}" href="{{ url_for('sales_page') }}">Despesca e vendas</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'sales_page' else '' }}" href="{{ url_for('sales_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-cart-shopping"></i></span>
+          <span class="nav-text">Despesca e vendas</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('protocols_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'protocols_page' else '' }}" href="{{ url_for('protocols_page') }}">Protocolos</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'protocols_page' else '' }}" href="{{ url_for('protocols_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-file-lines"></i></span>
+          <span class="nav-text">Protocolos</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('farm_documents_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'farm_documents_page' else '' }}" href="{{ url_for('farm_documents_page') }}">Documentos da fazenda</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'farm_documents_page' else '' }}" href="{{ url_for('farm_documents_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-folder-open"></i></span>
+          <span class="nav-text">Documentos da fazenda</span>
+        </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('users_manage') %}
-        <a class="nav-link {{ 'active' if current_endpoint == 'users_page' else '' }}" href="{{ url_for('users_page') }}">Usuários e acessos</a>
+        <a class="nav-link {{ 'active' if current_endpoint == 'users_page' else '' }}" href="{{ url_for('users_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-user-shield"></i></span>
+          <span class="nav-text">Usuários e acessos</span>
+        </a>
         {% endif %}
       </nav>
 
