@@ -198,3 +198,6 @@ button:hover{transform:translateY(-1px)}
 .reference-collapse-summary::-webkit-details-marker{display:none}
 .reference-collapse-summary h2{margin:0;font-size:22px}
 .reference-collapse-summary .panel-kicker{margin-bottom:6px}
+
+.selection-info{grid-column:1/-1;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:#f8fbff;color:var(--muted);font-weight:600;line-height:1.5}
+.table-wrap .badge{margin-right:6px}
