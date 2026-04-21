@@ -876,9 +876,9 @@ def seed_admin_user():
 
 def run_lightweight_migrations():
     """Creates missing tables and columns without Alembic for easier setup by non-technical users."""
+    dialect = db.engine.dialect.name
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
-    dialect = db.engine.dialect.name
 
     for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig):
         table_name = model.__table__.name
@@ -886,29 +886,51 @@ def run_lightweight_migrations():
             model.__table__.create(bind=db.engine)
             tables.add(table_name)
 
-    if 'user' not in tables:
-        return
-    columns = {col['name'] for col in inspector.get_columns('user')}
+    def refresh_inspector():
+        return inspect(db.engine)
 
-    def add_column_if_missing(name: str, sql_sqlite: str, sql_pg: str | None = None):
-        if name in columns:
-            return
+    def get_columns(table_name: str):
+        return {col['name'] for col in refresh_inspector().get_columns(table_name)} if table_name in tables else set()
+
+    def run_sql(sql_sqlite: str, sql_pg: str | None = None):
         sql = sql_sqlite if dialect == 'sqlite' or sql_pg is None else sql_pg
         with db.engine.begin() as conn:
             conn.execute(text(sql))
-        columns.add(name)
 
-    add_column_if_missing('email', 'ALTER TABLE user ADD COLUMN email VARCHAR(120)', 'ALTER TABLE "user" ADD COLUMN email VARCHAR(120)')
-    add_column_if_missing('last_login_at', 'ALTER TABLE user ADD COLUMN last_login_at DATETIME', 'ALTER TABLE "user" ADD COLUMN last_login_at TIMESTAMP')
-    add_column_if_missing('created_at', f"ALTER TABLE user ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE "user" ADD COLUMN created_at TIMESTAMP')
-    add_column_if_missing('is_active_user', 'ALTER TABLE user ADD COLUMN is_active_user BOOLEAN DEFAULT 1', 'ALTER TABLE "user" ADD COLUMN is_active_user BOOLEAN DEFAULT TRUE')
+    def add_column_if_missing(table_name: str, columns_cache: set[str], column_name: str, sql_sqlite: str, sql_pg: str | None = None):
+        if table_name not in tables or column_name in columns_cache:
+            return
+        run_sql(sql_sqlite, sql_pg)
+        columns_cache.add(column_name)
+
+    if 'user' in tables:
+        user_columns = get_columns('user')
+        add_column_if_missing('user', user_columns, 'email', 'ALTER TABLE user ADD COLUMN email VARCHAR(120)', 'ALTER TABLE "user" ADD COLUMN email VARCHAR(120)')
+        add_column_if_missing('user', user_columns, 'last_login_at', 'ALTER TABLE user ADD COLUMN last_login_at DATETIME', 'ALTER TABLE "user" ADD COLUMN last_login_at TIMESTAMP')
+        add_column_if_missing('user', user_columns, 'created_at', f"ALTER TABLE user ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE "user" ADD COLUMN created_at TIMESTAMP')
+        add_column_if_missing('user', user_columns, 'is_active_user', 'ALTER TABLE user ADD COLUMN is_active_user BOOLEAN DEFAULT 1', 'ALTER TABLE "user" ADD COLUMN is_active_user BOOLEAN DEFAULT TRUE')
 
     if 'water_monitoring' in tables:
-        water_columns = {col['name'] for col in inspector.get_columns('water_monitoring')}
-        if 'monitor_time' not in water_columns:
-            sql = 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME'
-            with db.engine.begin() as conn:
-                conn.execute(text(sql))
+        water_columns = get_columns('water_monitoring')
+        add_column_if_missing('water_monitoring', water_columns, 'monitor_time', 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME')
+
+    if 'protocol_document' in tables:
+        protocol_columns = get_columns('protocol_document')
+        add_column_if_missing('protocol_document', protocol_columns, 'notes', 'ALTER TABLE protocol_document ADD COLUMN notes TEXT')
+        add_column_if_missing('protocol_document', protocol_columns, 'original_filename', 'ALTER TABLE protocol_document ADD COLUMN original_filename VARCHAR(255)', 'ALTER TABLE protocol_document ADD COLUMN original_filename VARCHAR(255)')
+        add_column_if_missing('protocol_document', protocol_columns, 'mime_type', 'ALTER TABLE protocol_document ADD COLUMN mime_type VARCHAR(120)', 'ALTER TABLE protocol_document ADD COLUMN mime_type VARCHAR(120)')
+        add_column_if_missing('protocol_document', protocol_columns, 'file_size', 'ALTER TABLE protocol_document ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE protocol_document ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0')
+        add_column_if_missing('protocol_document', protocol_columns, 'uploaded_at', f"ALTER TABLE protocol_document ADD COLUMN uploaded_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE protocol_document ADD COLUMN uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+        add_column_if_missing('protocol_document', protocol_columns, 'uploaded_by_id', 'ALTER TABLE protocol_document ADD COLUMN uploaded_by_id INTEGER', 'ALTER TABLE protocol_document ADD COLUMN uploaded_by_id INTEGER')
+
+    if 'farm_document' in tables:
+        farm_document_columns = get_columns('farm_document')
+        add_column_if_missing('farm_document', farm_document_columns, 'notes', 'ALTER TABLE farm_document ADD COLUMN notes TEXT')
+        add_column_if_missing('farm_document', farm_document_columns, 'original_filename', 'ALTER TABLE farm_document ADD COLUMN original_filename VARCHAR(255)', 'ALTER TABLE farm_document ADD COLUMN original_filename VARCHAR(255)')
+        add_column_if_missing('farm_document', farm_document_columns, 'mime_type', 'ALTER TABLE farm_document ADD COLUMN mime_type VARCHAR(120)', 'ALTER TABLE farm_document ADD COLUMN mime_type VARCHAR(120)')
+        add_column_if_missing('farm_document', farm_document_columns, 'file_size', 'ALTER TABLE farm_document ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE farm_document ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0')
+        add_column_if_missing('farm_document', farm_document_columns, 'uploaded_at', f"ALTER TABLE farm_document ADD COLUMN uploaded_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE farm_document ADD COLUMN uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+        add_column_if_missing('farm_document', farm_document_columns, 'uploaded_by_id', 'ALTER TABLE farm_document ADD COLUMN uploaded_by_id INTEGER', 'ALTER TABLE farm_document ADD COLUMN uploaded_by_id INTEGER')
 
 
 def init_db():
