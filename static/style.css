@@ -32,9 +32,13 @@ a{text-decoration:none;color:inherit}
 .user-chip strong{display:block;font-size:15px}
 .user-chip small{display:block;color:#cbd5e1;margin-top:4px}
 .nav-list{display:flex;flex-direction:column;gap:8px}
-.nav-link{display:block;padding:12px 14px;border-radius:14px;color:#dbe7ff;background:transparent;font-weight:600;border:1px solid transparent;transition:.18s ease}
+.nav-link{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:14px;color:#dbe7ff;background:transparent;font-weight:600;border:1px solid transparent;transition:.18s ease}
+.nav-icon{width:22px;min-width:22px;display:inline-flex;align-items:center;justify-content:center;font-size:17px;opacity:.96}
+.nav-icon i{width:1.1em;text-align:center}
+.nav-text{line-height:1.2}
 .nav-link:hover{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.06)}
 .nav-link.active{background:linear-gradient(135deg,rgba(20,184,166,.22),rgba(37,99,235,.18));border-color:rgba(147,197,253,.22);color:#fff}
+.nav-link.active .nav-icon{color:#fff}
 .sidebar-footer{margin-top:auto;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);padding:16px;border-radius:16px}
 .sidebar-label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#93c5fd;margin-bottom:6px}
 .sidebar-value{font-size:22px;font-weight:800;margin-bottom:6px}
