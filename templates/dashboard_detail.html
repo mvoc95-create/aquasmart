@@ -107,16 +107,36 @@
   </div>
 </section>
 {% elif kind == 'feed-stock' %}
+<div class="cards compact-cards">
+  <div class="metric-card">
+    <span class="metric-label">Produtos monitorados</span>
+    <strong>{{ rows|length }}</strong>
+    <small>Itens cadastrados no portfólio de ração.</small>
+  </div>
+  <div class="metric-card danger">
+    <span class="metric-label">Estoque baixo</span>
+    <strong>{{ low_stock_count }}</strong>
+    <small>Produtos em ou abaixo do estoque mínimo.</small>
+  </div>
+</div>
 <section class="panel">
-  <div class="panel-head"><div><p class="panel-kicker">Saldo por item</p><h2>Estoque consolidado</h2></div></div>
+  <div class="panel-head"><div><p class="panel-kicker">Saldo por produto</p><h2>Estoque consolidado</h2></div></div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Ração</th><th>Saldo (kg)</th></tr></thead>
+      <thead><tr><th>Marca</th><th>Tipo</th><th>Ficha técnica</th><th>Saldo (kg)</th><th>Estoque mínimo</th><th>Custo médio</th><th>Status</th></tr></thead>
       <tbody>
         {% for row in rows %}
-        <tr><td>{{ row.feed_name }}</td><td>{{ row.stock_kg }}</td></tr>
+        <tr>
+          <td>{{ row.brand }}</td>
+          <td>{{ row.feed_type }}</td>
+          <td>{{ row.technical_summary or '—' }}</td>
+          <td>{{ row.stock_kg }}</td>
+          <td>{{ row.minimum_stock_kg }}</td>
+          <td>{{ row.avg_unit_cost|money if row.avg_unit_cost is not none else '—' }}</td>
+          <td>{% if row.status == 'baixo' %}<span class="badge amarelo">Baixo</span>{% else %}<span class="badge verde">OK</span>{% endif %}</td>
+        </tr>
         {% else %}
-        <tr><td colspan="2" class="empty-cell">Nenhum movimento de ração lançado ainda.</td></tr>
+        <tr><td colspan="7" class="empty-cell">Nenhum movimento de ração lançado ainda.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -126,18 +146,21 @@
   <div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos movimentos</h2></div></div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Data</th><th>Ração</th><th>Tipo</th><th>Quantidade (kg)</th><th>Observação</th></tr></thead>
+      <thead><tr><th>Data</th><th>Produto</th><th>Origem</th><th>Tipo</th><th>Quantidade (kg)</th><th>Unidade</th><th>Lote</th><th>Observação</th></tr></thead>
       <tbody>
         {% for item in movement_rows %}
         <tr>
           <td>{{ item.movement_date|brdate }}</td>
-          <td>{{ item.feed_name }}</td>
+          <td>{% if item.feed_product %}{{ item.feed_product.full_name }}{% else %}{{ item.feed_name }}{% endif %}</td>
+          <td>{{ 'Manejo diário' if item.source_type == 'manejo' else 'Manual' }}</td>
           <td>{{ item.movement_type|title }}</td>
           <td>{{ item.quantity_kg }}</td>
+          <td>{{ item.unit.name if item.unit else '—' }}</td>
+          <td>{{ item.lot.lot_code if item.lot else '—' }}</td>
           <td>{{ item.notes or '—' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="5" class="empty-cell">Nenhum movimento registrado.</td></tr>
+        <tr><td colspan="8" class="empty-cell">Nenhum movimento registrado.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -160,18 +183,20 @@
   <div class="panel-head"><div><p class="panel-kicker">Base do cálculo</p><h2>Manejos usados na média recente</h2></div></div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Data</th><th>Unidade</th><th>Lote</th><th>Ração ofertada (kg)</th><th>Ração consumida (kg)</th></tr></thead>
+      <thead><tr><th>Data</th><th>Unidade</th><th>Lote</th><th>Ração</th><th>Ração ofertada (kg)</th><th>Ração consumida (kg)</th><th>Custo estimado</th></tr></thead>
       <tbody>
         {% for item in rows %}
         <tr>
           <td>{{ item.manage_date|brdate }}</td>
           <td>{{ item.unit.name if item.unit else '—' }}</td>
           <td>{{ item.lot.lot_code if item.lot else 'Sem lote' }}</td>
+          <td>{{ item.feed_product.full_name if item.feed_product else '—' }}</td>
           <td>{{ item.feed_offered_kg }}</td>
           <td>{{ item.feed_consumed_kg }}</td>
+          <td>{{ item.feed_total_cost|money if item.feed_total_cost else '—' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="5" class="empty-cell">Ainda não há lançamentos suficientes para calcular cobertura.</td></tr>
+        <tr><td colspan="7" class="empty-cell">Ainda não há lançamentos suficientes para calcular cobertura.</td></tr>
         {% endfor %}
       </tbody>
     </table>

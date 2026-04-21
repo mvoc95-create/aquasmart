@@ -1,7 +1,25 @@
 {% extends 'base.html' %}
 {% block page_title %}Manejo diário{% endblock %}
-{% block page_subtitle %}Registre alimentação, mortalidade, biomassa estimada e observações do dia.{% endblock %}
+{% block page_subtitle %}Registre alimentação por produto, mortalidade, biomassa estimada e deixe o estoque da ração cair automaticamente.{% endblock %}
 {% block content %}
+<div class="cards compact-cards">
+  <div class="metric-card">
+    <span class="metric-label">Ração ofertada no filtro</span>
+    <strong>{{ cost_summary.total_offered_kg }} kg</strong>
+    <small>Total lançado nos registros exibidos para manejo.</small>
+  </div>
+  <div class="metric-card">
+    <span class="metric-label">Custo estimado acumulado</span>
+    <strong>{{ cost_summary.total_cost|money }}</strong>
+    <small>Baseado no custo médio das entradas da ração selecionada.</small>
+  </div>
+  <div class="metric-card">
+    <span class="metric-label">Custo médio por kg</span>
+    <strong>{{ cost_summary.avg_cost_per_kg|money if cost_summary.avg_cost_per_kg is not none else '—' }}</strong>
+    <small>Ajuda a acompanhar alimentação por viveiro e lote.</small>
+  </div>
+</div>
+
 <div class="grid-2">
 <section class="panel">
 <div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>Novo manejo</h2></div></div>
@@ -10,8 +28,19 @@
   <label>Unidade<select name="unit_id" id="management_unit_id">{% for u in units %}<option value="{{u.id}}" {% if selected_unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
   <div class="full inline-actions-row">
     <button type="button" class="secondary-button" id="copy-previous-btn">Repetir informações do dia anterior</button>
-    <span class="inline-hint">O sistema busca o último manejo anterior desse viveiro e preenche o formulário para você revisar.</span>
+    <span class="inline-hint">Além dos números, o sistema também copia a ração usada no último manejo desse viveiro.</span>
   </div>
+  <label class="full">Ração utilizada
+    <select name="feed_product_id" id="feed_product_id">
+      <option value="">Selecione a ração em estoque</option>
+      {% for p in feed_products %}
+      <option value="{{ p.id }}" data-stock="{{ stock_by_product.get(p.id, 0) }}" {% if not p.active %}data-inactive="1"{% endif %}>
+        {{ p.full_name }}{% if p.technical_summary %} · {{ p.technical_summary }}{% endif %} · saldo {{ stock_by_product.get(p.id, 0) }} kg{% if not p.active %} · inativa{% endif %}
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="full selection-info" id="feed-selection-info">Selecione a ração para ver o saldo disponível antes de salvar.</div>
   <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg" id="feed_offered_kg"></label>
   <label>Ração consumida (kg)<input type="number" step="0.01" name="feed_consumed_kg" id="feed_consumed_kg"></label>
   <label>Mortalidade (un)<input type="number" name="mortality_qty" id="mortality_qty"></label>
@@ -24,41 +53,42 @@
 </section>
 <section class="panel">
 <div class="panel-head"><div><p class="panel-kicker">Últimos registros</p><h2>Histórico recente</h2></div></div>
-<form method="get" class="history-toolbar">
+<form method="get" class="history-toolbar form-grid compact-form">
   <label>Filtrar por viveiro
     <select name="unit_id" onchange="this.form.submit()">
       <option value="">Todos</option>
       {% for u in units %}<option value="{{ u.id }}" {% if selected_unit_id == u.id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}
     </select>
   </label>
-  <div class="history-toolbar-actions">
+  <div class="history-toolbar-actions inline-actions-row">
     {% if selected_unit_id %}<a class="secondary-link-button" href="{{ url_for('management_page') }}">Limpar filtro</a>{% endif %}
   </div>
 </form>
 <div class="table-wrap">
 <table>
-<thead><tr><th>Data</th><th>Unidade</th><th>Ração ofertada (kg)</th><th>Ração consumida (kg)</th><th>Mortalidade (un)</th><th>Peso médio (g)</th><th>Biomassa (kg)</th><th></th></tr></thead>
+<thead><tr><th>Data</th><th>Unidade</th><th>Ração</th><th>Ofertada (kg)</th><th>Consumida (kg)</th><th>Custo estimado</th><th>Mortalidade</th><th>Biomassa</th><th></th></tr></thead>
 <tbody>
 {% for r in records %}
 <tr>
   <td>{{ r.manage_date|brdate }}</td>
   <td>{{ r.unit.name }}</td>
+  <td>{% if r.feed_product %}{{ r.feed_product.full_name }}{% else %}—{% endif %}</td>
   <td>{{ r.feed_offered_kg }}</td>
   <td>{{ r.feed_consumed_kg }}</td>
+  <td>{{ r.feed_total_cost|money if r.feed_total_cost else '—' }}</td>
   <td>{{ r.mortality_qty }}</td>
-  <td>{{ r.average_weight_g or '' }}</td>
   <td>{{ r.estimated_biomass_kg or '' }}</td>
   <td class="actions-cell">
     <div class="action-stack">
       <a class="link-button small-button" href="{{ url_for('management_page', edit_id=r.id, unit_id=selected_unit_id) }}">Editar</a>
-      <form method="post" action="{{ url_for('delete_management_record', record_id=r.id) }}" onsubmit="return confirm('Excluir este registro de manejo?');">
+      <form method="post" action="{{ url_for('delete_management_record', record_id=r.id) }}" onsubmit="return confirm('Excluir este registro de manejo? O estoque da ração será recalculado.');">
         <button type="submit" class="danger-button small-button">Excluir</button>
       </form>
     </div>
   </td>
 </tr>
 {% else %}
-<tr><td colspan="8" class="empty-cell">Nenhum registro encontrado para o filtro selecionado.</td></tr>
+<tr><td colspan="9" class="empty-cell">Nenhum registro encontrado para o filtro selecionado.</td></tr>
 {% endfor %}
 </tbody>
 </table>
@@ -67,9 +97,20 @@
 {% if edit_record %}
 <hr class="panel-divider">
 <div class="panel-head"><div><p class="panel-kicker">Edição</p><h2>Editar manejo selecionado</h2></div></div>
-<form method="post" action="{{ url_for('edit_management_record', record_id=edit_record.id) }}" class="form-grid">
+<form method="post" action="{{ url_for('edit_management_record', record_id=edit_record.id) }}" class="form-grid" id="management-edit-form">
   <label>Data<input type="date" name="manage_date" value="{{ edit_record.manage_date.isoformat() }}" required></label>
   <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if edit_record.unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
+  <label class="full">Ração utilizada
+    <select name="feed_product_id" id="edit_feed_product_id">
+      <option value="">Selecione a ração em estoque</option>
+      {% for p in feed_products %}
+      <option value="{{ p.id }}" data-stock="{{ stock_by_product.get(p.id, 0) }}" {% if edit_record.feed_product_id == p.id %}selected{% endif %}>
+        {{ p.full_name }}{% if p.technical_summary %} · {{ p.technical_summary }}{% endif %} · saldo {{ stock_by_product.get(p.id, 0) }} kg{% if not p.active %} · inativa{% endif %}
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="full selection-info" id="edit-feed-selection-info">Ao salvar, o sistema recalcula a saída automática ligada a este manejo.</div>
   <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg" value="{{ edit_record.feed_offered_kg if edit_record.feed_offered_kg is not none else '' }}"></label>
   <label>Ração consumida (kg)<input type="number" step="0.01" name="feed_consumed_kg" value="{{ edit_record.feed_consumed_kg if edit_record.feed_consumed_kg is not none else '' }}"></label>
   <label>Mortalidade (un)<input type="number" name="mortality_qty" value="{{ edit_record.mortality_qty if edit_record.mortality_qty is not none else '' }}"></label>
@@ -85,7 +126,51 @@
 </section>
 </div>
 
+<section class="panel full-width-panel">
+  <div class="panel-head"><div><p class="panel-kicker">Custeio</p><h2>Resumo por viveiro e lote</h2></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Unidade</th><th>Lote</th><th>Ração ofertada (kg)</th><th>Custo total</th><th>Custo médio por kg</th><th>Lançamentos</th></tr></thead>
+      <tbody>
+        {% for row in cost_summary.grouped_rows %}
+        <tr>
+          <td>{{ row.unit_name }}</td>
+          <td>{{ row.lot_code }}</td>
+          <td>{{ row.offered_kg }}</td>
+          <td>{{ row.cost_total|money }}</td>
+          <td>{{ row.avg_cost_per_kg|money if row.avg_cost_per_kg is not none else '—' }}</td>
+          <td>{{ row.records }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty-cell">Ainda não há custo de ração suficiente para consolidar.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <script>
+function bindFeedStockInfo(selectId, infoId) {
+  const select = document.getElementById(selectId);
+  const info = document.getElementById(infoId);
+  if (!select || !info) return;
+  const render = () => {
+    const option = select.options[select.selectedIndex];
+    if (!option || !option.value) {
+      info.textContent = 'Selecione a ração para ver o saldo disponível antes de salvar.';
+      return;
+    }
+    const stock = option.dataset.stock || '0';
+    const inactive = option.dataset.inactive === '1';
+    info.textContent = `${option.text} — saldo disponível: ${stock} kg${inactive ? ' (produto inativo, use apenas se realmente precisar ajustar histórico)' : ''}`;
+  };
+  select.addEventListener('change', render);
+  render();
+}
+
+bindFeedStockInfo('feed_product_id', 'feed-selection-info');
+bindFeedStockInfo('edit_feed_product_id', 'edit-feed-selection-info');
+
 const copyBtn = document.getElementById('copy-previous-btn');
 const messageBox = document.getElementById('copy-previous-message');
 if (copyBtn) {
@@ -102,12 +187,14 @@ if (copyBtn) {
         throw new Error(payload.message || 'Não foi possível copiar o manejo anterior.');
       }
       const data = payload.record;
+      document.getElementById('feed_product_id').value = data.feed_product_id ?? '';
       document.getElementById('feed_offered_kg').value = data.feed_offered_kg ?? '';
       document.getElementById('feed_consumed_kg').value = data.feed_consumed_kg ?? '';
       document.getElementById('mortality_qty').value = data.mortality_qty ?? '';
       document.getElementById('average_weight_g').value = data.average_weight_g ?? '';
       document.getElementById('estimated_biomass_kg').value = data.estimated_biomass_kg ?? '';
       document.getElementById('notes').value = data.notes ?? '';
+      document.getElementById('feed_product_id').dispatchEvent(new Event('change'));
       messageBox.textContent = payload.message;
       messageBox.className = 'copy-message success-message';
       messageBox.hidden = false;
