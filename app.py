@@ -216,6 +216,7 @@ class FarmDocument(db.Model):
     mime_type = db.Column(db.String(120))
     file_size = db.Column(db.Integer, nullable=False, default=0)
     file_data = db.Column(db.LargeBinary, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     uploaded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     uploaded_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     uploaded_by = db.relationship('User', foreign_keys=[uploaded_by_id])
@@ -973,6 +974,7 @@ def run_lightweight_migrations():
         add_column_if_missing('farm_document', farm_document_columns, 'original_filename', 'ALTER TABLE farm_document ADD COLUMN original_filename VARCHAR(255)', 'ALTER TABLE farm_document ADD COLUMN original_filename VARCHAR(255)')
         add_column_if_missing('farm_document', farm_document_columns, 'mime_type', 'ALTER TABLE farm_document ADD COLUMN mime_type VARCHAR(120)', 'ALTER TABLE farm_document ADD COLUMN mime_type VARCHAR(120)')
         add_column_if_missing('farm_document', farm_document_columns, 'file_size', 'ALTER TABLE farm_document ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE farm_document ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0')
+        add_column_if_missing('farm_document', farm_document_columns, 'created_at', f"ALTER TABLE farm_document ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE farm_document ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         add_column_if_missing('farm_document', farm_document_columns, 'uploaded_at', f"ALTER TABLE farm_document ADD COLUMN uploaded_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE farm_document ADD COLUMN uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         add_column_if_missing('farm_document', farm_document_columns, 'uploaded_by_id', 'ALTER TABLE farm_document ADD COLUMN uploaded_by_id INTEGER', 'ALTER TABLE farm_document ADD COLUMN uploaded_by_id INTEGER')
 
@@ -2209,6 +2211,7 @@ def farm_documents_page():
             return redirect(url_for('farm_documents_page'))
 
         title = title or os.path.splitext(safe_name)[0]
+        now = datetime.utcnow()
         document = FarmDocument(
             title=title,
             category=category,
@@ -2217,6 +2220,8 @@ def farm_documents_page():
             mime_type=uploaded_file.mimetype or 'application/octet-stream',
             file_size=len(file_bytes),
             file_data=file_bytes,
+            created_at=now,
+            uploaded_at=now,
             uploaded_by_id=getattr(current_user, 'id', None),
         )
         db.session.add(document)
