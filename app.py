@@ -17,11 +17,12 @@ from flask_login import (
     logout_user,
 )
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import case, func, inspect, text
+from sqlalchemy import case, func, inspect, text, or_
 from sqlalchemy.orm import joinedload
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 import io
+from openpyxl import Workbook
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
@@ -149,8 +150,33 @@ class Lot(db.Model):
     initial_count = db.Column(db.Integer, nullable=False, default=0)
     estimated_weight_g = db.Column(db.Float, default=0)
     status = db.Column(db.String(20), default='ativo')
+    end_date = db.Column(db.Date)
+    closed_reason = db.Column(db.String(60))
     notes = db.Column(db.Text)
     unit = db.relationship('Unit')
+
+
+class LotUnitAllocation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'), nullable=False)
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'), nullable=False)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date)
+    quantity_allocated = db.Column(db.Integer)
+    notes = db.Column(db.Text)
+    lot = db.relationship('Lot')
+    unit = db.relationship('Unit')
+
+
+class FixedCost(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    monthly_amount = db.Column(db.Float, nullable=False, default=0)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
 class WaterMonitoring(db.Model):
@@ -314,6 +340,8 @@ class Sale(db.Model):
     channel = db.Column(db.String(40), nullable=False)
     quantity_kg = db.Column(db.Float, nullable=False)
     unit_price = db.Column(db.Float, nullable=False)
+    average_weight_g = db.Column(db.Float)
+    harvested_units = db.Column(db.Integer)
     notes = db.Column(db.Text)
     unit = db.relationship('Unit')
     lot = db.relationship('Lot')
@@ -632,7 +660,7 @@ def upsert_water_reading(unit_id: int, slot_date: date, slot_time, values: dict)
         WaterMonitoring.monitor_time == slot_time,
     ).order_by(WaterMonitoring.id.desc()).first()
 
-    lot = active_lot_for_unit(unit_id)
+    lot = active_lot_for_unit(unit_id, on_date=slot_date)
     record = existing or WaterMonitoring(
         unit_id=unit_id,
         monitor_date=slot_date,
@@ -925,7 +953,7 @@ def run_lightweight_migrations():
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
 
-    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct):
+    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, LotUnitAllocation, FixedCost):
         table_name = model.__table__.name
         if table_name not in tables:
             model.__table__.create(bind=db.engine)
@@ -954,6 +982,21 @@ def run_lightweight_migrations():
         add_column_if_missing('user', user_columns, 'last_login_at', 'ALTER TABLE user ADD COLUMN last_login_at DATETIME', 'ALTER TABLE "user" ADD COLUMN last_login_at TIMESTAMP')
         add_column_if_missing('user', user_columns, 'created_at', f"ALTER TABLE user ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE "user" ADD COLUMN created_at TIMESTAMP')
         add_column_if_missing('user', user_columns, 'is_active_user', 'ALTER TABLE user ADD COLUMN is_active_user BOOLEAN DEFAULT 1', 'ALTER TABLE "user" ADD COLUMN is_active_user BOOLEAN DEFAULT TRUE')
+
+    if 'lot' in tables:
+        lot_columns = get_columns('lot')
+        add_column_if_missing('lot', lot_columns, 'end_date', 'ALTER TABLE lot ADD COLUMN end_date DATE', 'ALTER TABLE lot ADD COLUMN end_date DATE')
+        add_column_if_missing('lot', lot_columns, 'closed_reason', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)')
+
+
+    if 'lot_unit_allocation' in tables:
+        allocation_columns = get_columns('lot_unit_allocation')
+        add_column_if_missing('lot_unit_allocation', allocation_columns, 'quantity_allocated', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER')
+
+    if 'sale' in tables:
+        sale_columns = get_columns('sale')
+        add_column_if_missing('sale', sale_columns, 'average_weight_g', 'ALTER TABLE sale ADD COLUMN average_weight_g FLOAT', 'ALTER TABLE sale ADD COLUMN average_weight_g DOUBLE PRECISION')
+        add_column_if_missing('sale', sale_columns, 'harvested_units', 'ALTER TABLE sale ADD COLUMN harvested_units INTEGER', 'ALTER TABLE sale ADD COLUMN harvested_units INTEGER')
 
     if 'water_monitoring' in tables:
         water_columns = get_columns('water_monitoring')
@@ -996,6 +1039,7 @@ def run_lightweight_migrations():
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'created_by_id', 'ALTER TABLE feed_inventory ADD COLUMN created_by_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN created_by_id INTEGER')
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'created_at', f"ALTER TABLE feed_inventory ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE feed_inventory ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
 
+    backfill_lot_allocations_and_status()
     sync_feed_products_from_legacy_movements()
 
 
@@ -1008,8 +1052,27 @@ def init_db():
         get_water_reference_config()
 
 
-def active_lot_for_unit(unit_id):
-    return Lot.query.filter_by(unit_id=unit_id, status='ativo').order_by(Lot.start_date.desc()).first()
+def active_lot_allocation_for_unit(unit_id, on_date=None):
+    on_date = on_date or date.today()
+    return (
+        LotUnitAllocation.query.options(joinedload(LotUnitAllocation.lot), joinedload(LotUnitAllocation.unit))
+        .join(Lot, Lot.id == LotUnitAllocation.lot_id)
+        .filter(
+            LotUnitAllocation.unit_id == unit_id,
+            LotUnitAllocation.start_date <= on_date,
+            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+            Lot.start_date <= on_date,
+            Lot.status == 'ativo',
+            or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
+        )
+        .order_by(Lot.start_date.desc(), LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc())
+        .first()
+    )
+
+
+def active_lot_for_unit(unit_id, on_date=None):
+    allocation = active_lot_allocation_for_unit(unit_id, on_date=on_date)
+    return allocation.lot if allocation else None
 
 
 def latest_water(unit_id):
@@ -1018,6 +1081,240 @@ def latest_water(unit_id):
 
 def latest_mgmt(unit_id):
     return DailyManagement.query.filter_by(unit_id=unit_id).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).first()
+
+
+def backfill_lot_allocations_and_status():
+    created = 0
+    for lot in Lot.query.all():
+        exists = LotUnitAllocation.query.filter_by(lot_id=lot.id).first()
+        if not exists:
+            db.session.add(LotUnitAllocation(
+                lot_id=lot.id,
+                unit_id=lot.unit_id,
+                start_date=lot.start_date,
+                end_date=lot.end_date,
+                quantity_allocated=lot.initial_count,
+                notes='Alocação inicial criada automaticamente.'
+            ))
+            created += 1
+        else:
+            for allocation in LotUnitAllocation.query.filter_by(lot_id=lot.id).all():
+                if allocation.quantity_allocated is None:
+                    allocation.quantity_allocated = lot.initial_count
+        if lot.status == 'encerrado' and lot.end_date is None:
+            last_sale = Sale.query.filter_by(lot_id=lot.id).order_by(Sale.sale_date.desc(), Sale.id.desc()).first()
+            lot.end_date = last_sale.sale_date if last_sale else date.today()
+            if not lot.closed_reason:
+                lot.closed_reason = 'encerrado_manual'
+    if created:
+        db.session.flush()
+
+
+def close_lot(lot: Lot, close_date: date, reason: str = 'encerrado_manual'):
+    if not lot:
+        return
+    lot.status = 'encerrado'
+    lot.end_date = close_date
+    lot.closed_reason = reason
+    LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot.id,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date > close_date),
+    ).update({'end_date': close_date}, synchronize_session=False)
+
+
+def lot_current_units(lot: Lot, on_date=None):
+    on_date = on_date or date.today()
+    allocations = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+    ).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
+    return [allocation.unit for allocation in allocations]
+
+
+def active_lots_on_date(on_date: date):
+    return Lot.query.filter(
+        Lot.start_date <= on_date,
+        or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
+    ).all()
+
+
+def active_allocations_on_date(on_date: date):
+    return LotUnitAllocation.query.join(Lot, Lot.id == LotUnitAllocation.lot_id).filter(
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+        Lot.status == 'ativo',
+        Lot.start_date <= on_date,
+        or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
+    ).all()
+
+
+def allocation_density(allocation: LotUnitAllocation):
+    if not allocation or not allocation.unit or not allocation.unit.area_m2 or not allocation.quantity_allocated:
+        return None
+    return round((allocation.quantity_allocated or 0) / allocation.unit.area_m2, 2)
+
+
+def find_active_allocation(lot_id: int, unit_id: int, on_date: date):
+    return LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot_id,
+        LotUnitAllocation.unit_id == unit_id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+    ).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
+
+
+def calculate_fixed_cost_for_lot(lot: Lot):
+    if not lot:
+        return 0.0
+    start = lot.start_date
+    end = lot.end_date or date.today()
+    if end < start:
+        return 0.0
+
+    total = 0.0
+    cursor = start
+    while cursor <= end:
+        active_costs = FixedCost.query.filter(
+            FixedCost.start_date <= cursor,
+            or_(FixedCost.end_date.is_(None), FixedCost.end_date >= cursor),
+            FixedCost.active.is_(True),
+        ).all()
+        if active_costs:
+            active_allocations = active_allocations_on_date(cursor)
+            divisor = len(active_allocations) or 1
+            lot_allocations = [allocation for allocation in active_allocations if allocation.lot_id == lot.id]
+            daily_cost = sum((cost.monthly_amount or 0) / 30 for cost in active_costs)
+            total += daily_cost * (len(lot_allocations) / divisor)
+        cursor += timedelta(days=1)
+    return round(total, 2)
+
+
+def calculate_fixed_cost_for_allocation(lot: Lot, unit_id: int, start_date: date, end_date: date | None = None):
+    if not lot or not unit_id:
+        return 0.0
+    start = max(lot.start_date, start_date or lot.start_date)
+    end = end_date or lot.end_date or date.today()
+    if end < start:
+        return 0.0
+    total = 0.0
+    cursor = start
+    while cursor <= end:
+        active_costs = FixedCost.query.filter(
+            FixedCost.start_date <= cursor,
+            or_(FixedCost.end_date.is_(None), FixedCost.end_date >= cursor),
+            FixedCost.active.is_(True),
+        ).all()
+        if active_costs:
+            active_allocations = active_allocations_on_date(cursor)
+            divisor = len(active_allocations) or 1
+            current_allocation = find_active_allocation(lot.id, unit_id, cursor)
+            if current_allocation:
+                daily_cost = sum((cost.monthly_amount or 0) / 30 for cost in active_costs)
+                total += daily_cost / divisor
+        cursor += timedelta(days=1)
+    return round(total, 2)
+
+
+def calculate_feed_cost_for_unit(lot_id: int, unit_id: int, end_date: date | None = None):
+    query = db.session.query(func.coalesce(func.sum(DailyManagement.feed_total_cost), 0)).filter(
+        DailyManagement.lot_id == lot_id,
+        DailyManagement.unit_id == unit_id,
+    )
+    if end_date:
+        query = query.filter(DailyManagement.manage_date <= end_date)
+    return round(query.scalar() or 0, 2)
+
+
+def lot_total_harvested_units(lot_id: int):
+    total = db.session.query(func.coalesce(func.sum(Sale.harvested_units), 0)).filter(Sale.lot_id == lot_id).scalar() or 0
+    return int(total or 0)
+
+
+def lot_total_harvested_kg(lot_id: int):
+    total = db.session.query(func.coalesce(func.sum(Sale.quantity_kg), 0)).filter(Sale.lot_id == lot_id).scalar() or 0
+    return round(total, 2)
+
+
+def lot_total_revenue(lot_id: int):
+    total = db.session.query(func.coalesce(func.sum(Sale.quantity_kg * Sale.unit_price), 0)).filter(Sale.lot_id == lot_id).scalar() or 0
+    return round(total, 2)
+
+
+def build_allocation_rows(lot: Lot, on_date=None):
+    on_date = on_date or date.today()
+    allocations = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+    ).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
+    rows = []
+    for allocation in allocations:
+        rows.append({
+            'unit_name': allocation.unit.name if allocation.unit else '—',
+            'phase': allocation.unit.phase if allocation.unit else lot.phase,
+            'allocated_qty': allocation.quantity_allocated or 0,
+            'density': allocation_density(allocation),
+        })
+    return rows
+
+
+def lot_financial_summary(lot: Lot):
+    feed_cost = db.session.query(func.coalesce(func.sum(DailyManagement.feed_total_cost), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
+    fixed_cost = calculate_fixed_cost_for_lot(lot)
+    current_units = lot_current_units(lot)
+    allocation_rows = build_allocation_rows(lot)
+    harvested_units = lot_total_harvested_units(lot.id)
+    survival_pct = round((harvested_units / lot.initial_count) * 100, 2) if lot.initial_count else None
+    total_feed_offered = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
+    harvested_kg = lot_total_harvested_kg(lot.id)
+    fcr_real = round(total_feed_offered / harvested_kg, 2) if harvested_kg else None
+    return {
+        'lot': lot,
+        'feed_cost': round(feed_cost, 2),
+        'fixed_cost': fixed_cost,
+        'total_cost': round((feed_cost or 0) + fixed_cost, 2),
+        'current_units': current_units,
+        'allocations': allocation_rows,
+        'harvested_units': harvested_units,
+        'survival_pct': survival_pct,
+        'fcr_real': fcr_real,
+    }
+
+
+def sale_financial_summary(sale: Sale):
+    if not sale.lot or not sale.unit_id:
+        return None
+    allocation = find_active_allocation(sale.lot_id, sale.unit_id, sale.sale_date)
+    feed_cost = calculate_feed_cost_for_unit(sale.lot_id, sale.unit_id, sale.sale_date)
+    fixed_cost = calculate_fixed_cost_for_allocation(sale.lot, sale.unit_id, sale.lot.start_date, sale.sale_date)
+    total_cost = round(feed_cost + fixed_cost, 2)
+    revenue = round((sale.quantity_kg or 0) * (sale.unit_price or 0), 2)
+    harvested_units = sale.harvested_units or 0
+    if not harvested_units and sale.average_weight_g:
+        harvested_units = int(round((sale.quantity_kg * 1000) / sale.average_weight_g)) if sale.average_weight_g else 0
+    lot_harvested_units = lot_total_harvested_units(sale.lot_id)
+    survival_pct = round((lot_harvested_units / sale.lot.initial_count) * 100, 2) if sale.lot.initial_count else None
+    total_feed_offered = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(
+        DailyManagement.lot_id == sale.lot_id,
+        DailyManagement.manage_date <= sale.sale_date,
+    ).scalar() or 0
+    harvested_kg_lot = lot_total_harvested_kg(sale.lot_id)
+    fcr_real = round(total_feed_offered / harvested_kg_lot, 2) if harvested_kg_lot else None
+    return {
+        'sale': sale,
+        'allocation_qty': allocation.quantity_allocated if allocation else None,
+        'density': allocation_density(allocation) if allocation else None,
+        'feed_cost': feed_cost,
+        'fixed_cost': fixed_cost,
+        'total_cost': total_cost,
+        'revenue': revenue,
+        'profit': round(revenue - total_cost, 2),
+        'status': 'Lucro' if revenue >= total_cost else 'Prejuízo',
+        'harvested_units': harvested_units,
+        'survival_pct': survival_pct,
+        'fcr_real': fcr_real,
+    }
 
 
 def sync_feed_products_from_legacy_movements():
@@ -1472,8 +1769,34 @@ def units_page():
 @requires_permission('lots_manage')
 def lots_page():
     if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'lot')
+        if form_mode == 'fixed_cost':
+            cost = FixedCost(
+                name=(request.form.get('name') or 'Funcionário').strip(),
+                monthly_amount=parse_float(request.form.get('monthly_amount'), 0) or 0,
+                start_date=parse_date(request.form.get('start_date'), date.today()),
+                end_date=parse_date(request.form.get('end_date')) if request.form.get('end_date') else None,
+                active=bool(request.form.get('active', '1') == '1'),
+                notes=request.form.get('notes'),
+            )
+            db.session.add(cost)
+            db.session.commit()
+            flash('Custo fixo cadastrado com sucesso.', 'success')
+            return redirect(url_for('lots_page'))
+
+        if form_mode == 'close_lot':
+            lot = db.session.get(Lot, int(request.form['lot_id']))
+            if not lot:
+                flash('Lote não encontrado.', 'warning')
+                return redirect(url_for('lots_page'))
+            close_date = parse_date(request.form.get('end_date'), date.today())
+            close_lot(lot, close_date, reason='encerrado_manual')
+            db.session.commit()
+            flash('Lote encerrado manualmente.', 'success')
+            return redirect(url_for('lots_page'))
+
         lot = Lot(
-            lot_code=request.form['lot_code'],
+            lot_code=(request.form['lot_code'] or '').strip().upper(),
             phase=request.form['phase'],
             start_date=parse_date(request.form['start_date']),
             unit_id=int(request.form['unit_id']),
@@ -1482,12 +1805,23 @@ def lots_page():
             notes=request.form.get('notes')
         )
         db.session.add(lot)
+        db.session.flush()
+        db.session.add(LotUnitAllocation(
+            lot_id=lot.id,
+            unit_id=lot.unit_id,
+            start_date=lot.start_date,
+            quantity_allocated=lot.initial_count,
+            notes='Alocação inicial do lote.',
+        ))
         db.session.commit()
         flash('Lote cadastrado.', 'success')
         return redirect(url_for('lots_page'))
-    lots = Lot.query.order_by(Lot.start_date.desc()).all()
+
+    lots = Lot.query.order_by(Lot.start_date.desc(), Lot.id.desc()).all()
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
-    return render_template('lots.html', lots=lots, units=units)
+    fixed_costs = FixedCost.query.order_by(FixedCost.start_date.desc(), FixedCost.id.desc()).all()
+    lot_summaries = [lot_financial_summary(lot) for lot in lots]
+    return render_template('lots.html', lots=lots, units=units, fixed_costs=fixed_costs, lot_summaries=lot_summaries, today=date.today(), lot_current_units=lot_current_units)
 
 
 @app.post('/water/import-sheet')
@@ -1608,8 +1942,8 @@ def water_page():
     if request.method == 'POST':
         mode = request.form.get('entry_mode', 'single')
         unit_id = int(request.form['unit_id'])
-        lot = active_lot_for_unit(unit_id)
         monitor_date = parse_date(request.form.get('monitor_date'), date.today())
+        lot = active_lot_for_unit(unit_id, on_date=monitor_date)
 
         if mode == 'batch':
             slot_times = request.form.getlist('slot_time')
@@ -1726,7 +2060,8 @@ def water_page():
 def management_page():
     if request.method == 'POST':
         unit_id = int(request.form['unit_id'])
-        lot = active_lot_for_unit(unit_id)
+        manage_date = parse_date(request.form['manage_date'], date.today())
+        lot = active_lot_for_unit(unit_id, on_date=manage_date)
         feed_product = selected_feed_product_from_form()
         feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
         feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
@@ -1739,7 +2074,7 @@ def management_page():
             return redirect(url_for('management_page', unit_id=unit_id))
 
         rec = DailyManagement(
-            manage_date=parse_date(request.form['manage_date'], date.today()),
+            manage_date=manage_date,
             unit_id=unit_id,
             lot_id=lot.id if lot else None,
             feed_product_id=feed_product.id if feed_product else None,
@@ -1825,8 +2160,8 @@ def edit_water_record(record_id):
         flash('Registro de água não encontrado.', 'warning')
         return redirect(url_for('water_page'))
     unit_id = int(request.form['unit_id'])
-    lot = active_lot_for_unit(unit_id)
     rec.monitor_date = parse_date(request.form['monitor_date'], rec.monitor_date)
+    lot = active_lot_for_unit(unit_id, on_date=rec.monitor_date)
     rec.shift = request.form['shift']
     rec.monitor_time = parse_time(request.form.get('monitor_time'))
     rec.unit_id = unit_id
@@ -1854,7 +2189,8 @@ def edit_management_record(record_id):
         return redirect(url_for('management_page'))
 
     unit_id = int(request.form['unit_id'])
-    lot = active_lot_for_unit(unit_id)
+    new_manage_date = parse_date(request.form['manage_date'], rec.manage_date)
+    lot = active_lot_for_unit(unit_id, on_date=new_manage_date)
     feed_product = selected_feed_product_from_form()
     feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
     feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
@@ -1869,7 +2205,7 @@ def edit_management_record(record_id):
         flash(validation_error, 'danger')
         return redirect(request.referrer or url_for('management_page'))
 
-    rec.manage_date = parse_date(request.form['manage_date'], rec.manage_date)
+    rec.manage_date = new_manage_date
     rec.unit_id = unit_id
     rec.lot_id = lot.id if lot else None
     rec.feed_product_id = feed_product.id if feed_product else None
@@ -2119,7 +2455,7 @@ def protocols_page():
     category_filter = (request.args.get('category') or '').strip()
     protocols_query = ProtocolDocument.query
     if search:
-        protocols_query = protocols_query.filter(db.or_(
+        protocols_query = protocols_query.filter(or_(
             ProtocolDocument.title.ilike(f'%{search}%'),
             ProtocolDocument.category.ilike(f'%{search}%'),
             ProtocolDocument.notes.ilike(f'%{search}%'),
@@ -2233,7 +2569,7 @@ def farm_documents_page():
     category_filter = (request.args.get('category') or '').strip()
     documents_query = FarmDocument.query
     if search:
-        documents_query = documents_query.filter(db.or_(
+        documents_query = documents_query.filter(or_(
             FarmDocument.title.ilike(f'%{search}%'),
             FarmDocument.category.ilike(f'%{search}%'),
             FarmDocument.notes.ilike(f'%{search}%'),
@@ -2299,24 +2635,59 @@ def delete_farm_document(document_id):
 @requires_permission('transfers_manage')
 def transfers_page():
     if request.method == 'POST':
+        transfer_date = parse_date(request.form['transfer_date'], date.today())
         src_id = int(request.form['source_unit_id'])
-        src_lot = active_lot_for_unit(src_id)
-        if not src_lot and not request.form.get('source_lot_id'):
+        source_lot_id = int(request.form['source_lot_id']) if request.form.get('source_lot_id') else None
+        src_lot = db.session.get(Lot, source_lot_id) if source_lot_id else active_lot_for_unit(src_id, on_date=transfer_date)
+        if not src_lot:
             flash('Selecione um lote de origem válido.', 'danger')
             return redirect(url_for('transfers_page'))
+
+        destination_unit_id = int(request.form['destination_unit_id'])
+        transferred_qty = int(request.form['transferred_qty'])
+        existing_allocation = LotUnitAllocation.query.filter(
+            LotUnitAllocation.lot_id == src_lot.id,
+            LotUnitAllocation.unit_id == destination_unit_id,
+            LotUnitAllocation.start_date <= transfer_date,
+            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date),
+        ).first()
+        if not existing_allocation:
+            db.session.add(LotUnitAllocation(
+                lot_id=src_lot.id,
+                unit_id=destination_unit_id,
+                start_date=transfer_date,
+                quantity_allocated=transferred_qty,
+                notes='Transferência bifásica.',
+            ))
+        else:
+            existing_allocation.quantity_allocated = (existing_allocation.quantity_allocated or 0) + transferred_qty
+
         tr = Transfer(
-            transfer_date=parse_date(request.form['transfer_date'], date.today()),
+            transfer_date=transfer_date,
             source_unit_id=src_id,
-            destination_unit_id=int(request.form['destination_unit_id']),
-            source_lot_id=src_lot.id if src_lot else int(request.form['source_lot_id']),
-            destination_lot_code=request.form['destination_lot_code'],
-            transferred_qty=int(request.form['transferred_qty']),
+            destination_unit_id=destination_unit_id,
+            source_lot_id=src_lot.id,
+            destination_lot_code=src_lot.lot_code,
+            transferred_qty=transferred_qty,
             avg_weight_g=float(request.form['avg_weight_g']) if request.form.get('avg_weight_g') else None,
             notes=request.form.get('notes')
         )
         db.session.add(tr)
+
+        allocation = LotUnitAllocation.query.filter(
+            LotUnitAllocation.lot_id == src_lot.id,
+            LotUnitAllocation.unit_id == src_id,
+            LotUnitAllocation.start_date <= transfer_date,
+            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date),
+        ).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
+        if allocation:
+            remaining_qty = max((allocation.quantity_allocated or 0) - transferred_qty, 0)
+            if request.form.get('close_source_allocation') == '1' or remaining_qty == 0:
+                allocation.end_date = transfer_date
+            allocation.quantity_allocated = remaining_qty
+
         db.session.commit()
-        flash('Transferência registrada.', 'success')
+        flash('Transferência registrada. O mesmo lote agora pode seguir em múltiplos viveiros.', 'success')
         return redirect(url_for('transfers_page'))
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
@@ -2430,25 +2801,105 @@ def toggle_feed_product(product_id):
 @requires_permission('sales_manage')
 def sales_page():
     if request.method == 'POST':
+        sale_date = parse_date(request.form['sale_date'], date.today())
+        unit_id = int(request.form['unit_id']) if request.form.get('unit_id') else None
+        lot_id = int(request.form['lot_id']) if request.form.get('lot_id') else None
+        if unit_id and not lot_id:
+            allocation = active_lot_allocation_for_unit(unit_id, on_date=sale_date)
+            lot_id = allocation.lot_id if allocation else None
+        if lot_id and unit_id is None:
+            current_units = lot_current_units(db.session.get(Lot, lot_id), on_date=sale_date)
+            if len(current_units) == 1:
+                unit_id = current_units[0].id
+        average_weight_g = parse_float(request.form.get('average_weight_g'))
+        harvested_units = parse_int(request.form.get('harvested_units'))
+        quantity_kg = parse_float(request.form['quantity_kg'], 0) or 0
+        if harvested_units is None and average_weight_g:
+            harvested_units = int(round((quantity_kg * 1000) / average_weight_g)) if average_weight_g else None
         sale = Sale(
-            sale_date=parse_date(request.form['sale_date'], date.today()),
-            unit_id=int(request.form['unit_id']) if request.form.get('unit_id') else None,
-            lot_id=int(request.form['lot_id']) if request.form.get('lot_id') else None,
+            sale_date=sale_date,
+            unit_id=unit_id,
+            lot_id=lot_id,
             client_name=request.form['client_name'],
             channel=request.form['channel'],
-            quantity_kg=float(request.form['quantity_kg']),
-            unit_price=float(request.form['unit_price']),
+            quantity_kg=quantity_kg,
+            unit_price=parse_float(request.form['unit_price'], 0) or 0,
+            average_weight_g=average_weight_g,
+            harvested_units=harvested_units,
             notes=request.form.get('notes')
         )
         db.session.add(sale)
+
+        if lot_id and unit_id and request.form.get('close_unit_after_sale', '1') == '1':
+            allocation = find_active_allocation(lot_id, unit_id, sale_date)
+            if allocation:
+                allocation.end_date = sale_date
+                allocation.quantity_allocated = 0
+            remaining = LotUnitAllocation.query.filter(
+                LotUnitAllocation.lot_id == lot_id,
+                LotUnitAllocation.start_date <= sale_date,
+                or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date > sale_date),
+            ).count()
+            if remaining == 0:
+                lot = db.session.get(Lot, lot_id)
+                if lot:
+                    close_lot(lot, sale_date, reason='despesca_venda')
+        elif lot_id and request.form.get('close_lot_after_sale', '0') == '1':
+            lot = db.session.get(Lot, lot_id)
+            if lot:
+                close_lot(lot, sale_date, reason='despesca_venda')
         db.session.commit()
-        flash('Venda registrada.', 'success')
+        flash('Despesca/venda registrada.', 'success')
         return redirect(url_for('sales_page'))
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     lots = Lot.query.order_by(Lot.start_date.desc()).all()
-    rows = Sale.query.order_by(Sale.sale_date.desc(), Sale.id.desc()).limit(50).all()
+    rows = Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc(), Sale.id.desc()).limit(50).all()
+    row_summaries = [summary for sale in rows if (summary := sale_financial_summary(sale))]
     total_revenue = db.session.query(func.coalesce(func.sum(Sale.quantity_kg * Sale.unit_price), 0)).scalar() or 0
-    return render_template('sales.html', units=units, lots=lots, rows=rows, today=date.today(), total_revenue=total_revenue)
+    return render_template('sales.html', units=units, lots=lots, rows=rows, row_summaries=row_summaries, today=date.today(), total_revenue=total_revenue)
+
+
+@app.get('/sales/export-history.xlsx')
+@login_required
+@requires_permission('sales_manage')
+def export_sales_history():
+    rows = Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.asc(), Sale.id.asc()).all()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Historico despesca'
+    headers = [
+        'Data', 'Lote', 'Viveiro', 'Cliente', 'Canal', 'Qtd kg', 'Preco kg', 'Faturamento',
+        'Peso medio g', 'Unidades despescadas', 'Custo racao viveiro', 'Custo fixo viveiro',
+        'Custo total viveiro', 'Resultado', 'Status', 'FCR real lote', 'Sobrevivencia lote %'
+    ]
+    ws.append(headers)
+    for sale in rows:
+        summary = sale_financial_summary(sale)
+        if not summary:
+            continue
+        ws.append([
+            sale.sale_date.strftime('%d/%m/%Y') if sale.sale_date else '',
+            sale.lot.lot_code if sale.lot else '',
+            sale.unit.name if sale.unit else '',
+            sale.client_name,
+            sale.channel,
+            sale.quantity_kg,
+            sale.unit_price,
+            summary['revenue'],
+            sale.average_weight_g,
+            summary['harvested_units'],
+            summary['feed_cost'],
+            summary['fixed_cost'],
+            summary['total_cost'],
+            summary['profit'],
+            summary['status'],
+            summary['fcr_real'],
+            summary['survival_pct'],
+        ])
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name='historico_despesca_lotes.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @app.route('/users', methods=['GET', 'POST'])
