@@ -1,15 +1,16 @@
 {% extends 'base.html' %}
 {% block page_title %}Lotes{% endblock %}
-{% block page_subtitle %}Cadastre e acompanhe os lotes ativos e históricos da operação.{% endblock %}
+{% block page_subtitle %}Cadastre lotes, custos fixos e acompanhe o custo consolidado por lote.{% endblock %}
 {% block content %}
 <div class="grid-2">
 <section class="panel">
 <div class="panel-head"><div><p class="panel-kicker">Cadastro</p><h2>Novo lote</h2></div></div>
 <form method="post" class="form-grid">
+  <input type="hidden" name="form_mode" value="lot">
   <label>Código do lote<input name="lot_code" required></label>
   <label>Fase<select name="phase"><option value="bercario">Berçário</option><option value="engorda">Engorda</option></select></label>
-  <label>Data inicial<input type="date" name="start_date" required></label>
-  <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
+  <label>Data inicial<input type="date" name="start_date" value="{{ today.isoformat() }}" required></label>
+  <label>Unidade inicial<select name="unit_id">{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
   <label>Quantidade inicial<input type="number" name="initial_count" required></label>
   <label>Peso médio inicial (g)<input type="number" step="0.01" name="estimated_weight_g"></label>
   <label class="full">Observações<textarea name="notes"></textarea></label>
@@ -17,13 +18,65 @@
 </form>
 </section>
 <section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Lotes cadastrados</h2></div></div>
+<div class="panel-head"><div><p class="panel-kicker">Custo fixo</p><h2>Cadastrar custo mensal</h2></div></div>
+<form method="post" class="form-grid">
+  <input type="hidden" name="form_mode" value="fixed_cost">
+  <label>Nome do custo<input name="name" value="Funcionário" required></label>
+  <label>Valor mensal<input type="number" step="0.01" name="monthly_amount" required></label>
+  <label>Início<input type="date" name="start_date" value="{{ today.isoformat() }}" required></label>
+  <label>Fim (opcional)<input type="date" name="end_date"></label>
+  <label>Status<select name="active"><option value="1">Ativo</option><option value="0">Inativo</option></select></label>
+  <label class="full">Observações<textarea name="notes"></textarea></label>
+  <div class="form-actions"><button type="submit">Salvar custo fixo</button></div>
+</form>
+</section>
+</div>
+
+<div class="grid-2" style="margin-top: 1rem;">
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Consolidado</p><h2>Custo por lote</h2></div></div>
 <div class="table-wrap">
 <table>
-<thead><tr><th>Lote</th><th>Fase</th><th>Início</th><th>Unidade</th><th>Quantidade</th><th>Status</th></tr></thead>
+<thead><tr><th>Lote</th><th>Status</th><th>Fase</th><th>Alocações atuais</th><th>Ração</th><th>Fixo rateado</th><th>Total</th><th>FCR real</th><th>Sobrevivência</th></tr></thead>
 <tbody>
-{% for r in lots %}
-<tr><td>{{ r.lot_code }}</td><td>{{ r.phase|phase_label }}</td><td>{{ r.start_date|brdate }}</td><td>{{ r.unit.name }}</td><td>{{ r.initial_count }}</td><td>{{ r.status|status_label }}</td></tr>
+{% for row in lot_summaries %}
+<tr>
+  <td>{{ row.lot.lot_code }}</td>
+  <td>{{ row.lot.status|status_label }}</td>
+  <td>{{ row.lot.phase|phase_label }}</td>
+  <td>
+    {% if row.allocations %}
+      {% for alloc in row.allocations %}
+        <div>{{ alloc.unit_name }} — {{ alloc.allocated_qty }} PL{% if alloc.density is not none %} · {{ alloc.density }} PL/m²{% endif %}</div>
+      {% endfor %}
+    {% else %}—{% endif %}
+  </td>
+  <td>{{ row.feed_cost|money }}</td>
+  <td>{{ row.fixed_cost|money }}</td>
+  <td>{{ row.total_cost|money }}</td>
+  <td>{{ row.fcr_real if row.fcr_real is not none else '—' }}</td>
+  <td>{% if row.survival_pct is not none %}{{ row.survival_pct }}%{% else %}—{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Encerramento manual</p><h2>Fechar lote</h2></div></div>
+<form method="post" class="form-grid">
+  <input type="hidden" name="form_mode" value="close_lot">
+  <label>Lote<select name="lot_id">{% for l in lots if l.status == 'ativo' %}<option value="{{l.id}}">{{l.lot_code}}</option>{% endfor %}</select></label>
+  <label>Data de encerramento<input type="date" name="end_date" value="{{ today.isoformat() }}" required></label>
+  <div class="form-actions"><button type="submit">Encerrar lote</button></div>
+</form>
+
+<div class="table-wrap" style="margin-top:1rem;">
+<table>
+<thead><tr><th>Custo fixo</th><th>Valor mensal</th><th>Início</th><th>Fim</th><th>Status</th></tr></thead>
+<tbody>
+{% for cost in fixed_costs %}
+<tr><td>{{ cost.name }}</td><td>{{ cost.monthly_amount|money }}</td><td>{{ cost.start_date|brdate }}</td><td>{{ cost.end_date|brdate if cost.end_date else '—' }}</td><td>{{ 'Ativo' if cost.active else 'Inativo' }}</td></tr>
 {% endfor %}
 </tbody>
 </table>

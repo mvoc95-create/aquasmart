@@ -1,31 +1,57 @@
 {% extends 'base.html' %}
 {% block page_title %}Despesca e vendas{% endblock %}
-{% block page_subtitle %}Registre a saída comercial do camarão e acompanhe a receita acumulada.{% endblock %}
+{% block page_subtitle %}Registre a saída comercial do camarão e encerre o lote automaticamente quando fizer sentido.{% endblock %}
 {% block content %}
-<div class="cards compact-cards"><div class="metric-card"><span class="metric-label">Receita acumulada</span><strong>{{ total_revenue|money }}</strong><small>Soma de todas as vendas registradas</small></div></div>
+<div class="cards compact-cards"><div class="metric-card"><span class="metric-label">Receita acumulada</span><strong>{{ total_revenue|money }}</strong><small>Soma de todas as vendas registradas</small></div><div class="metric-card"><span class="metric-label">Exportação</span><strong>Histórico</strong><small><a href="{{ url_for('export_sales_history') }}">Baixar Excel da despesca</a></small></div></div>
 <div class="grid-2">
 <section class="panel">
 <div class="panel-head"><div><p class="panel-kicker">Venda</p><h2>Novo lançamento</h2></div></div>
 <form method="post" class="form-grid">
   <label>Data<input type="date" name="sale_date" value="{{ today.isoformat() }}" required></label>
-  <label>Unidade<select name="unit_id"><option value="">—</option>{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
-  <label>Lote<select name="lot_id"><option value="">—</option>{% for l in lots %}<option value="{{l.id}}">{{l.lot_code}}</option>{% endfor %}</select></label>
+  <label>Viveiro / unidade<select name="unit_id"><option value="">—</option>{% for u in units %}<option value="{{u.id}}">{{u.name}}</option>{% endfor %}</select></label>
+  <label>Lote<select name="lot_id"><option value="">Auto pelo viveiro</option>{% for l in lots %}<option value="{{l.id}}">{{l.lot_code}}{% if l.status != 'ativo' %} ({{ l.status }}){% endif %}</option>{% endfor %}</select></label>
   <label>Cliente<input name="client_name" required></label>
   <label>Canal<select name="channel"><option>fazenda</option><option>restaurante</option><option>supermercado</option><option>atacado</option></select></label>
-  <label>Quantidade (kg)<input type="number" step="0.01" name="quantity_kg" required></label>
+  <label>Quantidade vendida (kg)<input type="number" step="0.01" name="quantity_kg" required></label>
   <label>Preço por kg<input type="number" step="0.01" name="unit_price" required></label>
+  <label>Peso médio final (g)<input type="number" step="0.01" name="average_weight_g"></label>
+  <label>Qtd. camarões despescados (opcional)<input type="number" name="harvested_units"></label>
+  <label>Encerrar este viveiro após a despesca?<select name="close_unit_after_sale"><option value="1">Sim</option><option value="0">Não</option></select></label>
+  <label>Encerrar lote inteiro?<select name="close_lot_after_sale"><option value="0">Não</option><option value="1">Sim</option></select></label>
   <label class="full">Observação<textarea name="notes"></textarea></label>
   <div class="form-actions"><button type="submit">Salvar venda</button></div>
 </form>
 </section>
 <section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimas vendas</h2></div></div>
+<div class="panel-head"><div><p class="panel-kicker">Status final</p><h2>Resultado por despesca / viveiro</h2></div></div>
 <div class="table-wrap">
 <table>
-<thead><tr><th>Data</th><th>Cliente</th><th>Canal</th><th>Qtd. kg</th><th>Preço</th><th>Total</th></tr></thead>
+<thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Faturamento</th><th>Custo ração</th><th>Custo fixo</th><th>Custo total</th><th>Resultado</th><th>Status</th><th>FCR real lote</th><th>Sobrevivência lote</th></tr></thead>
+<tbody>
+{% for row in row_summaries %}
+<tr>
+  <td>{{ row.sale.sale_date|brdate }}</td>
+  <td>{{ row.sale.lot.lot_code if row.sale.lot else '—' }}</td>
+  <td>{{ row.sale.unit.name if row.sale.unit else '—' }}</td>
+  <td>{{ row.revenue|money }}</td>
+  <td>{{ row.feed_cost|money }}</td>
+  <td>{{ row.fixed_cost|money }}</td>
+  <td>{{ row.total_cost|money }}</td>
+  <td>{{ row.profit|money }}</td>
+  <td>{{ row.status }}</td>
+  <td>{{ row.fcr_real if row.fcr_real is not none else '—' }}</td>
+  <td>{% if row.survival_pct is not none %}{{ row.survival_pct }}%{% else %}—{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<div class="table-wrap" style="margin-top:1rem;">
+<table>
+<thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Cliente</th><th>Canal</th><th>Qtd. kg</th><th>Peso médio</th><th>Qtd. camarões</th></tr></thead>
 <tbody>
 {% for r in rows %}
-<tr><td>{{ r.sale_date|brdate }}</td><td>{{ r.client_name }}</td><td>{{ r.channel|title }}</td><td>{{ r.quantity_kg }}</td><td>{{ r.unit_price|money }}</td><td>{{ (r.quantity_kg * r.unit_price)|money }}</td></tr>
+<tr><td>{{ r.sale_date|brdate }}</td><td>{{ r.lot.lot_code if r.lot else '—' }}</td><td>{{ r.unit.name if r.unit else '—' }}</td><td>{{ r.client_name }}</td><td>{{ r.channel|title }}</td><td>{{ r.quantity_kg }}</td><td>{{ r.average_weight_g if r.average_weight_g is not none else '—' }}</td><td>{{ r.harvested_units if r.harvested_units is not none else '—' }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
