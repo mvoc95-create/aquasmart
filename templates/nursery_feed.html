@@ -1,30 +1,138 @@
 {% extends 'base.html' %}
 {% block page_title %}Alimentação berçário{% endblock %}
-{% block page_subtitle %}Registre a alimentação diária do berçário, score intestinal e mantenha vínculo com o manejo diário.{% endblock %}
+{% block page_subtitle %}O sistema calcula a tabela diária do berçário com base na quantidade de PL, idade de entrada e data de entrada do lote.{% endblock %}
 {% block content %}
-<div class="grid-2">
 <section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>{{ 'Editar alimentação' if edit_entry else 'Nova alimentação de berçário' }}</h2></div></div>
-<form method="post" class="form-grid">
-  <input type="hidden" name="form_mode" value="{{ 'edit' if edit_entry else 'create' }}">
-  {% if edit_entry %}<input type="hidden" name="entry_id" value="{{ edit_entry.id }}">{% endif %}
-  <label>Data<input type="date" name="feed_date" value="{{ edit_entry.feed_date.isoformat() if edit_entry and edit_entry.feed_date else today.isoformat() }}" required></label>
-  <label>Berçário<select name="unit_id">{% for u in nursery_units %}<option value="{{ u.id }}" {% if edit_entry and edit_entry.unit_id==u.id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}</select></label>
-  <label>Quantidade do dia (kg)<input type="number" step="0.01" name="quantity_kg" value="{{ edit_entry.quantity_kg if edit_entry else '' }}" required></label>
-  <label>Score intestinal (0 a 4)<select name="intestinal_score"><option value="">—</option>{% for n in range(0,5) %}<option value="{{ n }}" {% if edit_entry and edit_entry.intestinal_score==n %}selected{% endif %}>{{ n }}</option>{% endfor %}</select></label>
-  <label class="full">Observações<textarea name="notes">{{ edit_entry.notes if edit_entry else '' }}</textarea></label>
-  <div class="form-actions action-row-between"><button type="submit">{{ 'Salvar alterações' if edit_entry else 'Salvar alimentação' }}</button>{% if edit_entry %}<a class="secondary-link-button" href="{{ url_for('nursery_feed_page') }}">Cancelar</a>{% endif %}</div>
-</form>
+  <div class="panel-head">
+    <div>
+      <p class="panel-kicker">Data de trabalho</p>
+      <h2>Planejamento automático do berçário</h2>
+    </div>
+  </div>
+  <form method="get" class="form-grid compact-grid">
+    <label>Data da programação<input type="date" name="feed_date" value="{{ selected_date.isoformat() }}"></label>
+    <div class="form-actions"><button type="submit">Atualizar planejamento</button></div>
+  </form>
+  {% if combined_message %}
+  <div class="action-row" style="margin-top:1rem;">
+    <button type="button" class="secondary-button copy-message-btn" data-copy-target="#combined-message">Copiar mensagem consolidada do dia</button>
+    <span class="helper-text">Usa todos os berçários ativos do dia.</span>
+  </div>
+  <textarea id="combined-message" class="message-preview" readonly>{{ combined_message }}</textarea>
+  {% endif %}
 </section>
-<section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos lançamentos</h2></div></div>
-<div class="table-wrap"><table>
-<thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia</th><th>Score</th><th>Obs.</th><th></th></tr></thead>
-<tbody>
-{% for e in entries %}
-<tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ e.quantity_kg }}</td><td>{{ e.intestinal_score if e.intestinal_score is not none else '—' }}</td><td>{{ e.notes or '—' }}</td><td><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id) }}">Editar</a></td></tr>
-{% else %}<tr><td colspan="7" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
-</tbody></table></div>
+
+<div class="panel-stack" style="margin-top:1rem;">
+{% for plan in plans %}
+<section class="panel nursery-plan-panel">
+  <div class="panel-head">
+    <div>
+      <p class="panel-kicker">{{ plan.unit.name }}</p>
+      <h2>Lote {{ plan.lot.lot_code }} · PL{{ plan.stage_today }}</h2>
+      <p class="helper-text">Dia {{ plan.day_index }} no berçário · População estimada {{ '{:,.0f}'.format(plan.projected_population).replace(',', '.') }} PL · Biomassa {{ '%.2f'|format(plan.biomass_kg) }} kg</p>
+    </div>
+    <div class="action-row">
+      <button type="button" class="secondary-button copy-message-btn" data-copy-target="#msg-{{ plan.unit.id }}">Copiar mensagem</button>
+    </div>
+  </div>
+
+  <div class="kpi-grid kpi-grid-4">
+    <article class="stat-card"><span class="stat-label">Taxa alimentação</span><strong>{{ '%.2f'|format(plan.feed_rate_pct) }}%</strong></article>
+    <article class="stat-card"><span class="stat-label">Total do dia</span><strong>{{ '{:,.0f}'.format(plan.total_day_g).replace(',', '.') }} g</strong><small>{{ '%.3f'|format(plan.total_day_kg) }} kg</small></article>
+    <article class="stat-card"><span class="stat-label">Nº alimentações</span><strong>{{ plan.feedings_per_day }}</strong></article>
+    <article class="stat-card"><span class="stat-label">Por vez</span><strong>{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g</strong></article>
+  </div>
+
+  <div class="grid-2" style="margin-top:1rem; gap:1rem; align-items:start;">
+    <div>
+      <h3 class="subsection-title">Mix do dia</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Produto</th><th>Quantidade</th></tr></thead>
+          <tbody>
+            {% for item in plan.mixes %}
+            <tr><td>{{ item.label }}</td><td>{{ '{:,.0f}'.format(item.grams).replace(',', '.') }} g</td></tr>
+            {% else %}
+            <tr><td colspan="2" class="empty-cell">Sem mistura configurada para este estágio.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h3 class="subsection-title">Porções a cada 2 horas</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Horário</th><th>Volume</th></tr></thead>
+          <tbody>
+            {% for item in plan.schedule %}
+            <tr><td>{{ item.time }}</td><td>{{ '{:,.0f}'.format(item.grams).replace(',', '.') }} g</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:1rem; gap:1rem; align-items:start;">
+    <section class="panel panel-soft">
+      <div class="panel-head"><div><p class="panel-kicker">Lançamento real</p><h3>{{ 'Editar alimentação salva' if plan.existing_entry else 'Salvar alimentação do dia' }}</h3></div></div>
+      <form method="post" class="form-grid compact-grid">
+        <input type="hidden" name="form_mode" value="{{ 'edit' if plan.existing_entry else 'create' }}">
+        {% if plan.existing_entry %}<input type="hidden" name="entry_id" value="{{ plan.existing_entry.id }}">{% endif %}
+        <input type="hidden" name="feed_date" value="{{ selected_date.isoformat() }}">
+        <input type="hidden" name="unit_id" value="{{ plan.unit.id }}">
+        <input type="hidden" name="lot_id" value="{{ plan.lot.id }}">
+        <label>Quantidade do dia (kg)<input type="number" step="0.001" name="quantity_kg" value="{{ plan.existing_entry.quantity_kg if plan.existing_entry else plan.total_day_kg }}" required></label>
+        <label>Score intestinal (0 a 4)
+          <select name="intestinal_score">
+            <option value="">—</option>
+            {% for n in range(0,5) %}
+            <option value="{{ n }}" {% if plan.existing_entry and plan.existing_entry.intestinal_score==n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="full">Observações<textarea name="notes">{{ plan.existing_entry.notes if plan.existing_entry else '' }}</textarea></label>
+        <div class="form-actions"><button type="submit">{{ 'Salvar alterações' if plan.existing_entry else 'Salvar alimentação' }}</button></div>
+      </form>
+    </section>
+
+    <section class="panel panel-soft">
+      <div class="panel-head"><div><p class="panel-kicker">Mensagem</p><h3>Pronta para o grupo Aqua Smart</h3></div></div>
+      <textarea id="msg-{{ plan.unit.id }}" class="message-preview" readonly>{{ plan.message_text }}</textarea>
+    </section>
+  </div>
 </section>
+{% else %}
+<section class="panel"><div class="empty-state"><h3>Nenhum berçário ativo pronto para calcular</h3><p>Confira se há lotes ativos alocados em unidades de berçário e se o lote tem a idade inicial da PL preenchida.</p></div></section>
+{% endfor %}
 </div>
+
+<section class="panel" style="margin-top:1rem;">
+  <div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos lançamentos</h2></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Obs.</th><th></th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ e.intestinal_score if e.intestinal_score is not none else '—' }}</td><td>{{ e.notes or '—' }}</td><td><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a></td></tr>
+    {% else %}<tr><td colspan="7" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+
+<script>
+document.addEventListener('click', async (event) => {
+  const btn = event.target.closest('.copy-message-btn');
+  if (!btn) return;
+  const target = document.querySelector(btn.dataset.copyTarget);
+  if (!target) return;
+  try {
+    await navigator.clipboard.writeText(target.value || target.textContent || '');
+    const original = btn.textContent;
+    btn.textContent = 'Mensagem copiada';
+    setTimeout(() => btn.textContent = original, 1800);
+  } catch (error) {
+    alert('Não consegui copiar automaticamente. Tente novamente.');
+  }
+});
+</script>
 {% endblock %}
