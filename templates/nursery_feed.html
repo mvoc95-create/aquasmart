@@ -1,31 +1,49 @@
 {% extends 'base.html' %}
 {% block page_title %}Alimentação berçário{% endblock %}
-{% block page_subtitle %}O sistema calcula a tabela diária do berçário com base na quantidade de PL, idade de entrada e data de entrada do lote.{% endblock %}
+{% block page_subtitle %}Organizei esta tela para separar melhor o planejamento, o lançamento real e a mensagem do WhatsApp.{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-head">
     <div>
       <p class="panel-kicker">Data de trabalho</p>
       <h2>Planejamento automático do berçário</h2>
+      <p class="helper-text">Veja o protocolo do dia, salve o lançamento real e, se precisar, abra a mensagem pronta para o WhatsApp.</p>
     </div>
   </div>
-  <form method="get" class="form-grid compact-grid">
+  <form method="get" class="form-grid compact-grid nursery-toolbar-form">
     <label>Data da programação<input type="date" name="feed_date" value="{{ selected_date.isoformat() }}"></label>
     <div class="form-actions"><button type="submit">Atualizar planejamento</button></div>
   </form>
-  {% if combined_message %}
-  <div class="action-row" style="margin-top:1rem;">
-    <button type="button" class="secondary-button copy-message-btn" data-copy-target="#combined-message">Copiar mensagem consolidada do dia</button>
-    <span class="helper-text">Usa todos os berçários ativos do dia.</span>
+
+  {% if plans %}
+  <div class="nursery-overview-row">
+    <div class="summary-chip"><strong>{{ plans|length }}</strong><span>berçário{% if plans|length != 1 %}s{% endif %} ativo{% if plans|length != 1 %}s{% endif %}</span></div>
+    <div class="summary-chip"><strong>{{ '%.3f'|format((plans|sum(attribute='total_day_kg'))) }}</strong><span>kg programados no dia</span></div>
   </div>
-  <textarea id="combined-message" class="message-preview" readonly>{{ combined_message }}</textarea>
+  {% endif %}
+
+  {% if combined_message %}
+  <details class="reference-collapse nursery-collapse" style="margin-top:1rem;">
+    <summary class="reference-collapse-summary">
+      <div>
+        <p class="panel-kicker">Resumo consolidado</p>
+        <h2>Mensagem única do dia</h2>
+      </div>
+      <span class="inline-hint">Abrir</span>
+    </summary>
+    <div class="action-row nursery-copy-row">
+      <button type="button" class="secondary-button copy-message-btn" data-copy-target="#combined-message">Copiar mensagem consolidada do dia</button>
+      <span class="helper-text">Usa todos os berçários ativos do dia.</span>
+    </div>
+    <textarea id="combined-message" class="message-preview" readonly>{{ combined_message }}</textarea>
+  </details>
   {% endif %}
 </section>
 
 <div class="panel-stack" style="margin-top:1rem;">
 {% for plan in plans %}
 <section class="panel nursery-plan-panel">
-  <div class="panel-head">
+  <div class="panel-head nursery-plan-head">
     <div>
       <p class="panel-kicker">{{ plan.unit.name }}</p>
       <h2>Lote {{ plan.lot.lot_code }} · PL{{ plan.stage_today }}</h2>
@@ -36,14 +54,14 @@
     </div>
   </div>
 
-  <div class="kpi-grid kpi-grid-4">
-    <article class="stat-card"><span class="stat-label">Taxa alimentação</span><strong>{{ '%.2f'|format(plan.feed_rate_pct) }}%</strong></article>
-    <article class="stat-card"><span class="stat-label">Total do dia</span><strong>{{ '{:,.0f}'.format(plan.total_day_g).replace(',', '.') }} g</strong><small>{{ '%.3f'|format(plan.total_day_kg) }} kg</small></article>
-    <article class="stat-card"><span class="stat-label">Nº alimentações</span><strong>{{ plan.feedings_per_day }}</strong></article>
-    <article class="stat-card"><span class="stat-label">Por vez</span><strong>{% if plan.per_feeding_min_g != plan.per_feeding_max_g %}{{ '{:,.0f}'.format(plan.per_feeding_min_g).replace(',', '.') }}–{{ '{:,.0f}'.format(plan.per_feeding_max_g).replace(',', '.') }} g{% else %}{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g{% endif %}</strong></article>
+  <div class="nursery-summary-strip">
+    <div class="summary-chip"><strong>{{ '%.2f'|format(plan.feed_rate_pct) }}%</strong><span>taxa de alimentação</span></div>
+    <div class="summary-chip"><strong>{{ '{:,.0f}'.format(plan.total_day_g).replace(',', '.') }} g</strong><span>{{ '%.3f'|format(plan.total_day_kg) }} kg no dia</span></div>
+    <div class="summary-chip"><strong>{{ plan.feedings_per_day }}</strong><span>alimentações no dia</span></div>
+    <div class="summary-chip"><strong>{% if plan.per_feeding_min_g != plan.per_feeding_max_g %}{{ '{:,.0f}'.format(plan.per_feeding_min_g).replace(',', '.') }}–{{ '{:,.0f}'.format(plan.per_feeding_max_g).replace(',', '.') }} g{% else %}{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g{% endif %}</strong><span>por porção</span></div>
   </div>
 
-  <div class="grid-2" style="margin-top:1rem; gap:1rem; align-items:start;">
+  <div class="grid-2 nursery-main-grid" style="margin-top:1rem; gap:1rem; align-items:start;">
     <div>
       <h3 class="subsection-title">Mix do dia</h3>
       <div class="table-wrap">
@@ -60,7 +78,7 @@
       </div>
     </div>
     <div>
-      <h3 class="subsection-title">Porções a cada 2 horas</h3>
+      <h3 class="subsection-title">Porções programadas</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Horário</th><th>Volume</th></tr></thead>
@@ -74,34 +92,44 @@
     </div>
   </div>
 
-  <div class="grid-2" style="margin-top:1rem; gap:1rem; align-items:start;">
-    <section class="panel panel-soft">
-      <div class="panel-head"><div><p class="panel-kicker">Lançamento real</p><h3>{{ 'Editar alimentação salva' if plan.existing_entry else 'Salvar alimentação do dia' }}</h3></div></div>
-      <form method="post" class="form-grid compact-grid">
-        <input type="hidden" name="form_mode" value="{{ 'edit' if plan.existing_entry else 'create' }}">
-        {% if plan.existing_entry %}<input type="hidden" name="entry_id" value="{{ plan.existing_entry.id }}">{% endif %}
-        <input type="hidden" name="feed_date" value="{{ selected_date.isoformat() }}">
-        <input type="hidden" name="unit_id" value="{{ plan.unit.id }}">
-        <input type="hidden" name="lot_id" value="{{ plan.lot.id }}">
-        <label>Quantidade do dia (kg)<input type="number" step="0.001" name="quantity_kg" value="{{ plan.existing_entry.quantity_kg if plan.existing_entry else plan.total_day_kg }}" required></label>
-        <label>Score intestinal (0 a 4)
-          <select name="intestinal_score">
-            <option value="">—</option>
-            {% for n in range(0,5) %}
-            <option value="{{ n }}" {% if plan.existing_entry and plan.existing_entry.intestinal_score==n %}selected{% endif %}>{{ n }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label class="full">Observações<textarea name="notes">{{ plan.existing_entry.notes if plan.existing_entry else '' }}</textarea></label>
-        <div class="form-actions"><button type="submit">{{ 'Salvar alterações' if plan.existing_entry else 'Salvar alimentação' }}</button></div>
-      </form>
-    </section>
+  <section class="panel panel-soft nursery-entry-panel" style="margin-top:1rem;">
+    <div class="panel-head">
+      <div>
+        <p class="panel-kicker">Lançamento real</p>
+        <h3>{{ 'Editar alimentação salva' if plan.existing_entry else 'Salvar alimentação do dia' }}</h3>
+        <p class="helper-text">Aqui é onde você confirma o que realmente foi ofertado no berçário.</p>
+      </div>
+    </div>
+    <form method="post" class="form-grid compact-grid nursery-entry-form">
+      <input type="hidden" name="form_mode" value="{{ 'edit' if plan.existing_entry else 'create' }}">
+      {% if plan.existing_entry %}<input type="hidden" name="entry_id" value="{{ plan.existing_entry.id }}">{% endif %}
+      <input type="hidden" name="feed_date" value="{{ selected_date.isoformat() }}">
+      <input type="hidden" name="unit_id" value="{{ plan.unit.id }}">
+      <input type="hidden" name="lot_id" value="{{ plan.lot.id }}">
+      <label>Quantidade real do dia (kg)<input type="number" step="0.001" name="quantity_kg" value="{{ plan.existing_entry.quantity_kg if plan.existing_entry else plan.total_day_kg }}" required></label>
+      <label>Score intestinal (0 a 4)
+        <select name="intestinal_score">
+          <option value="">—</option>
+          {% for n in range(0,5) %}
+          <option value="{{ n }}" {% if plan.existing_entry and plan.existing_entry.intestinal_score==n %}selected{% endif %}>{{ n }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="full">Observações<textarea name="notes">{{ plan.existing_entry.notes if plan.existing_entry else '' }}</textarea></label>
+      <div class="form-actions"><button type="submit">{{ 'Salvar alterações' if plan.existing_entry else 'Salvar alimentação' }}</button></div>
+    </form>
+  </section>
 
-    <section class="panel panel-soft">
-      <div class="panel-head"><div><p class="panel-kicker">Mensagem</p><h3>Pronta para o grupo Aqua Smart</h3></div></div>
-      <textarea id="msg-{{ plan.unit.id }}" class="message-preview" readonly>{{ plan.message_text }}</textarea>
-    </section>
-  </div>
+  <details class="reference-collapse nursery-collapse">
+    <summary class="reference-collapse-summary">
+      <div>
+        <p class="panel-kicker">Mensagem</p>
+        <h2>Texto pronto para WhatsApp</h2>
+      </div>
+      <span class="inline-hint">Abrir</span>
+    </summary>
+    <textarea id="msg-{{ plan.unit.id }}" class="message-preview message-preview-compact" readonly>{{ plan.message_text }}</textarea>
+  </details>
 </section>
 {% else %}
 <section class="panel"><div class="empty-state"><h3>Nenhum berçário ativo pronto para calcular</h3><p>Confira se há lotes ativos alocados em unidades de berçário e se o lote tem a idade inicial da PL preenchida.</p></div></section>
