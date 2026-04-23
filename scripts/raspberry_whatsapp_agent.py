@@ -27,10 +27,17 @@ TOKEN = os.getenv('NURSERY_DIGEST_TOKEN', '').strip()
 GROUP_NAME = os.getenv('WHATSAPP_GROUP_NAME', 'aqua smart').strip()
 PROFILE_DIR = Path(os.getenv('WHATSAPP_PROFILE_DIR', str(Path.home() / '.aqua_whatsapp_profile')))
 DRY_RUN = os.getenv('DRY_RUN', '0') == '1'
+FEED_DATE = os.getenv('NURSERY_FEED_DATE', '').strip()
 
 
 def fetch_digest() -> dict:
-    url = f"{BASE_URL}/api/nursery-feed-digest?{urllib.parse.urlencode({'token': TOKEN})}"
+    params = {}
+    if TOKEN:
+        params['token'] = TOKEN
+    if FEED_DATE:
+        params['feed_date'] = FEED_DATE
+    query = urllib.parse.urlencode(params)
+    url = f"{BASE_URL}/api/nursery-feed-digest" + (f"?{query}" if query else '')
     with urllib.request.urlopen(url, timeout=30) as response:
         return json.loads(response.read().decode('utf-8'))
 
@@ -73,11 +80,14 @@ def send_via_whatsapp(message: str) -> None:
         page.keyboard.press('Backspace')
         search_box.fill(GROUP_NAME)
         page.wait_for_timeout(2500)
-        page.locator(f'text={GROUP_NAME}').first.click(timeout=10000)
+        chat = page.locator(f"span[title='{GROUP_NAME}']").first
+        if chat.count() == 0:
+            chat = page.locator(f'text={GROUP_NAME}').first
+        chat.click(timeout=10000)
 
         message_box = page.locator('div[contenteditable="true"][data-tab="10"]').last
         message_box.click()
-        message_box.fill(message)
+        page.keyboard.insert_text(message)
         page.keyboard.press('Enter')
         page.wait_for_timeout(2000)
         browser.close()
