@@ -40,7 +40,7 @@
     <article class="stat-card"><span class="stat-label">Taxa alimentação</span><strong>{{ '%.2f'|format(plan.feed_rate_pct) }}%</strong></article>
     <article class="stat-card"><span class="stat-label">Total do dia</span><strong>{{ '{:,.0f}'.format(plan.total_day_g).replace(',', '.') }} g</strong><small>{{ '%.3f'|format(plan.total_day_kg) }} kg</small></article>
     <article class="stat-card"><span class="stat-label">Nº alimentações</span><strong>{{ plan.feedings_per_day }}</strong></article>
-    <article class="stat-card"><span class="stat-label">Por vez</span><strong>{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g</strong></article>
+    <article class="stat-card"><span class="stat-label">Por vez</span><strong>{% if plan.per_feeding_min_g != plan.per_feeding_max_g %}{{ '{:,.0f}'.format(plan.per_feeding_min_g).replace(',', '.') }}–{{ '{:,.0f}'.format(plan.per_feeding_max_g).replace(',', '.') }} g{% else %}{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g{% endif %}</strong></article>
   </div>
 
   <div class="grid-2" style="margin-top:1rem; gap:1rem; align-items:start;">
