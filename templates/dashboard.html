@@ -1,134 +1,348 @@
 {% extends 'base.html' %}
-{% block page_title %}Painel operacional{% endblock %}
-{% block page_subtitle %}Resumo das prioridades do dia, prontidão dos berçários e semáforo das unidades ativas.{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}Resumo executivo, alertas, desempenho e previsões da operação.{% endblock %}
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
 {% block content %}
-<section class="hero-panel">
-  <div>
-    <p class="hero-kicker">Rotina diária</p>
-    <h2>Veja rapidamente o que precisa de ação hoje</h2>
-    <p class="hero-text">O painel destaca pendências de água e manejo, alertas do dia, prontidão para transferência e cobertura de ração para apoiar a operação no campo.</p>
-  </div>
-  <div class="hero-meta">
-    <div><span>Data</span><strong>{{ data.today|brdate }}</strong></div>
-    <div><span>Unidades ativas</span><strong>{{ data.units|length }}</strong></div>
-  </div>
-</section>
-
-<div class="cards">
-  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='water-pending') }}">
-    <span class="metric-label">Pendências de água</span>
-    <strong>{{ data.water_pending }}</strong>
-    <small>Unidades com lote ativo sem leitura hoje. Clique para abrir a lista.</small>
-  </a>
-  <a class="metric-card metric-link danger" href="{{ url_for('dashboard_detail', kind='water-alerts') }}">
-    <span class="metric-label">Alertas de água hoje</span>
-    <strong>{{ data.water_alerts }}</strong>
-    <small>Parâmetros fora da faixa. Clique para ver quais foram e em quais viveiros.</small>
-  </a>
-  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='management-pending') }}">
-    <span class="metric-label">Pendências de manejo</span>
-    <strong>{{ data.management_pending }}</strong>
-    <small>Lançamentos operacionais ainda faltando. Clique para detalhar.</small>
-  </a>
-  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='nursery-ready') }}">
-    <span class="metric-label">Berçários prontos</span>
-    <strong>{{ data.nursery_ready|length }}</strong>
-    <small>Unidades elegíveis para transferência. Clique para ver os berçários.</small>
-  </a>
-  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='feed-stock') }}">
-    <span class="metric-label">Estoque de ração</span>
-    <strong>{{ data.feed_stock_kg }} kg</strong>
-    <small>Saldo consolidado do estoque. Clique para abrir o detalhamento.</small>
-  </a>
-  <a class="metric-card metric-link" href="{{ url_for('dashboard_detail', kind='feed-coverage') }}">
-    <span class="metric-label">Cobertura de ração</span>
-    <strong>{{ data.feed_coverage_days if data.feed_coverage_days is not none else 'N/D' }} dias</strong>
-    <small>Com base na média recente de oferta. Clique para ver a conta.</small>
-  </a>
-</div>
-
-<div class="grid-2">
-  <section class="panel">
-    <div class="panel-head">
-      <div>
-        <p class="panel-kicker">Ações imediatas</p>
-        <h2>Agenda do dia</h2>
+<section class="dashboard-shell">
+  <form class="dashboard-filters" method="get">
+    <div class="filter-card filter-card-period">
+      <span class="filter-label">Período</span>
+      <div class="filter-period-row">
+        <input type="date" name="start_date" value="{{ data.start_date.isoformat() }}">
+        <span>até</span>
+        <input type="date" name="end_date" value="{{ data.end_date.isoformat() }}">
       </div>
     </div>
-    <ul class="agenda">
-      <li>Coletar água nas unidades com lote ativo e sem leitura de hoje.</li>
-      <li>Registrar manejo e alimentação das unidades ainda pendentes.</li>
-      <li>Conferir berçários próximos da transferência para engorda.</li>
-      <li>Validar cobertura de ração e programar compras se necessário.</li>
-    </ul>
-  </section>
-  <section class="panel">
-    <div class="panel-head">
-      <div>
-        <p class="panel-kicker">Fluxo bifásico</p>
-        <h2>Prontidão de transferência</h2>
-      </div>
-    </div>
-    {% if data.nursery_ready %}
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Berçário</th><th>Lote</th><th>Início</th><th>Dias</th></tr></thead>
-        <tbody>
-        {% for item in data.nursery_ready %}
-          <tr><td>{{ item.unit_name }}</td><td>{{ item.lot_code }}</td><td>{{ item.start_date|brdate }}</td><td>{{ item.days }}</td></tr>
+    <label class="filter-card">
+      <span class="filter-label">Lote</span>
+      <select name="lot_id">
+        <option value="">Todos</option>
+        {% for lot in data.filter_options.lots %}
+        <option value="{{ lot.id }}" {{ 'selected' if data.filters.lot_id == lot.id else '' }}>{{ lot.lot_code }}</option>
         {% endfor %}
-        </tbody>
-      </table>
+      </select>
+    </label>
+    <label class="filter-card">
+      <span class="filter-label">Unidade</span>
+      <select name="unit_id">
+        <option value="">Todas</option>
+        {% for unit in data.filter_options.units %}
+        <option value="{{ unit.id }}" {{ 'selected' if data.filters.unit_id == unit.id else '' }}>{{ unit.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="filter-card">
+      <span class="filter-label">Fase</span>
+      <select name="phase">
+        <option value="">Todas</option>
+        <option value="bercario" {{ 'selected' if data.filters.phase == 'bercario' else '' }}>Berçário</option>
+        <option value="engorda" {{ 'selected' if data.filters.phase == 'engorda' else '' }}>Engorda</option>
+      </select>
+    </label>
+    <label class="filter-card">
+      <span class="filter-label">Status</span>
+      <select name="status">
+        <option value="ativos" {{ 'selected' if data.filters.status == 'ativos' else '' }}>Ativos</option>
+        <option value="encerrados" {{ 'selected' if data.filters.status == 'encerrados' else '' }}>Encerrados</option>
+        <option value="todos" {{ 'selected' if data.filters.status == 'todos' else '' }}>Todos</option>
+      </select>
+    </label>
+    <label class="filter-card">
+      <span class="filter-label">Fornecedor da PL</span>
+      <select name="supplier">
+        <option value="">Todos</option>
+        {% for supplier in data.filter_options.suppliers %}
+        <option value="{{ supplier }}" {{ 'selected' if data.filters.supplier == supplier else '' }}>{{ supplier }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="dashboard-filter-button" type="submit"><i class="fa-solid fa-filter"></i> Filtrar</button>
+  </form>
+
+  <section class="dashboard-section">
+    <div class="section-head compact">
+      <h2>Resumo executivo</h2>
     </div>
-    {% else %}
-      <p class="empty-state">Nenhum berçário pronto agora.</p>
-    {% endif %}
+    <div class="dashboard-kpis dashboard-kpis-8">
+      <article class="kpi-card"><span class="kpi-icon blue"><i class="fa-solid fa-layer-group"></i></span><div><small>Lotes ativos</small><strong>{{ data.summary.lots_active }}</strong></div></article>
+      <article class="kpi-card"><span class="kpi-icon blue"><i class="fa-solid fa-building"></i></span><div><small>Unidades ativas</small><strong>{{ data.summary.units_active }}</strong></div></article>
+      <article class="kpi-card"><span class="kpi-icon green"><i class="fa-solid fa-weight-hanging"></i></span><div><small>Biomassa estimada</small><strong>{{ data.summary.biomass_estimated or 0 }} kg</strong></div></article>
+      <article class="kpi-card"><span class="kpi-icon orange"><i class="fa-solid fa-wheat-awn"></i></span><div><small>Ração hoje</small><strong>{{ data.summary.feed_today or 0 }} kg</strong></div></article>
+      <article class="kpi-card"><span class="kpi-icon purple"><i class="fa-solid fa-money-bill-wave"></i></span><div><small>Custo acumulado</small><strong>{{ data.summary.cost_accumulated|money }}</strong></div></article>
+      <article class="kpi-card"><span class="kpi-icon blue"><i class="fa-solid fa-arrow-trend-up"></i></span><div><small>Faturamento</small><strong>{{ data.summary.revenue_period|money }}</strong></div></article>
+      <article class="kpi-card"><span class="kpi-icon green"><i class="fa-solid fa-chart-line"></i></span><div><small>Resultado</small><strong class="{{ 'positive' if data.summary.result_period >= 0 else 'negative' }}">{{ data.summary.result_period|money }}</strong></div></article>
+      <article class="kpi-card"><span class="kpi-icon teal"><i class="fa-solid fa-calendar-check"></i></span><div><small>Próx. despescas</small><strong>{{ data.summary.next_harvests }}</strong></div></article>
+    </div>
   </section>
-</div>
 
-<section class="panel">
-  <div class="panel-head">
-    <div>
-      <p class="panel-kicker">Visão consolidada</p>
-      <h2>Semáforo das unidades</h2>
-    </div>
+  <div class="dashboard-grid-2">
+    <section class="dashboard-section section-card">
+      <div class="section-head compact">
+        <h2>Alertas e pendências</h2>
+      </div>
+      <div class="alerts-grid">
+        <div class="alerts-column">
+          <h3><i class="fa-solid fa-triangle-exclamation text-red"></i> Alertas críticos</h3>
+          <ul class="status-list">
+            {% for item in data.alerts %}
+            <li>
+              <span class="status-dot {{ item.level }}"></span>
+              <span>{{ item.text }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div class="alerts-column">
+          <h3><i class="fa-solid fa-clipboard-list text-amber"></i> Pendências operacionais</h3>
+          <ul class="status-list muted">
+            {% for item in data.pendings %}
+            <li>
+              <span class="status-dot medium"></span>
+              <span>{{ item }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="dashboard-section section-card">
+      <div class="section-head compact">
+        <h2>Operação do dia</h2>
+      </div>
+      <div class="mini-kpis">
+        <article class="mini-kpi"><small>Ração ofertada hoje</small><strong>{{ data.operation.feed_today or 0 }} kg</strong></article>
+        <article class="mini-kpi"><small>Unidades monitoradas</small><strong>{{ data.operation.monitored_units }} / {{ data.operation.monitored_total }}</strong></article>
+        <article class="mini-kpi"><small>Berçários alimentados</small><strong>{{ data.operation.nursery_fed_count }}</strong></article>
+        <article class="mini-kpi"><small>Score intestinal médio</small><strong>{{ data.operation.avg_intestinal_score if data.operation.avg_intestinal_score is not none else '—' }}</strong></article>
+      </div>
+      <div class="table-wrap dashboard-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Unidade</th>
+              <th>Lote</th>
+              <th>Último monitoramento</th>
+              <th>Último manejo</th>
+              <th>Consumo do dia</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in data.operation.rows %}
+            <tr>
+              <td>{{ row.unit_name }}</td>
+              <td>{{ row.lot_code }}</td>
+              <td>{{ row.last_monitoring }}</td>
+              <td>{{ row.last_management }}</td>
+              <td>{{ row.consumption_today }} kg</td>
+              <td><span class="table-badge {{ 'ok' if row.status == 'Normal' else 'warn' if row.status == 'Atenção' else 'muted' }}">{{ row.status }}</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty-cell">Nenhuma unidade ativa para os filtros selecionados.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Status</th><th>Unidade</th><th>Fase</th><th>Lote</th><th>Última água</th><th>Último manejo</th><th>Observação</th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for row in data.semaforo %}
-        <tr>
-          <td><span class="badge {{ row.status }}">{{ row.status|upper }}</span></td>
-          <td>{{ row.unit.name }}</td>
-          <td>{{ row.unit.phase|phase_label }}</td>
-          <td>{{ row.lot.lot_code if row.lot else 'Sem lote' }}</td>
-          <td>{% if row.water %}{{ row.water.monitor_date|brdate }} / {{ row.water.shift|shift_label }}{% else %}—{% endif %}</td>
-          <td>{% if row.mgmt %}{{ row.mgmt.manage_date|brdate }}{% else %}—{% endif %}</td>
-          <td>{{ row.reasons }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+
+  <div class="dashboard-grid-2 balance-top">
+    <section class="dashboard-section section-card">
+      <div class="section-head compact"><h2>Produção e desempenho</h2></div>
+      <div class="mini-kpis four">
+        <article class="mini-kpi"><small>Peso médio</small><strong>{{ data.production.avg_weight if data.production.avg_weight is not none else '—' }} g</strong></article>
+        <article class="mini-kpi"><small>Crescimento semanal</small><strong>{{ data.production.weekly_growth_pct if data.production.weekly_growth_pct is not none else '—' }}%</strong></article>
+        <article class="mini-kpi"><small>Sobrevivência estimada</small><strong>{{ data.production.avg_survival if data.production.avg_survival is not none else '—' }}%</strong></article>
+        <article class="mini-kpi"><small>FCR parcial</small><strong>{{ data.production.partial_fcr if data.production.partial_fcr is not none else '—' }}</strong></article>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <h3>Crescimento por lote</h3>
+          <canvas id="growthChart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Biomassa por unidade</h3>
+          <canvas id="biomassChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="dashboard-section section-card">
+      <div class="section-head compact"><h2>Financeiro</h2></div>
+      <div class="mini-kpis four">
+        <article class="mini-kpi"><small>Custo ração</small><strong>{{ data.financial.feed_cost|money }}</strong></article>
+        <article class="mini-kpi"><small>Custo fixo</small><strong>{{ data.financial.fixed_cost|money }}</strong></article>
+        <article class="mini-kpi"><small>Custo estimado/kg</small><strong>{{ data.financial.estimated_cost_per_kg|money if data.financial.estimated_cost_per_kg is not none else '—' }}</strong></article>
+        <article class="mini-kpi"><small>Lucro do período</small><strong class="{{ 'positive' if data.financial.month_profit >= 0 else 'negative' }}">{{ data.financial.month_profit|money }}</strong></article>
+      </div>
+      <div class="table-wrap dashboard-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Lote</th>
+              <th>Custo total</th>
+              <th>Biomassa</th>
+              <th>Custo/kg</th>
+              <th>Resultado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in data.financial.rows %}
+            <tr>
+              <td>{{ row.lot_code }}</td>
+              <td>{{ row.cost_total|money }}</td>
+              <td>{{ row.biomass if row.biomass is not none else '—' }}{% if row.biomass is not none %} kg{% endif %}</td>
+              <td>{{ row.cost_per_kg|money if row.cost_per_kg is not none else '—' }}</td>
+              <td class="{{ 'positive' if row.result >= 0 else 'negative' }}">{{ row.result|money }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="empty-cell">Sem dados financeiros para os filtros selecionados.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="dashboard-grid-2 balance-top">
+    <section class="dashboard-section section-card emphasis-card">
+      <div class="section-head compact"><h2>Previsões inteligentes</h2></div>
+      <div class="mini-kpis six prediction-kpis">
+        <article class="mini-kpi"><small>Peso previsto 7d</small><strong>{{ data.predictions.avg_7d if data.predictions.avg_7d is not none else '—' }} g</strong></article>
+        <article class="mini-kpi"><small>Peso previsto 14d</small><strong>{{ data.predictions.avg_14d if data.predictions.avg_14d is not none else '—' }} g</strong></article>
+        <article class="mini-kpi"><small>Sobrevivência prevista</small><strong>{{ data.predictions.avg_survival if data.predictions.avg_survival is not none else '—' }}%</strong></article>
+        <article class="mini-kpi"><small>FCR previsto</small><strong>{{ data.predictions.avg_fcr if data.predictions.avg_fcr is not none else '—' }}</strong></article>
+        <article class="mini-kpi"><small>Despesca estimada</small><strong>{{ data.predictions.next_harvest_date|brdate if data.predictions.next_harvest_date else '—' }}</strong></article>
+        <article class="mini-kpi"><small>Confiança</small><strong>{{ data.predictions.avg_confidence if data.predictions.avg_confidence is not none else '—' }}%</strong></article>
+      </div>
+      <div class="table-wrap dashboard-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Lote</th>
+              <th>Peso atual</th>
+              <th>Peso 7d</th>
+              <th>Peso 14d</th>
+              <th>Sobrevivência</th>
+              <th>FCR</th>
+              <th>Despesca</th>
+              <th>Confiança</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in data.predictions.rows %}
+            <tr>
+              <td>{{ row.lot_code }}</td>
+              <td>{{ row.current_weight if row.current_weight is not none else '—' }}{% if row.current_weight is not none %} g{% endif %}</td>
+              <td>{{ row.predicted_7d if row.predicted_7d is not none else '—' }}{% if row.predicted_7d is not none %} g{% endif %}</td>
+              <td>{{ row.predicted_14d if row.predicted_14d is not none else '—' }}{% if row.predicted_14d is not none %} g{% endif %}</td>
+              <td>{{ row.predicted_survival if row.predicted_survival is not none else '—' }}{% if row.predicted_survival is not none %}%{% endif %}</td>
+              <td>{{ row.predicted_fcr if row.predicted_fcr is not none else '—' }}</td>
+              <td>{{ row.harvest_date|brdate if row.harvest_date else '—' }}</td>
+              <td>{{ row.confidence }}%</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="empty-cell">Sem lotes suficientes para montar previsões.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="prediction-note"><i class="fa-solid fa-circle-info"></i> Baseado no histórico de crescimento já registrado no sistema e em ciclos semelhantes.</p>
+    </section>
+
+    <section class="dashboard-section section-card">
+      <div class="section-head compact"><h2>Últimas movimentações</h2></div>
+      <div class="table-wrap dashboard-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Data/Hora</th>
+              <th>Tipo</th>
+              <th>Lote/Unidade</th>
+              <th>Usuário</th>
+              <th>Detalhe</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in data.movements %}
+            <tr>
+              <td>{{ row.date_label }}</td>
+              <td>{{ row.type }}</td>
+              <td>{{ row.entity }}</td>
+              <td>{{ row.user }}</td>
+              <td>{{ row.detail }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="empty-cell">Sem movimentações recentes para exibir.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 </section>
+{% endblock %}
 
-<section class="panel">
-  <div class="panel-head">
-    <div>
-      <p class="panel-kicker">Legenda do semáforo</p>
-      <h2>Como interpretar as cores</h2>
-    </div>
-  </div>
-  <div class="status-legend">
-    <div class="legend-item"><span class="badge verde">VERDE</span><div><strong>Operação em dia</strong><small>Lote ativo com rotina regular e sem alerta de parâmetro.</small></div></div>
-    <div class="legend-item"><span class="badge amarelo">AMARELO</span><div><strong>Atenção</strong><small>Pendência operacional, como água ou manejo faltando, ou berçário pronto para transferência.</small></div></div>
-    <div class="legend-item"><span class="badge vermelho">VERMELHO</span><div><strong>Fora da faixa</strong><small>Pelo menos um parâmetro de água está fora da referência configurada.</small></div></div>
-    <div class="legend-item"><span class="badge cinza">CINZA</span><div><strong>Sem lote</strong><small>Unidade sem lote ativo no momento.</small></div></div>
-  </div>
-</section>
+{% block extra_scripts %}
+<script>
+const growthCtx = document.getElementById('growthChart');
+if (growthCtx) {
+  const growthPayload = {{ data.chart_payload.growth|tojson }};
+  if (growthPayload.datasets && growthPayload.datasets.length) {
+    new Chart(growthCtx, {
+      type: 'line',
+      data: {
+        labels: growthPayload.labels,
+        datasets: growthPayload.datasets.map(dataset => ({
+          ...dataset,
+          fill: false,
+          tension: 0.35,
+          pointRadius: 3,
+          borderWidth: 2,
+          spanGaps: true,
+        }))
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'top' } },
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: value => value + ' g' } }
+        }
+      }
+    });
+  }
+}
+
+const biomassCtx = document.getElementById('biomassChart');
+if (biomassCtx) {
+  const biomassPayload = {{ data.chart_payload.biomass|tojson }};
+  if (biomassPayload.labels && biomassPayload.labels.length) {
+    new Chart(biomassCtx, {
+      type: 'bar',
+      data: {
+        labels: biomassPayload.labels,
+        datasets: [{
+          label: 'Biomassa estimada',
+          data: biomassPayload.data,
+          backgroundColor: '#8bb7f0',
+          borderRadius: 10,
+          maxBarThickness: 34,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: value => value + ' kg' } }
+        }
+      }
+    });
+  }
+}
+</script>
 {% endblock %}
