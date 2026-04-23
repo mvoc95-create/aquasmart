@@ -861,7 +861,7 @@ NURSERY_PROTOCOL_ROWS = [
     {'pl_stage': 42, 'survival_pct': 90.25, 'individual_weight_g': 0.960, 'feed_rate_pct': 5.7, 'total_day_g': 13087, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 13087, 'feedings_per_day': 12, 'per_feeding_g': 1091},
     {'pl_stage': 43, 'survival_pct': 90.0, 'individual_weight_g': 1.010, 'feed_rate_pct': 5.6, 'total_day_g': 13490, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 13490, 'feedings_per_day': 12, 'per_feeding_g': 1124},
 ]
-NURSERY_FEED_TIMES = ['05:00', '07:00', '09:00', '11:00', '13:00', '15:00', '17:00', '19:00', '21:00', '23:00', '01:00', '03:00']
+NURSERY_FEED_TIMES = ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00', '00:00', '02:00', '04:00']
 
 
 def get_nursery_protocol_row(pl_stage: int | None):
@@ -886,8 +886,14 @@ def build_even_schedule(total_day_g: int, feedings_per_day: int):
     return [base_value + (1 if idx < remainder else 0) for idx in range(feedings_per_day)]
 
 
-def build_nursery_management_note_block(entry):
-    lines = ['[Integração berçário]', 'Integração automática da alimentação de berçário.']
+def build_nursery_management_note_block(entry, mix_label=None):
+    lines = [
+        '[Integração berçário]',
+        'Integração automática da alimentação de berçário.',
+        f'Origem ID: {entry.id}',
+    ]
+    if mix_label:
+        lines.append(f'Produto do mix: {mix_label}')
     if entry.intestinal_score is not None:
         lines.append(f'Score intestinal: {entry.intestinal_score}')
     if (entry.notes or '').strip():
@@ -896,13 +902,73 @@ def build_nursery_management_note_block(entry):
     return '\n'.join(lines)
 
 
-def merge_management_notes_with_nursery_block(existing_notes, entry):
-    existing_notes = (existing_notes or '').strip()
-    existing_notes = re.sub(r'\s*\[Integração berçário\].*?\[/Integração berçário\]\s*', '\n\n', existing_notes, flags=re.S).strip()
-    nursery_block = build_nursery_management_note_block(entry)
-    if existing_notes:
-        return f'{existing_notes}\n\n{nursery_block}'
-    return nursery_block
+def nursery_management_source_marker(entry_id):
+    return f'Origem ID: {entry_id}'
+
+
+def nursery_management_records_for_entry(entry):
+    query = DailyManagement.query.filter(
+        DailyManagement.manage_date == entry.feed_date,
+        DailyManagement.unit_id == entry.unit_id,
+        DailyManagement.notes.contains(nursery_management_source_marker(entry.id)),
+    )
+    if entry.lot_id is None:
+        query = query.filter(DailyManagement.lot_id.is_(None))
+    else:
+        query = query.filter(DailyManagement.lot_id == entry.lot_id)
+    return query.order_by(DailyManagement.id.asc()).all()
+
+
+def delete_management_record_with_inventory(record):
+    movement = get_management_feed_movement(record.id)
+    if movement:
+        db.session.delete(movement)
+    db.session.delete(record)
+
+
+def delete_nursery_management_records(entry):
+    for record in nursery_management_records_for_entry(entry):
+        delete_management_record_with_inventory(record)
+
+
+def find_or_create_nursery_feed_product(label: str):
+    normalized_label = normalize_text(label)
+    if not normalized_label:
+        return None
+    for product in FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all():
+        normalized_product = normalize_text(f'{product.brand} {product.feed_type}')
+        product_tokens = set(normalized_product.split())
+        label_tokens = set(normalized_label.split())
+        if normalized_label == normalized_product or normalized_label in normalized_product or normalized_product in normalized_label:
+            return product
+        if label_tokens and label_tokens.issubset(product_tokens):
+            return product
+    product = FeedProduct(brand=label.strip(), feed_type='Berçário', active=True)
+    db.session.add(product)
+    db.session.flush()
+    return product
+
+
+def scale_nursery_mixes(mixes, quantity_kg):
+    target_total_g = int(round((quantity_kg or 0) * 1000))
+    if target_total_g <= 0:
+        return []
+    source_total_g = sum(int(item.get('grams') or 0) for item in mixes)
+    if source_total_g <= 0:
+        return []
+    scaled = []
+    distributed = 0
+    fractions = []
+    for idx, item in enumerate(mixes):
+        exact_value = (int(item.get('grams') or 0) * target_total_g) / source_total_g
+        whole = int(exact_value)
+        distributed += whole
+        scaled.append({'label': item.get('label'), 'grams': whole})
+        fractions.append((exact_value - whole, idx))
+    remainder = target_total_g - distributed
+    for _, idx in sorted(fractions, reverse=True)[:remainder]:
+        scaled[idx]['grams'] += 1
+    return [item for item in scaled if item['grams'] > 0]
 
 
 def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None):
@@ -992,16 +1058,41 @@ def build_nursery_digest_for_date(target_date: date | None = None):
 
 def sync_nursery_feed_to_management(entry):
     if not entry:
-        return
-    management = DailyManagement.query.filter_by(manage_date=entry.feed_date, unit_id=entry.unit_id, lot_id=entry.lot_id).order_by(DailyManagement.id.desc()).first()
-    if not management:
-        management = DailyManagement(manage_date=entry.feed_date, unit_id=entry.unit_id, lot_id=entry.lot_id)
+        return []
+
+    delete_nursery_management_records(entry)
+
+    unit = db.session.get(Unit, entry.unit_id) if entry.unit_id else None
+    lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else None
+    plan = build_nursery_protocol_for_date(lot, unit, target_date=entry.feed_date) if unit and lot else None
+    scaled_mixes = scale_nursery_mixes(plan.get('mixes', []) if plan else [], entry.quantity_kg)
+
+    if not scaled_mixes:
+        fallback_product = find_or_create_nursery_feed_product('Ração berçário')
+        scaled_mixes = [{'label': fallback_product.full_name if fallback_product else 'Ração berçário', 'grams': int(round((entry.quantity_kg or 0) * 1000))}]
+
+    created_records = []
+    for item in scaled_mixes:
+        offered_kg = grams_to_kg(item['grams'])
+        feed_product = find_or_create_nursery_feed_product(item['label'])
+        management = DailyManagement(
+            manage_date=entry.feed_date,
+            unit_id=entry.unit_id,
+            lot_id=entry.lot_id,
+            feed_product_id=feed_product.id if feed_product else None,
+            feed_offered_kg=offered_kg,
+            feed_consumed_kg=offered_kg,
+            mortality_qty=0,
+            average_weight_g=None,
+            estimated_biomass_kg=None,
+            notes=build_nursery_management_note_block(entry, mix_label=item['label']),
+            updated_at=datetime.utcnow(),
+        )
         db.session.add(management)
-    management.feed_offered_kg = entry.quantity_kg or 0
-    management.feed_consumed_kg = entry.quantity_kg or 0
-    management.notes = merge_management_notes_with_nursery_block(management.notes, entry)
-    management.updated_at = datetime.utcnow()
-    return management
+        db.session.flush()
+        sync_management_feed_movement(management, feed_product, offered_kg)
+        created_records.append(management)
+    return created_records
 
 def combine_monitor_datetime(record):
     return datetime.combine(record.monitor_date, record.monitor_time or time.min)
@@ -3499,6 +3590,7 @@ def nursery_feed_page():
         entry.updated_at = datetime.utcnow()
         if form_mode != 'edit':
             db.session.add(entry)
+        db.session.flush()
         sync_nursery_feed_to_management(entry)
         db.session.commit()
         flash('Alimentação de berçário salva e integrada ao manejo diário.', 'success')
@@ -3511,6 +3603,23 @@ def nursery_feed_page():
         plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
     combined_message = '\n\n'.join(plan['message_text'] for plan in plans)
     return render_template('nursery_feed.html', today=date.today(), selected_date=selected_date, nursery_units=nursery_units, entries=entries, edit_entry=edit_entry, plans=plans, combined_message=combined_message)
+
+
+
+@app.post('/nursery-feed/<int:entry_id>/delete')
+@login_required
+@requires_permission('management_manage')
+def delete_nursery_feed_entry(entry_id):
+    entry = db.session.get(NurseryFeeding, entry_id)
+    if not entry:
+        flash('Registro de alimentação de berçário não encontrado.', 'warning')
+        return redirect(request.referrer or url_for('nursery_feed_page'))
+    feed_date = entry.feed_date
+    delete_nursery_management_records(entry)
+    db.session.delete(entry)
+    db.session.commit()
+    flash('Lançamento do berçário excluído e removido do manejo diário.', 'success')
+    return redirect(url_for('nursery_feed_page', feed_date=feed_date.isoformat()))
 
 
 @app.get('/api/nursery-feed-digest')
