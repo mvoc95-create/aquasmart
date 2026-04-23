@@ -931,19 +931,65 @@ def delete_nursery_management_records(entry):
         delete_management_record_with_inventory(record)
 
 
-def find_or_create_nursery_feed_product(label: str):
+def nursery_feed_alias_tokens(label: str):
+    normalized = normalize_text(label)
+    replacements = {
+        'nutrisphera': 'nutrisfera',
+        'bercario': 'bercario',
+        'bercario': 'bercario',
+    }
+    tokens = set(normalized.split())
+    expanded = set(tokens)
+    for token in list(tokens):
+        if token in replacements:
+            expanded.add(replacements[token])
+    if 'triturada' in expanded:
+        expanded.add('triturado')
+    return expanded
+
+
+def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, create_missing=True):
+    label = (label or '').strip()
     normalized_label = normalize_text(label)
     if not normalized_label:
         return None
+    label_tokens = nursery_feed_alias_tokens(label)
+    numeric_tokens = {token for token in label_tokens if token.isdigit()}
+
+    best_product = None
+    best_score = -1
     for product in FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all():
-        normalized_product = normalize_text(f'{product.brand} {product.feed_type}')
-        product_tokens = set(normalized_product.split())
-        label_tokens = set(normalized_label.split())
-        if normalized_label == normalized_product or normalized_label in normalized_product or normalized_product in normalized_label:
-            return product
-        if label_tokens and label_tokens.issubset(product_tokens):
-            return product
-    product = FeedProduct(brand=label.strip(), feed_type='Berçário', active=True)
+        if exclude_product_id is not None and product.id == exclude_product_id:
+            continue
+        product_text = f'{product.brand} {product.feed_type} {product.technical_summary or ""}'
+        product_tokens = nursery_feed_alias_tokens(product_text)
+        product_numbers = {token for token in product_tokens if token.isdigit()}
+
+        if numeric_tokens and product_numbers and not numeric_tokens.intersection(product_numbers):
+            continue
+
+        score = len(label_tokens.intersection(product_tokens))
+        if numeric_tokens and numeric_tokens.issubset(product_numbers):
+            score += 3
+        if 'nutrisfera' in label_tokens and 'nutrisfera' in product_tokens:
+            score += 3
+        if 'triturada' in label_tokens.intersection(product_tokens) or 'triturado' in label_tokens.intersection(product_tokens):
+            score += 2
+        if normalized_label == normalize_text(product_text):
+            score += 5
+
+        if score > best_score:
+            best_score = score
+            best_product = product
+
+    if best_product and best_score >= 3:
+        return best_product
+
+    if not create_missing:
+        return None
+
+    # Cria só quando realmente não encontrou produto compatível.
+    product = FeedProduct(brand=label, feed_type='Berçário', active=True)
     db.session.add(product)
     db.session.flush()
     return product
@@ -3561,6 +3607,39 @@ def toggle_feed_product(product_id):
     product.active = not product.active
     db.session.commit()
     flash('Status do produto atualizado.', 'success')
+    return redirect(url_for('feed_page'))
+
+
+@app.post('/feed/products/<int:product_id>/delete')
+@login_required
+@requires_permission('feed_manage')
+def delete_feed_product(product_id):
+    product = db.session.get(FeedProduct, product_id)
+    if not product:
+        flash('Produto de ração não encontrado.', 'warning')
+        return redirect(url_for('feed_page'))
+
+    has_movements = FeedInventory.query.filter_by(feed_product_id=product.id).count() > 0
+    has_management = DailyManagement.query.filter_by(feed_product_id=product.id).count() > 0
+
+    if has_movements or has_management:
+        canonical = find_or_create_nursery_feed_product(product.full_name, exclude_product_id=product.id, create_missing=False)
+        if canonical:
+            for movement in FeedInventory.query.filter_by(feed_product_id=product.id).all():
+                movement.feed_product_id = canonical.id
+                movement.feed_name = canonical.full_name
+            for record in DailyManagement.query.filter_by(feed_product_id=product.id).all():
+                record.feed_product_id = canonical.id
+            db.session.delete(product)
+            flash(f'Produto duplicado removido. O histórico foi transferido para {canonical.full_name}.', 'success')
+        else:
+            product.active = False
+            flash('Este produto tem histórico vinculado e não encontrei outro produto compatível para unir. Ele foi inativado para preservar os relatórios.', 'warning')
+    else:
+        db.session.delete(product)
+        flash('Produto de ração excluído.', 'success')
+
+    db.session.commit()
     return redirect(url_for('feed_page'))
 
 
