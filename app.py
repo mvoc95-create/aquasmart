@@ -155,6 +155,7 @@ class Lot(db.Model):
     closed_reason = db.Column(db.String(60))
     notes = db.Column(db.Text)
     larva_supplier = db.Column(db.String(120))
+    entry_pl_stage = db.Column(db.Integer)
     unit = db.relationship('Unit')
 
 
@@ -824,18 +825,181 @@ def parse_int(value, default=None):
     return int(value)
 
 
+NURSERY_PROTOCOL_BASE_POPULATION = 265000
+NURSERY_PROTOCOL_ROWS = [
+    {'pl_stage': 11, 'survival_pct': 100.0, 'individual_weight_g': 0.003, 'feed_rate_pct': 35.0, 'total_day_g': 279, 'nutrisphera_225_g': 279, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 23},
+    {'pl_stage': 12, 'survival_pct': 99.0, 'individual_weight_g': 0.004, 'feed_rate_pct': 34.0, 'total_day_g': 357, 'nutrisphera_225_g': 357, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 30},
+    {'pl_stage': 13, 'survival_pct': 98.0, 'individual_weight_g': 0.010, 'feed_rate_pct': 30.0, 'total_day_g': 456, 'nutrisphera_225_g': 342, 'nutrisphera_450_g': 114, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 38},
+    {'pl_stage': 14, 'survival_pct': 97.5, 'individual_weight_g': 0.010, 'feed_rate_pct': 29.0, 'total_day_g': 663, 'nutrisphera_225_g': 332, 'nutrisphera_450_g': 332, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 55},
+    {'pl_stage': 15, 'survival_pct': 97.0, 'individual_weight_g': 0.010, 'feed_rate_pct': 28.0, 'total_day_g': 923, 'nutrisphera_225_g': 231, 'nutrisphera_450_g': 692, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 77},
+    {'pl_stage': 16, 'survival_pct': 96.75, 'individual_weight_g': 0.020, 'feed_rate_pct': 26.0, 'total_day_g': 1130, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1130, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 94},
+    {'pl_stage': 17, 'survival_pct': 96.5, 'individual_weight_g': 0.020, 'feed_rate_pct': 24.0, 'total_day_g': 1334, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1334, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 111},
+    {'pl_stage': 18, 'survival_pct': 96.25, 'individual_weight_g': 0.030, 'feed_rate_pct': 22.0, 'total_day_g': 1559, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1559, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 130},
+    {'pl_stage': 19, 'survival_pct': 96.0, 'individual_weight_g': 0.030, 'feed_rate_pct': 20.0, 'total_day_g': 1754, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1754, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 146},
+    {'pl_stage': 20, 'survival_pct': 95.75, 'individual_weight_g': 0.040, 'feed_rate_pct': 18.0, 'total_day_g': 1986, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1986, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 165},
+    {'pl_stage': 21, 'survival_pct': 95.5, 'individual_weight_g': 0.050, 'feed_rate_pct': 17.0, 'total_day_g': 2264, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2264, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 189},
+    {'pl_stage': 22, 'survival_pct': 95.25, 'individual_weight_g': 0.060, 'feed_rate_pct': 16.0, 'total_day_g': 2524, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2524, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 210},
+    {'pl_stage': 23, 'survival_pct': 95.0, 'individual_weight_g': 0.070, 'feed_rate_pct': 15.0, 'total_day_g': 2697, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2697, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 225},
+    {'pl_stage': 24, 'survival_pct': 94.75, 'individual_weight_g': 0.080, 'feed_rate_pct': 14.0, 'total_day_g': 2929, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2197, 'triturada_1_g': 732, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 244},
+    {'pl_stage': 25, 'survival_pct': 94.5, 'individual_weight_g': 0.130, 'feed_rate_pct': 13.0, 'total_day_g': 4232, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2116, 'triturada_1_g': 2116, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 353},
+    {'pl_stage': 26, 'survival_pct': 94.25, 'individual_weight_g': 0.180, 'feed_rate_pct': 12.0, 'total_day_g': 5395, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1349, 'triturada_1_g': 4046, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 450},
+    {'pl_stage': 27, 'survival_pct': 94.0, 'individual_weight_g': 0.230, 'feed_rate_pct': 11.0, 'total_day_g': 6302, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 6302, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 525},
+    {'pl_stage': 28, 'survival_pct': 93.75, 'individual_weight_g': 0.280, 'feed_rate_pct': 10.0, 'total_day_g': 6956, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 6956, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 580},
+    {'pl_stage': 29, 'survival_pct': 93.5, 'individual_weight_g': 0.330, 'feed_rate_pct': 9.0, 'total_day_g': 7359, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 7359, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 613},
+    {'pl_stage': 30, 'survival_pct': 93.25, 'individual_weight_g': 0.380, 'feed_rate_pct': 8.5, 'total_day_g': 7982, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 7982, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 665},
+    {'pl_stage': 31, 'survival_pct': 93.0, 'individual_weight_g': 0.430, 'feed_rate_pct': 7.6, 'total_day_g': 8054, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8054, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 671},
+    {'pl_stage': 32, 'survival_pct': 92.75, 'individual_weight_g': 0.480, 'feed_rate_pct': 7.3, 'total_day_g': 8612, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8612, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 718},
+    {'pl_stage': 33, 'survival_pct': 92.5, 'individual_weight_g': 0.520, 'feed_rate_pct': 6.8, 'total_day_g': 8668, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8668, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 722},
+    {'pl_stage': 34, 'survival_pct': 92.25, 'individual_weight_g': 0.570, 'feed_rate_pct': 6.4, 'total_day_g': 8918, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8918, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 743},
+    {'pl_stage': 35, 'survival_pct': 92.0, 'individual_weight_g': 0.620, 'feed_rate_pct': 6.4, 'total_day_g': 9674, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 7255, 'triturada_2_g': 2418, 'feedings_per_day': 12, 'per_feeding_g': 806},
+    {'pl_stage': 36, 'survival_pct': 91.75, 'individual_weight_g': 0.670, 'feed_rate_pct': 6.3, 'total_day_g': 10263, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 5131, 'triturada_2_g': 5131, 'feedings_per_day': 12, 'per_feeding_g': 855},
+    {'pl_stage': 37, 'survival_pct': 91.5, 'individual_weight_g': 0.720, 'feed_rate_pct': 6.2, 'total_day_g': 10824, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 2706, 'triturada_2_g': 8118, 'feedings_per_day': 12, 'per_feeding_g': 902},
+    {'pl_stage': 38, 'survival_pct': 91.25, 'individual_weight_g': 0.770, 'feed_rate_pct': 6.1, 'total_day_g': 11358, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 11358, 'feedings_per_day': 12, 'per_feeding_g': 946},
+    {'pl_stage': 39, 'survival_pct': 91.0, 'individual_weight_g': 0.820, 'feed_rate_pct': 6.0, 'total_day_g': 11865, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 11865, 'feedings_per_day': 12, 'per_feeding_g': 989},
+    {'pl_stage': 40, 'survival_pct': 90.75, 'individual_weight_g': 0.870, 'feed_rate_pct': 5.9, 'total_day_g': 12344, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 12344, 'feedings_per_day': 12, 'per_feeding_g': 1029},
+    {'pl_stage': 41, 'survival_pct': 90.5, 'individual_weight_g': 0.910, 'feed_rate_pct': 5.8, 'total_day_g': 12658, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 12658, 'feedings_per_day': 12, 'per_feeding_g': 1055},
+    {'pl_stage': 42, 'survival_pct': 90.25, 'individual_weight_g': 0.960, 'feed_rate_pct': 5.7, 'total_day_g': 13087, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 13087, 'feedings_per_day': 12, 'per_feeding_g': 1091},
+    {'pl_stage': 43, 'survival_pct': 90.0, 'individual_weight_g': 1.010, 'feed_rate_pct': 5.6, 'total_day_g': 13490, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 13490, 'feedings_per_day': 12, 'per_feeding_g': 1124},
+]
+NURSERY_FEED_TIMES = ['05:00', '07:00', '09:00', '11:00', '13:00', '15:00', '17:00', '19:00', '21:00', '23:00', '01:00', '03:00']
+
+
+def get_nursery_protocol_row(pl_stage: int | None):
+    if pl_stage is None:
+        return None
+    if pl_stage <= NURSERY_PROTOCOL_ROWS[0]['pl_stage']:
+        return NURSERY_PROTOCOL_ROWS[0]
+    if pl_stage >= NURSERY_PROTOCOL_ROWS[-1]['pl_stage']:
+        return NURSERY_PROTOCOL_ROWS[-1]
+    return next((row for row in NURSERY_PROTOCOL_ROWS if row['pl_stage'] == pl_stage), None)
+
+
+def grams_to_kg(value):
+    return round((value or 0) / 1000.0, 3)
+
+
+def build_even_schedule(total_day_g: int, feedings_per_day: int):
+    if not feedings_per_day or total_day_g <= 0:
+        return []
+    base_value = total_day_g // feedings_per_day
+    remainder = total_day_g % feedings_per_day
+    return [base_value + (1 if idx < remainder else 0) for idx in range(feedings_per_day)]
+
+
+def build_nursery_management_note_block(entry):
+    lines = ['[Integração berçário]', 'Integração automática da alimentação de berçário.']
+    if entry.intestinal_score is not None:
+        lines.append(f'Score intestinal: {entry.intestinal_score}')
+    if (entry.notes or '').strip():
+        lines.append(f'Observações do berçário: {(entry.notes or '').strip()}')
+    lines.append('[/Integração berçário]')
+    return '\n'.join(lines)
+
+
+def merge_management_notes_with_nursery_block(existing_notes, entry):
+    existing_notes = (existing_notes or '').strip()
+    existing_notes = re.sub(r'\s*\[Integração berçário\].*?\[/Integração berçário\]\s*', '\n\n', existing_notes, flags=re.S).strip()
+    nursery_block = build_nursery_management_note_block(entry)
+    if existing_notes:
+        return f'{existing_notes}\n\n{nursery_block}'
+    return nursery_block
+
+
+def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None):
+    target_date = target_date or date.today()
+    if not lot or not unit or not lot.start_date or lot.entry_pl_stage is None:
+        return None
+
+    days_since_start = max((target_date - lot.start_date).days, 0)
+    stage_today = min(43, max(11, lot.entry_pl_stage + days_since_start))
+    row = get_nursery_protocol_row(stage_today)
+    if not row:
+        return None
+
+    factor = (lot.initial_count or 0) / float(NURSERY_PROTOCOL_BASE_POPULATION or 1)
+
+    def scaled(value):
+        return int(round((value or 0) * factor))
+
+    total_day_g = scaled(row['total_day_g'])
+    feedings_per_day = row['feedings_per_day']
+    portion_values = build_even_schedule(total_day_g, feedings_per_day)
+    per_feeding_g = int(round(total_day_g / feedings_per_day)) if feedings_per_day else 0
+    schedule = []
+    for idx, time_label in enumerate(NURSERY_FEED_TIMES[:feedings_per_day]):
+        schedule.append({'time': time_label, 'grams': portion_values[idx] if idx < len(portion_values) else per_feeding_g})
+
+    projected_population = int(round((lot.initial_count or 0) * (row['survival_pct'] / 100.0)))
+    biomass_kg = round((projected_population * row['individual_weight_g']) / 1000.0, 2)
+    mixes = [
+        {'label': 'NutriSphera 225', 'grams': scaled(row['nutrisphera_225_g'])},
+        {'label': 'NutriSphera 450', 'grams': scaled(row['nutrisphera_450_g'])},
+        {'label': 'Triturada 1', 'grams': scaled(row['triturada_1_g'])},
+        {'label': 'Triturada 2', 'grams': scaled(row['triturada_2_g'])},
+    ]
+    mixes = [item for item in mixes if item['grams'] > 0]
+
+    message_lines = [
+        f"*{unit.name}* — Lote {lot.lot_code}",
+        f"Data: {target_date.strftime('%d/%m/%Y')}",
+        f"Estágio do dia: PL{stage_today}",
+        f"População estimada: {projected_population:,} PL".replace(',', '.'),
+        f"Total do dia: {total_day_g:,} g".replace(',', '.'),
+        '',
+        '*Mix do dia*',
+    ]
+    for item in mixes or [{'label': 'Sem mistura cadastrada', 'grams': 0}]:
+        message_lines.append(f"- {item['label']}: {item['grams']:,} g".replace(',', '.'))
+    message_lines.extend(['', '*Porções a cada 2 horas*'])
+    for item in schedule:
+        message_lines.append(f"- {item['time']} — {item['grams']:,} g".replace(',', '.'))
+
+    return {
+        'unit': unit,
+        'lot': lot,
+        'target_date': target_date,
+        'day_index': days_since_start + 1,
+        'stage_today': stage_today,
+        'base_row': row,
+        'projected_population': projected_population,
+        'biomass_kg': biomass_kg,
+        'feed_rate_pct': row['feed_rate_pct'],
+        'total_day_g': total_day_g,
+        'total_day_kg': grams_to_kg(total_day_g),
+        'mixes': mixes,
+        'feedings_per_day': feedings_per_day,
+        'per_feeding_g': per_feeding_g,
+        'per_feeding_min_g': min((item['grams'] for item in schedule), default=0),
+        'per_feeding_max_g': max((item['grams'] for item in schedule), default=0),
+        'schedule': schedule,
+        'message_text': '\n'.join(message_lines),
+    }
+
+
+def build_nursery_digest_for_date(target_date: date | None = None):
+    target_date = target_date or date.today()
+    plans = []
+    nursery_units = Unit.query.filter_by(active=True, phase='bercario').order_by(Unit.name).all()
+    for unit in nursery_units:
+        lot = active_lot_for_unit(unit.id, on_date=target_date)
+        if not lot or lot.status != 'ativo':
+            continue
+        plan = build_nursery_protocol_for_date(lot, unit, target_date=target_date)
+        if plan:
+            plans.append(plan)
+    return plans
+
+
 def sync_nursery_feed_to_management(entry):
     if not entry:
         return
     management = DailyManagement.query.filter_by(manage_date=entry.feed_date, unit_id=entry.unit_id, lot_id=entry.lot_id).order_by(DailyManagement.id.desc()).first()
     if not management:
-        management = DailyManagement(manage_date=entry.feed_date, unit_id=entry.unit_id, lot_id=entry.lot_id, feed_offered_kg=entry.quantity_kg or 0, feed_consumed_kg=entry.quantity_kg or 0, notes=(entry.notes or '').strip() or 'Gerado pela alimentação de berçário.')
+        management = DailyManagement(manage_date=entry.feed_date, unit_id=entry.unit_id, lot_id=entry.lot_id)
         db.session.add(management)
-    else:
-        management.feed_offered_kg = entry.quantity_kg or 0
-        management.feed_consumed_kg = entry.quantity_kg or 0
-        extra = f'Score intestinal: {entry.intestinal_score}' if entry.intestinal_score is not None else 'Alimentação de berçário atualizada.'
-        management.notes = ((management.notes or '') + ('\n' if management.notes else '') + extra).strip()
+    management.feed_offered_kg = entry.quantity_kg or 0
+    management.feed_consumed_kg = entry.quantity_kg or 0
+    management.notes = merge_management_notes_with_nursery_block(management.notes, entry)
     management.updated_at = datetime.utcnow()
     return management
 
@@ -1058,6 +1222,7 @@ def run_lightweight_migrations():
         add_column_if_missing('lot', lot_columns, 'end_date', 'ALTER TABLE lot ADD COLUMN end_date DATE', 'ALTER TABLE lot ADD COLUMN end_date DATE')
         add_column_if_missing('lot', lot_columns, 'closed_reason', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)')
         add_column_if_missing('lot', lot_columns, 'larva_supplier', 'ALTER TABLE lot ADD COLUMN larva_supplier VARCHAR(120)', 'ALTER TABLE lot ADD COLUMN larva_supplier VARCHAR(120)')
+        add_column_if_missing('lot', lot_columns, 'entry_pl_stage', 'ALTER TABLE lot ADD COLUMN entry_pl_stage INTEGER', 'ALTER TABLE lot ADD COLUMN entry_pl_stage INTEGER')
 
 
     if 'lot_unit_allocation' in tables:
@@ -2173,6 +2338,7 @@ def logout():
 
 
 @app.route('/')
+@app.route('/dashboard')
 @login_required
 @requires_permission('dashboard')
 def index():
@@ -2338,6 +2504,7 @@ def lots_page():
         lot.estimated_weight_g = parse_float(request.form.get('estimated_weight_g'), 0) or 0
         lot.status = request.form.get('status') or lot.status or 'ativo'
         lot.larva_supplier = (request.form.get('larva_supplier') or '').strip() or None
+        lot.entry_pl_stage = parse_int(request.form.get('entry_pl_stage'))
         lot.notes = request.form.get('notes')
         if lot.status == 'encerrado' and request.form.get('end_date'):
             lot.end_date = parse_date(request.form.get('end_date'))
@@ -3310,34 +3477,65 @@ def toggle_feed_product(product_id):
 @login_required
 @requires_permission('management_manage')
 def nursery_feed_page():
+    selected_date = parse_date(request.args.get('feed_date'), date.today())
     edit_id = parse_int(request.args.get('edit_id'))
     edit_entry = db.session.get(NurseryFeeding, edit_id) if edit_id else None
     nursery_units = Unit.query.filter_by(active=True, phase='bercario').order_by(Unit.name).all()
+
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'create')
         entry = db.session.get(NurseryFeeding, parse_int(request.form.get('entry_id'))) if form_mode == 'edit' else NurseryFeeding()
         if form_mode == 'edit' and not entry:
-            flash('Registro de alimentação do berçário não encontrado.', 'warning')
+            flash('Registro de alimentação de berçário não encontrado.', 'warning')
             return redirect(url_for('nursery_feed_page'))
-        feed_date = parse_date(request.form.get('feed_date'), date.today())
-        unit_id = int(request.form.get('unit_id'))
-        lot = active_lot_for_unit(unit_id, on_date=feed_date)
-        entry.feed_date = feed_date
-        entry.unit_id = unit_id
-        entry.lot_id = lot.id if lot else None
+
+        entry.feed_date = parse_date(request.form['feed_date'])
+        entry.unit_id = int(request.form['unit_id'])
+        active_lot = active_lot_for_unit(entry.unit_id, on_date=entry.feed_date)
+        entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
         entry.quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
         entry.intestinal_score = parse_int(request.form.get('intestinal_score'))
         entry.notes = request.form.get('notes')
         entry.updated_at = datetime.utcnow()
         if form_mode != 'edit':
             db.session.add(entry)
-        db.session.flush()
         sync_nursery_feed_to_management(entry)
         db.session.commit()
-        flash('Alimentação de berçário salva com sucesso.', 'success')
-        return redirect(url_for('nursery_feed_page'))
+        flash('Alimentação de berçário salva e integrada ao manejo diário.', 'success')
+        return redirect(url_for('nursery_feed_page', feed_date=entry.feed_date.isoformat()))
+
     entries = NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot)).order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc()).limit(60).all()
-    return render_template('nursery_feed.html', today=date.today(), nursery_units=nursery_units, entries=entries, edit_entry=edit_entry)
+    plans = build_nursery_digest_for_date(selected_date)
+    entry_by_unit_id = {entry.unit_id: entry for entry in NurseryFeeding.query.filter_by(feed_date=selected_date).all()}
+    for plan in plans:
+        plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
+    combined_message = '\n\n'.join(plan['message_text'] for plan in plans)
+    return render_template('nursery_feed.html', today=date.today(), selected_date=selected_date, nursery_units=nursery_units, entries=entries, edit_entry=edit_entry, plans=plans, combined_message=combined_message)
+
+
+@app.get('/api/nursery-feed-digest')
+def nursery_feed_digest_api():
+    token = os.getenv('NURSERY_DIGEST_TOKEN', '').strip()
+    provided = (request.headers.get('X-Nursery-Token') or request.args.get('token') or '').strip()
+    if token and provided != token:
+        return jsonify({'ok': False, 'message': 'Token inválido.'}), 403
+
+    target_date = parse_date(request.args.get('feed_date'), date.today())
+    plans = build_nursery_digest_for_date(target_date)
+    return jsonify({
+        'ok': True,
+        'feed_date': target_date.isoformat(),
+        'count': len(plans),
+        'messages': [
+            {
+                'unit': plan['unit'].name,
+                'lot': plan['lot'].lot_code,
+                'text': plan['message_text'],
+            }
+            for plan in plans
+        ],
+        'combined_message': '\n\n'.join(plan['message_text'] for plan in plans),
+    })
 
 @app.route('/sales', methods=['GET', 'POST'])
 @login_required
