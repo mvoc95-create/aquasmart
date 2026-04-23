@@ -153,6 +153,7 @@ class Lot(db.Model):
     end_date = db.Column(db.Date)
     closed_reason = db.Column(db.String(60))
     notes = db.Column(db.Text)
+    larva_supplier = db.Column(db.String(120))
     unit = db.relationship('Unit')
 
 
@@ -179,6 +180,20 @@ class FixedCost(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
+class NurseryFeeding(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    feed_date = db.Column(db.Date, nullable=False)
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'), nullable=False)
+    lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
+    quantity_kg = db.Column(db.Float, nullable=False, default=0)
+    intestinal_score = db.Column(db.Integer)
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    unit = db.relationship('Unit')
+    lot = db.relationship('Lot')
+
+
 class WaterMonitoring(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     monitor_date = db.Column(db.Date, nullable=False)
@@ -193,6 +208,9 @@ class WaterMonitoring(db.Model):
     transparency_cm = db.Column(db.Float)
     ammonia = db.Column(db.Float)
     nitrite = db.Column(db.Float)
+    nitrate = db.Column(db.Float)
+    alkalinity = db.Column(db.Float)
+    hardness = db.Column(db.Float)
     observation = db.Column(db.Text)
     unit = db.relationship('Unit')
     lot = db.relationship('Lot')
@@ -264,6 +282,12 @@ class WaterReferenceConfig(db.Model):
     ammonia_max = db.Column(db.Float, default=TARGET_AMMONIA_MAX)
     nitrite_min = db.Column(db.Float)
     nitrite_max = db.Column(db.Float, default=TARGET_NITRITE_MAX)
+    nitrate_min = db.Column(db.Float)
+    nitrate_max = db.Column(db.Float)
+    alkalinity_min = db.Column(db.Float)
+    alkalinity_max = db.Column(db.Float)
+    hardness_min = db.Column(db.Float)
+    hardness_max = db.Column(db.Float)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by = db.relationship('User', foreign_keys=[updated_by_id])
@@ -675,6 +699,9 @@ def upsert_water_reading(unit_id: int, slot_date: date, slot_time, values: dict)
     record.ph = values.get('ph')
     record.ammonia = values.get('ammonia')
     record.nitrite = values.get('nitrite')
+    record.nitrate = values.get('nitrate')
+    record.alkalinity = values.get('alkalinity')
+    record.hardness = values.get('hardness')
     note = values.get('observation')
     if note:
         record.observation = note
@@ -748,6 +775,33 @@ WATER_PARAMETER_SPECS = [
         'short_status_low': 'nitrito baixo',
         'short_status_high': 'nitrito alto',
     },
+    {
+        'field': 'nitrate',
+        'label': 'Nitrato',
+        'unit': 'mg/L',
+        'min_attr': 'nitrate_min',
+        'max_attr': 'nitrate_max',
+        'short_status_low': 'nitrato baixo',
+        'short_status_high': 'nitrato alto',
+    },
+    {
+        'field': 'alkalinity',
+        'label': 'Alcalinidade',
+        'unit': 'mg/L',
+        'min_attr': 'alkalinity_min',
+        'max_attr': 'alkalinity_max',
+        'short_status_low': 'alcalinidade baixa',
+        'short_status_high': 'alcalinidade alta',
+    },
+    {
+        'field': 'hardness',
+        'label': 'Dureza',
+        'unit': 'mg/L',
+        'min_attr': 'hardness_min',
+        'max_attr': 'hardness_max',
+        'short_status_low': 'dureza baixa',
+        'short_status_high': 'dureza alta',
+    },
 ]
 
 
@@ -768,6 +822,21 @@ def parse_int(value, default=None):
         return default
     return int(value)
 
+
+def sync_nursery_feed_to_management(entry):
+    if not entry:
+        return
+    management = DailyManagement.query.filter_by(manage_date=entry.feed_date, unit_id=entry.unit_id, lot_id=entry.lot_id).order_by(DailyManagement.id.desc()).first()
+    if not management:
+        management = DailyManagement(manage_date=entry.feed_date, unit_id=entry.unit_id, lot_id=entry.lot_id, feed_offered_kg=entry.quantity_kg or 0, feed_consumed_kg=entry.quantity_kg or 0, notes=(entry.notes or '').strip() or 'Gerado pela alimentação de berçário.')
+        db.session.add(management)
+    else:
+        management.feed_offered_kg = entry.quantity_kg or 0
+        management.feed_consumed_kg = entry.quantity_kg or 0
+        extra = f'Score intestinal: {entry.intestinal_score}' if entry.intestinal_score is not None else 'Alimentação de berçário atualizada.'
+        management.notes = ((management.notes or '') + ('\n' if management.notes else '') + extra).strip()
+    management.updated_at = datetime.utcnow()
+    return management
 
 def combine_monitor_datetime(record):
     return datetime.combine(record.monitor_date, record.monitor_time or time.min)
@@ -953,7 +1022,7 @@ def run_lightweight_migrations():
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
 
-    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, LotUnitAllocation, FixedCost):
+    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, LotUnitAllocation, FixedCost, NurseryFeeding):
         table_name = model.__table__.name
         if table_name not in tables:
             model.__table__.create(bind=db.engine)
@@ -987,6 +1056,7 @@ def run_lightweight_migrations():
         lot_columns = get_columns('lot')
         add_column_if_missing('lot', lot_columns, 'end_date', 'ALTER TABLE lot ADD COLUMN end_date DATE', 'ALTER TABLE lot ADD COLUMN end_date DATE')
         add_column_if_missing('lot', lot_columns, 'closed_reason', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)')
+        add_column_if_missing('lot', lot_columns, 'larva_supplier', 'ALTER TABLE lot ADD COLUMN larva_supplier VARCHAR(120)', 'ALTER TABLE lot ADD COLUMN larva_supplier VARCHAR(120)')
 
 
     if 'lot_unit_allocation' in tables:
@@ -1001,6 +1071,18 @@ def run_lightweight_migrations():
     if 'water_monitoring' in tables:
         water_columns = get_columns('water_monitoring')
         add_column_if_missing('water_monitoring', water_columns, 'monitor_time', 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME')
+        add_column_if_missing('water_monitoring', water_columns, 'nitrate', 'ALTER TABLE water_monitoring ADD COLUMN nitrate FLOAT', 'ALTER TABLE water_monitoring ADD COLUMN nitrate DOUBLE PRECISION')
+        add_column_if_missing('water_monitoring', water_columns, 'alkalinity', 'ALTER TABLE water_monitoring ADD COLUMN alkalinity FLOAT', 'ALTER TABLE water_monitoring ADD COLUMN alkalinity DOUBLE PRECISION')
+        add_column_if_missing('water_monitoring', water_columns, 'hardness', 'ALTER TABLE water_monitoring ADD COLUMN hardness FLOAT', 'ALTER TABLE water_monitoring ADD COLUMN hardness DOUBLE PRECISION')
+
+    if 'water_reference_config' in tables:
+        reference_columns = get_columns('water_reference_config')
+        add_column_if_missing('water_reference_config', reference_columns, 'nitrate_min', 'ALTER TABLE water_reference_config ADD COLUMN nitrate_min FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN nitrate_min DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'nitrate_max', 'ALTER TABLE water_reference_config ADD COLUMN nitrate_max FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN nitrate_max DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'alkalinity_min', 'ALTER TABLE water_reference_config ADD COLUMN alkalinity_min FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN alkalinity_min DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'alkalinity_max', 'ALTER TABLE water_reference_config ADD COLUMN alkalinity_max FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN alkalinity_max DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'hardness_min', 'ALTER TABLE water_reference_config ADD COLUMN hardness_min FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN hardness_min DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'hardness_max', 'ALTER TABLE water_reference_config ADD COLUMN hardness_max FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN hardness_max DOUBLE PRECISION')
 
     if 'protocol_document' in tables:
         protocol_columns = get_columns('protocol_document')
@@ -1723,6 +1805,7 @@ def update_water_reference_ranges():
         'od_min', 'od_max', 'ph_min', 'ph_max', 'temperature_min', 'temperature_max',
         'salinity_min', 'salinity_max', 'transparency_min', 'transparency_max',
         'ammonia_min', 'ammonia_max', 'nitrite_min', 'nitrite_max',
+        'nitrate_min', 'nitrate_max', 'alkalinity_min', 'alkalinity_max', 'hardness_min', 'hardness_max',
     ]
     for field in fields:
         setattr(config, field, parse_float(request.form.get(field)))
@@ -1737,53 +1820,66 @@ def update_water_reference_ranges():
 @login_required
 @requires_permission('units_view')
 def units_page():
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_unit = db.session.get(Unit, edit_id) if edit_id else None
     if request.method == 'POST':
         if not user_can_manage_units(current_user):
             abort(403)
+        form_mode = request.form.get('form_mode', 'create')
+        target = db.session.get(Unit, parse_int(request.form.get('unit_id'))) if form_mode == 'edit' else Unit()
+        if form_mode == 'edit' and not target:
+            flash('Unidade não encontrada para edição.', 'danger')
+            return redirect(url_for('units_page'))
         name = request.form.get('name', '').strip()
         if not name:
             flash('Informe o nome do viveiro/unidade.', 'danger')
             return redirect(url_for('units_page'))
         code = (request.form.get('code') or '').strip().upper() or suggest_unit_code(name)
-        if Unit.query.filter(func.lower(Unit.code) == code.lower()).first():
+        existing = Unit.query.filter(func.lower(Unit.code) == code.lower(), Unit.id != getattr(target, 'id', 0)).first()
+        if existing:
             flash('Já existe uma unidade com esse código.', 'danger')
-            return redirect(url_for('units_page'))
-        unit = Unit(
-            code=code,
-            name=name,
-            area_m2=float(request.form.get('area_m2') or 0),
-            phase=request.form.get('phase') or 'engorda',
-            structure_type=request.form.get('structure_type') or 'escavado',
-            active=bool(request.form.get('active', '1') == '1')
-        )
-        db.session.add(unit)
+            return redirect(url_for('units_page', edit_id=getattr(target, 'id', None)))
+        target.code = code
+        target.name = name
+        target.area_m2 = parse_float(request.form.get('area_m2'), 0) or 0
+        target.phase = request.form.get('phase') or 'engorda'
+        target.structure_type = request.form.get('structure_type') or 'escavado'
+        target.active = bool(request.form.get('active', '1') == '1')
+        if form_mode != 'edit':
+            db.session.add(target)
         db.session.commit()
-        flash('Unidade cadastrada com sucesso.', 'success')
+        flash('Unidade salva com sucesso.' if form_mode == 'edit' else 'Unidade cadastrada com sucesso.', 'success')
         return redirect(url_for('units_page'))
     units = Unit.query.order_by(Unit.phase, Unit.name).all()
-    return render_template('units.html', units=units)
+    return render_template('units.html', units=units, edit_unit=edit_unit)
 
 
 @app.route('/lots', methods=['GET', 'POST'])
 @login_required
 @requires_permission('lots_manage')
 def lots_page():
+    edit_lot_id = parse_int(request.args.get('edit_lot_id'))
+    edit_cost_id = parse_int(request.args.get('edit_cost_id'))
+    edit_lot = db.session.get(Lot, edit_lot_id) if edit_lot_id else None
+    edit_cost = db.session.get(FixedCost, edit_cost_id) if edit_cost_id else None
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'lot')
-        if form_mode == 'fixed_cost':
-            cost = FixedCost(
-                name=(request.form.get('name') or 'Funcionário').strip(),
-                monthly_amount=parse_float(request.form.get('monthly_amount'), 0) or 0,
-                start_date=parse_date(request.form.get('start_date'), date.today()),
-                end_date=parse_date(request.form.get('end_date')) if request.form.get('end_date') else None,
-                active=bool(request.form.get('active', '1') == '1'),
-                notes=request.form.get('notes'),
-            )
-            db.session.add(cost)
+        if form_mode in {'fixed_cost', 'edit_fixed_cost'}:
+            cost = db.session.get(FixedCost, parse_int(request.form.get('fixed_cost_id'))) if form_mode == 'edit_fixed_cost' else FixedCost()
+            if form_mode == 'edit_fixed_cost' and not cost:
+                flash('Custo fixo não encontrado.', 'warning')
+                return redirect(url_for('lots_page'))
+            cost.name = (request.form.get('name') or 'Funcionário').strip()
+            cost.monthly_amount = parse_float(request.form.get('monthly_amount'), 0) or 0
+            cost.start_date = parse_date(request.form.get('start_date'), date.today())
+            cost.end_date = parse_date(request.form.get('end_date')) if request.form.get('end_date') else None
+            cost.active = bool(request.form.get('active', '1') == '1')
+            cost.notes = request.form.get('notes')
+            if form_mode == 'fixed_cost':
+                db.session.add(cost)
             db.session.commit()
-            flash('Custo fixo cadastrado com sucesso.', 'success')
+            flash('Custo fixo salvo com sucesso.', 'success')
             return redirect(url_for('lots_page'))
-
         if form_mode == 'close_lot':
             lot = db.session.get(Lot, int(request.form['lot_id']))
             if not lot:
@@ -1794,34 +1890,33 @@ def lots_page():
             db.session.commit()
             flash('Lote encerrado manualmente.', 'success')
             return redirect(url_for('lots_page'))
-
-        lot = Lot(
-            lot_code=(request.form['lot_code'] or '').strip().upper(),
-            phase=request.form['phase'],
-            start_date=parse_date(request.form['start_date']),
-            unit_id=int(request.form['unit_id']),
-            initial_count=int(request.form['initial_count'] or 0),
-            estimated_weight_g=float(request.form['estimated_weight_g'] or 0),
-            notes=request.form.get('notes')
-        )
-        db.session.add(lot)
-        db.session.flush()
-        db.session.add(LotUnitAllocation(
-            lot_id=lot.id,
-            unit_id=lot.unit_id,
-            start_date=lot.start_date,
-            quantity_allocated=lot.initial_count,
-            notes='Alocação inicial do lote.',
-        ))
+        lot = db.session.get(Lot, parse_int(request.form.get('lot_id'))) if form_mode == 'edit_lot' else Lot()
+        if form_mode == 'edit_lot' and not lot:
+            flash('Lote não encontrado para edição.', 'warning')
+            return redirect(url_for('lots_page'))
+        lot.lot_code = (request.form['lot_code'] or '').strip().upper()
+        lot.phase = request.form['phase']
+        lot.start_date = parse_date(request.form['start_date'])
+        lot.unit_id = int(request.form['unit_id'])
+        lot.initial_count = int(request.form['initial_count'] or 0)
+        lot.estimated_weight_g = parse_float(request.form.get('estimated_weight_g'), 0) or 0
+        lot.status = request.form.get('status') or lot.status or 'ativo'
+        lot.larva_supplier = (request.form.get('larva_supplier') or '').strip() or None
+        lot.notes = request.form.get('notes')
+        if lot.status == 'encerrado' and request.form.get('end_date'):
+            lot.end_date = parse_date(request.form.get('end_date'))
+        if form_mode != 'edit_lot':
+            db.session.add(lot)
+            db.session.flush()
+            db.session.add(LotUnitAllocation(lot_id=lot.id, unit_id=lot.unit_id, start_date=lot.start_date, quantity_allocated=lot.initial_count, notes='Alocação inicial do lote.'))
         db.session.commit()
-        flash('Lote cadastrado.', 'success')
+        flash('Lote salvo com sucesso.' if form_mode == 'edit_lot' else 'Lote cadastrado.', 'success')
         return redirect(url_for('lots_page'))
-
     lots = Lot.query.order_by(Lot.start_date.desc(), Lot.id.desc()).all()
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     fixed_costs = FixedCost.query.order_by(FixedCost.start_date.desc(), FixedCost.id.desc()).all()
     lot_summaries = [lot_financial_summary(lot) for lot in lots]
-    return render_template('lots.html', lots=lots, units=units, fixed_costs=fixed_costs, lot_summaries=lot_summaries, today=date.today(), lot_current_units=lot_current_units)
+    return render_template('lots.html', lots=lots, units=units, fixed_costs=fixed_costs, lot_summaries=lot_summaries, today=date.today(), lot_current_units=lot_current_units, edit_lot=edit_lot, edit_cost=edit_cost)
 
 
 @app.post('/water/import-sheet')
@@ -1954,11 +2049,14 @@ def water_page():
             transparencies = parse_multi_float_list(request.form.getlist('transparency_cm'))
             ammonias = parse_multi_float_list(request.form.getlist('ammonia'))
             nitrites = parse_multi_float_list(request.form.getlist('nitrite'))
+            nitrates = parse_multi_float_list(request.form.getlist('nitrate'))
+            alkalinities = parse_multi_float_list(request.form.getlist('alkalinity'))
+            hardness_values = parse_multi_float_list(request.form.getlist('hardness'))
             observations = request.form.getlist('observation')
 
             created = 0
             for idx, slot in enumerate(slot_times):
-                values = [temperatures[idx], oxygens[idx], ph_values[idx], salinities[idx], transparencies[idx], ammonias[idx], nitrites[idx], (observations[idx] or '').strip()]
+                values = [temperatures[idx], oxygens[idx], ph_values[idx], salinities[idx], transparencies[idx], ammonias[idx], nitrites[idx], nitrates[idx], alkalinities[idx], hardness_values[idx], (observations[idx] or '').strip()]
                 has_data = any(v not in (None, '') for v in values)
                 if not has_data:
                     continue
@@ -1976,6 +2074,9 @@ def water_page():
                     transparency_cm=transparencies[idx],
                     ammonia=ammonias[idx],
                     nitrite=nitrites[idx],
+                    nitrate=nitrates[idx],
+                    alkalinity=alkalinities[idx],
+                    hardness=hardness_values[idx],
                     observation=(observations[idx] or '').strip() or None,
                 )
                 db.session.add(rec)
@@ -2002,6 +2103,9 @@ def water_page():
             transparency_cm=parse_float(request.form.get('transparency_cm')),
             ammonia=parse_float(request.form.get('ammonia')),
             nitrite=parse_float(request.form.get('nitrite')),
+            nitrate=parse_float(request.form.get('nitrate')),
+            alkalinity=parse_float(request.form.get('alkalinity')),
+            hardness=parse_float(request.form.get('hardness')),
             observation=request.form.get('observation')
         )
         db.session.add(rec)
@@ -2173,6 +2277,9 @@ def edit_water_record(record_id):
     rec.transparency_cm = parse_float(request.form.get('transparency_cm'))
     rec.ammonia = parse_float(request.form.get('ammonia'))
     rec.nitrite = parse_float(request.form.get('nitrite'))
+    rec.nitrate = parse_float(request.form.get('nitrate'))
+    rec.alkalinity = parse_float(request.form.get('alkalinity'))
+    rec.hardness = parse_float(request.form.get('hardness'))
     rec.observation = request.form.get('observation')
     db.session.commit()
     flash('Registro de água atualizado.', 'success')
@@ -2634,7 +2741,10 @@ def delete_farm_document(document_id):
 @login_required
 @requires_permission('transfers_manage')
 def transfers_page():
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_transfer = db.session.get(Transfer, edit_id) if edit_id else None
     if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'create')
         transfer_date = parse_date(request.form['transfer_date'], date.today())
         src_id = int(request.form['source_unit_id'])
         source_lot_id = int(request.form['source_lot_id']) if request.form.get('source_lot_id') else None
@@ -2642,144 +2752,108 @@ def transfers_page():
         if not src_lot:
             flash('Selecione um lote de origem válido.', 'danger')
             return redirect(url_for('transfers_page'))
-
         destination_unit_id = int(request.form['destination_unit_id'])
         transferred_qty = int(request.form['transferred_qty'])
-        existing_allocation = LotUnitAllocation.query.filter(
-            LotUnitAllocation.lot_id == src_lot.id,
-            LotUnitAllocation.unit_id == destination_unit_id,
-            LotUnitAllocation.start_date <= transfer_date,
-            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date),
-        ).first()
+        if form_mode == 'edit':
+            tr = db.session.get(Transfer, parse_int(request.form.get('transfer_id')))
+            if not tr:
+                flash('Transferência não encontrada.', 'warning')
+                return redirect(url_for('transfers_page'))
+            tr.transfer_date = transfer_date
+            tr.source_unit_id = src_id
+            tr.destination_unit_id = destination_unit_id
+            tr.source_lot_id = src_lot.id
+            tr.destination_lot_code = src_lot.lot_code
+            tr.transferred_qty = transferred_qty
+            tr.avg_weight_g = parse_float(request.form.get('avg_weight_g'))
+            tr.notes = request.form.get('notes')
+            db.session.commit()
+            flash('Transferência atualizada.', 'success')
+            return redirect(url_for('transfers_page'))
+        existing_allocation = LotUnitAllocation.query.filter(LotUnitAllocation.lot_id == src_lot.id, LotUnitAllocation.unit_id == destination_unit_id, LotUnitAllocation.start_date <= transfer_date, or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date)).first()
         if not existing_allocation:
-            db.session.add(LotUnitAllocation(
-                lot_id=src_lot.id,
-                unit_id=destination_unit_id,
-                start_date=transfer_date,
-                quantity_allocated=transferred_qty,
-                notes='Transferência bifásica.',
-            ))
+            db.session.add(LotUnitAllocation(lot_id=src_lot.id, unit_id=destination_unit_id, start_date=transfer_date, quantity_allocated=transferred_qty, notes='Transferência bifásica.'))
         else:
             existing_allocation.quantity_allocated = (existing_allocation.quantity_allocated or 0) + transferred_qty
-
-        tr = Transfer(
-            transfer_date=transfer_date,
-            source_unit_id=src_id,
-            destination_unit_id=destination_unit_id,
-            source_lot_id=src_lot.id,
-            destination_lot_code=src_lot.lot_code,
-            transferred_qty=transferred_qty,
-            avg_weight_g=float(request.form['avg_weight_g']) if request.form.get('avg_weight_g') else None,
-            notes=request.form.get('notes')
-        )
+        tr = Transfer(transfer_date=transfer_date, source_unit_id=src_id, destination_unit_id=destination_unit_id, source_lot_id=src_lot.id, destination_lot_code=src_lot.lot_code, transferred_qty=transferred_qty, avg_weight_g=parse_float(request.form.get('avg_weight_g')), notes=request.form.get('notes'))
         db.session.add(tr)
-
-        allocation = LotUnitAllocation.query.filter(
-            LotUnitAllocation.lot_id == src_lot.id,
-            LotUnitAllocation.unit_id == src_id,
-            LotUnitAllocation.start_date <= transfer_date,
-            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date),
-        ).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
+        allocation = LotUnitAllocation.query.filter(LotUnitAllocation.lot_id == src_lot.id, LotUnitAllocation.unit_id == src_id, LotUnitAllocation.start_date <= transfer_date, or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date)).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
         if allocation:
             remaining_qty = max((allocation.quantity_allocated or 0) - transferred_qty, 0)
             if request.form.get('close_source_allocation') == '1' or remaining_qty == 0:
                 allocation.end_date = transfer_date
             allocation.quantity_allocated = remaining_qty
-
         db.session.commit()
         flash('Transferência registrada. O mesmo lote agora pode seguir em múltiplos viveiros.', 'success')
         return redirect(url_for('transfers_page'))
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
     rows = Transfer.query.order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).limit(50).all()
-    return render_template('transfers.html', units=units, lots=lots, rows=rows, today=date.today())
+    return render_template('transfers.html', units=units, lots=lots, rows=rows, today=date.today(), edit_transfer=edit_transfer)
 
 
 @app.route('/feed', methods=['GET', 'POST'])
 @login_required
 @requires_permission('feed_manage')
 def feed_page():
+    edit_product_id = parse_int(request.args.get('edit_product_id'))
+    edit_movement_id = parse_int(request.args.get('edit_movement_id'))
+    edit_product = db.session.get(FeedProduct, edit_product_id) if edit_product_id else None
+    edit_movement = db.session.get(FeedInventory, edit_movement_id) if edit_movement_id else None
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'movement')
-        if form_mode == 'product':
+        if form_mode in {'product', 'edit_product'}:
+            product = db.session.get(FeedProduct, parse_int(request.form.get('product_id'))) if form_mode == 'edit_product' else FeedProduct(active=True)
+            if form_mode == 'edit_product' and not product:
+                flash('Produto de ração não encontrado.', 'warning')
+                return redirect(url_for('feed_page'))
             brand = (request.form.get('brand') or '').strip()
             feed_type = (request.form.get('feed_type') or '').strip()
             if not brand or not feed_type:
                 flash('Informe marca e tipo da ração para cadastrar o produto.', 'danger')
                 return redirect(url_for('feed_page'))
-
-            existing = FeedProduct.query.filter(
-                func.lower(FeedProduct.brand) == brand.lower(),
-                func.lower(FeedProduct.feed_type) == feed_type.lower(),
-            ).first()
-            if existing:
-                flash('Já existe uma ração cadastrada com essa marca e tipo.', 'warning')
-                return redirect(url_for('feed_page'))
-
-            product = FeedProduct(
-                brand=brand,
-                feed_type=feed_type,
-                protein_pct=parse_float(request.form.get('protein_pct')),
-                pellet_size_mm=parse_float(request.form.get('pellet_size_mm')),
-                minimum_stock_kg=parse_float(request.form.get('minimum_stock_kg'), 0) or 0,
-                notes=request.form.get('product_notes'),
-                active=True,
-            )
-            db.session.add(product)
+            product.brand = brand
+            product.feed_type = feed_type
+            product.protein_pct = parse_float(request.form.get('protein_pct'))
+            product.pellet_size_mm = parse_float(request.form.get('pellet_size_mm'))
+            product.minimum_stock_kg = parse_float(request.form.get('minimum_stock_kg'), 0) or 0
+            product.notes = request.form.get('product_notes')
+            if form_mode != 'edit_product':
+                db.session.add(product)
             db.session.commit()
-            flash('Produto de ração cadastrado com sucesso.', 'success')
+            flash('Produto de ração salvo com sucesso.', 'success')
             return redirect(url_for('feed_page'))
-
         feed_product_id = parse_int(request.form.get('feed_product_id'))
         feed_product = db.session.get(FeedProduct, feed_product_id) if feed_product_id else None
         if not feed_product:
             flash('Selecione a ração que será movimentada.', 'danger')
             return redirect(url_for('feed_page'))
-
         movement_type = request.form['movement_type']
         quantity_kg = parse_float(request.form.get('quantity_kg'))
         if quantity_kg is None or quantity_kg <= 0:
             flash('Informe uma quantidade válida em kg.', 'danger')
             return redirect(url_for('feed_page'))
-
-        if movement_type == 'saida':
-            available_stock = available_stock_for_product(feed_product.id)
-            if quantity_kg > available_stock:
-                flash(f'Estoque insuficiente para {feed_product.full_name}. Disponível: {round(available_stock, 1)} kg.', 'danger')
-                return redirect(url_for('feed_page'))
-
-        row = FeedInventory(
-            movement_date=parse_date(request.form['movement_date'], date.today()),
-            feed_name=feed_product.full_name,
-            feed_product_id=feed_product.id,
-            movement_type=movement_type,
-            quantity_kg=quantity_kg,
-            unit_cost=parse_float(request.form.get('unit_cost')),
-            notes=request.form.get('notes'),
-            source_type='manual',
-            created_by_id=getattr(current_user, 'id', None),
-        )
-        db.session.add(row)
+        row = db.session.get(FeedInventory, parse_int(request.form.get('movement_id'))) if form_mode == 'edit_movement' else FeedInventory(source_type='manual', created_by_id=getattr(current_user, 'id', None))
+        if form_mode == 'edit_movement' and not row:
+            flash('Movimentação não encontrada.', 'warning')
+            return redirect(url_for('feed_page'))
+        row.movement_date = parse_date(request.form['movement_date'], date.today())
+        row.feed_name = feed_product.full_name
+        row.feed_product_id = feed_product.id
+        row.movement_type = movement_type
+        row.quantity_kg = quantity_kg
+        row.unit_cost = parse_float(request.form.get('unit_cost'))
+        row.notes = request.form.get('notes')
+        if form_mode != 'edit_movement':
+            db.session.add(row)
         db.session.commit()
-        flash('Movimentação de ração lançada.', 'success')
+        flash('Movimentação de ração salva.', 'success')
         return redirect(url_for('feed_page'))
-
     snapshot = build_feed_stock_snapshot()
     rows = FeedInventory.query.options(joinedload(FeedInventory.feed_product), joinedload(FeedInventory.unit), joinedload(FeedInventory.lot)).order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).limit(80).all()
     feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
     stock_by_product = {row['product'].id: row['stock_kg'] for row in snapshot['rows']}
-    return render_template(
-        'feed.html',
-        rows=rows,
-        today=date.today(),
-        total_stock=snapshot['total_stock_kg'],
-        snapshot_rows=snapshot['rows'],
-        low_stock_count=snapshot['low_stock_count'],
-        active_product_count=snapshot['active_product_count'],
-        feed_products=feed_products,
-        stock_by_product=stock_by_product,
-        movement_origin_label=movement_origin_label,
-    )
+    return render_template('feed.html', rows=rows, today=date.today(), total_stock=snapshot['total_stock_kg'], snapshot_rows=snapshot['rows'], low_stock_count=snapshot['low_stock_count'], active_product_count=snapshot['active_product_count'], feed_products=feed_products, stock_by_product=stock_by_product, movement_origin_label=movement_origin_label, edit_product=edit_product, edit_movement=edit_movement)
 
 
 @app.post('/feed/products/<int:product_id>/toggle')
@@ -2796,11 +2870,47 @@ def toggle_feed_product(product_id):
     return redirect(url_for('feed_page'))
 
 
+@app.route('/nursery-feed', methods=['GET', 'POST'])
+@login_required
+@requires_permission('management_manage')
+def nursery_feed_page():
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_entry = db.session.get(NurseryFeeding, edit_id) if edit_id else None
+    nursery_units = Unit.query.filter_by(active=True, phase='bercario').order_by(Unit.name).all()
+    if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'create')
+        entry = db.session.get(NurseryFeeding, parse_int(request.form.get('entry_id'))) if form_mode == 'edit' else NurseryFeeding()
+        if form_mode == 'edit' and not entry:
+            flash('Registro de alimentação do berçário não encontrado.', 'warning')
+            return redirect(url_for('nursery_feed_page'))
+        feed_date = parse_date(request.form.get('feed_date'), date.today())
+        unit_id = int(request.form.get('unit_id'))
+        lot = active_lot_for_unit(unit_id, on_date=feed_date)
+        entry.feed_date = feed_date
+        entry.unit_id = unit_id
+        entry.lot_id = lot.id if lot else None
+        entry.quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
+        entry.intestinal_score = parse_int(request.form.get('intestinal_score'))
+        entry.notes = request.form.get('notes')
+        entry.updated_at = datetime.utcnow()
+        if form_mode != 'edit':
+            db.session.add(entry)
+        db.session.flush()
+        sync_nursery_feed_to_management(entry)
+        db.session.commit()
+        flash('Alimentação de berçário salva com sucesso.', 'success')
+        return redirect(url_for('nursery_feed_page'))
+    entries = NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot)).order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc()).limit(60).all()
+    return render_template('nursery_feed.html', today=date.today(), nursery_units=nursery_units, entries=entries, edit_entry=edit_entry)
+
 @app.route('/sales', methods=['GET', 'POST'])
 @login_required
 @requires_permission('sales_manage')
 def sales_page():
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_sale = db.session.get(Sale, edit_id) if edit_id else None
     if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'create')
         sale_date = parse_date(request.form['sale_date'], date.today())
         unit_id = int(request.form['unit_id']) if request.form.get('unit_id') else None
         lot_id = int(request.form['lot_id']) if request.form.get('lot_id') else None
@@ -2816,47 +2926,46 @@ def sales_page():
         quantity_kg = parse_float(request.form['quantity_kg'], 0) or 0
         if harvested_units is None and average_weight_g:
             harvested_units = int(round((quantity_kg * 1000) / average_weight_g)) if average_weight_g else None
-        sale = Sale(
-            sale_date=sale_date,
-            unit_id=unit_id,
-            lot_id=lot_id,
-            client_name=request.form['client_name'],
-            channel=request.form['channel'],
-            quantity_kg=quantity_kg,
-            unit_price=parse_float(request.form['unit_price'], 0) or 0,
-            average_weight_g=average_weight_g,
-            harvested_units=harvested_units,
-            notes=request.form.get('notes')
-        )
-        db.session.add(sale)
-
-        if lot_id and unit_id and request.form.get('close_unit_after_sale', '1') == '1':
-            allocation = find_active_allocation(lot_id, unit_id, sale_date)
-            if allocation:
-                allocation.end_date = sale_date
-                allocation.quantity_allocated = 0
-            remaining = LotUnitAllocation.query.filter(
-                LotUnitAllocation.lot_id == lot_id,
-                LotUnitAllocation.start_date <= sale_date,
-                or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date > sale_date),
-            ).count()
-            if remaining == 0:
+        sale = db.session.get(Sale, parse_int(request.form.get('sale_id'))) if form_mode == 'edit' else Sale()
+        if form_mode == 'edit' and not sale:
+            flash('Registro de despesca não encontrado.', 'warning')
+            return redirect(url_for('sales_page'))
+        sale.sale_date = sale_date
+        sale.unit_id = unit_id
+        sale.lot_id = lot_id
+        sale.client_name = request.form['client_name']
+        sale.channel = request.form['channel']
+        sale.quantity_kg = quantity_kg
+        sale.unit_price = parse_float(request.form['unit_price'], 0) or 0
+        sale.average_weight_g = average_weight_g
+        sale.harvested_units = harvested_units
+        sale.notes = request.form.get('notes')
+        if form_mode != 'edit':
+            db.session.add(sale)
+            if lot_id and unit_id and request.form.get('close_unit_after_sale', '1') == '1':
+                allocation = find_active_allocation(lot_id, unit_id, sale_date)
+                if allocation:
+                    allocation.end_date = sale_date
+                    allocation.quantity_allocated = 0
+                remaining = LotUnitAllocation.query.filter(LotUnitAllocation.lot_id == lot_id, LotUnitAllocation.start_date <= sale_date, or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date > sale_date)).count()
+                if remaining == 0:
+                    lot = db.session.get(Lot, lot_id)
+                    if lot:
+                        close_lot(lot, sale_date, reason='despesca_venda')
+            elif lot_id and request.form.get('close_lot_after_sale', '0') == '1':
                 lot = db.session.get(Lot, lot_id)
                 if lot:
                     close_lot(lot, sale_date, reason='despesca_venda')
-        elif lot_id and request.form.get('close_lot_after_sale', '0') == '1':
-            lot = db.session.get(Lot, lot_id)
-            if lot:
-                close_lot(lot, sale_date, reason='despesca_venda')
         db.session.commit()
-        flash('Despesca/venda registrada.', 'success')
+        flash('Despesca/venda salva com sucesso.', 'success')
         return redirect(url_for('sales_page'))
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     lots = Lot.query.order_by(Lot.start_date.desc()).all()
     rows = Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc(), Sale.id.desc()).limit(50).all()
     row_summaries = [summary for sale in rows if (summary := sale_financial_summary(sale))]
     total_revenue = db.session.query(func.coalesce(func.sum(Sale.quantity_kg * Sale.unit_price), 0)).scalar() or 0
-    return render_template('sales.html', units=units, lots=lots, rows=rows, row_summaries=row_summaries, today=date.today(), total_revenue=total_revenue)
+    selected_summary = row_summaries[0] if row_summaries else None
+    return render_template('sales.html', units=units, lots=lots, rows=rows, row_summaries=row_summaries, today=date.today(), total_revenue=total_revenue, edit_sale=edit_sale, selected_summary=selected_summary)
 
 
 @app.get('/sales/export-history.xlsx')
