@@ -78,16 +78,10 @@
       </div>
     </div>
     <div>
-      <h3 class="subsection-title">Porções programadas</h3>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Horário</th><th>Volume</th></tr></thead>
-          <tbody>
-            {% for item in plan.schedule %}
-            <tr><td>{{ item.time }}</td><td>{{ '{:,.0f}'.format(item.grams).replace(',', '.') }} g</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <h3 class="subsection-title">Distribuição do dia</h3>
+      <div class="empty-state nursery-inline-note">
+        <h3>Horários mantidos na mensagem</h3>
+        <p>Os horários e as porções continuam no texto pronto para WhatsApp, mas saíram da tela para deixar o lançamento mais limpo.</p>
       </div>
     </div>
   </div>
@@ -142,7 +136,7 @@
     <thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Obs.</th><th></th></tr></thead>
     <tbody>
     {% for e in entries %}
-    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ e.intestinal_score if e.intestinal_score is not none else '—' }}</td><td>{{ e.notes or '—' }}</td><td><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a></td></tr>
+    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ e.intestinal_score if e.intestinal_score is not none else '—' }}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for('delete_nursery_feed_entry', entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento do berçário? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
     {% else %}<tr><td colspan="7" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
     </tbody></table></div>
 </section>
