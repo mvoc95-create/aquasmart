@@ -44,7 +44,7 @@
   <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg" id="feed_offered_kg"></label>
   <label>Ração consumida (kg)<input type="number" step="0.01" name="feed_consumed_kg" id="feed_consumed_kg"></label>
   <label>Mortalidade (un)<input type="number" name="mortality_qty" id="mortality_qty"></label>
-  <label>Peso médio (g)<input type="number" step="0.01" name="average_weight_g" id="average_weight_g"></label>
+  <label>Peso médio (g)<input type="number" step="0.001" name="average_weight_g" id="average_weight_g"></label>
   <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg" id="estimated_biomass_kg"></label>
   <label class="full">Observação<textarea name="notes" id="notes"></textarea></label>
   <div class="form-actions"><button type="submit">Salvar manejo</button></div>
@@ -114,7 +114,7 @@
   <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg" value="{{ edit_record.feed_offered_kg if edit_record.feed_offered_kg is not none else '' }}"></label>
   <label>Ração consumida (kg)<input type="number" step="0.01" name="feed_consumed_kg" value="{{ edit_record.feed_consumed_kg if edit_record.feed_consumed_kg is not none else '' }}"></label>
   <label>Mortalidade (un)<input type="number" name="mortality_qty" value="{{ edit_record.mortality_qty if edit_record.mortality_qty is not none else '' }}"></label>
-  <label>Peso médio (g)<input type="number" step="0.01" name="average_weight_g" value="{{ edit_record.average_weight_g if edit_record.average_weight_g is not none else '' }}"></label>
+  <label>Peso médio (g)<input type="number" step="0.001" name="average_weight_g" value="{{ edit_record.average_weight_g if edit_record.average_weight_g is not none else '' }}"></label>
   <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg" value="{{ edit_record.estimated_biomass_kg if edit_record.estimated_biomass_kg is not none else '' }}"></label>
   <label class="full">Observação<textarea name="notes">{{ edit_record.notes or '' }}</textarea></label>
   <div class="form-actions action-row-between">

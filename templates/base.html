@@ -62,6 +62,12 @@
           <span class="nav-text">Manejo diário</span>
         </a>
         {% endif %}
+        {% if current_user.is_authenticated and current_user.has_permission('management_manage') %}
+        <a class="nav-link {{ 'active' if current_endpoint == 'nursery_feed_page' else '' }}" href="{{ url_for('nursery_feed_page') }}">
+          <span class="nav-icon"><i class="fa-solid fa-baby"></i></span>
+          <span class="nav-text">Alimentação berçário</span>
+        </a>
+        {% endif %}
         {% if current_user.is_authenticated and current_user.has_permission('transfers_manage') %}
         <a class="nav-link {{ 'active' if current_endpoint == 'transfers_page' else '' }}" href="{{ url_for('transfers_page') }}">
           <span class="nav-icon"><i class="fa-solid fa-right-left"></i></span>

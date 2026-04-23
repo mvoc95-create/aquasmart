@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block page_title %}Alimentação berçário{% endblock %}
+{% block page_subtitle %}Registre a alimentação diária do berçário, score intestinal e mantenha vínculo com o manejo diário.{% endblock %}
+{% block content %}
+<div class="grid-2">
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>{{ 'Editar alimentação' if edit_entry else 'Nova alimentação de berçário' }}</h2></div></div>
+<form method="post" class="form-grid">
+  <input type="hidden" name="form_mode" value="{{ 'edit' if edit_entry else 'create' }}">
+  {% if edit_entry %}<input type="hidden" name="entry_id" value="{{ edit_entry.id }}">{% endif %}
+  <label>Data<input type="date" name="feed_date" value="{{ edit_entry.feed_date.isoformat() if edit_entry and edit_entry.feed_date else today.isoformat() }}" required></label>
+  <label>Berçário<select name="unit_id">{% for u in nursery_units %}<option value="{{ u.id }}" {% if edit_entry and edit_entry.unit_id==u.id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}</select></label>
+  <label>Quantidade do dia (kg)<input type="number" step="0.01" name="quantity_kg" value="{{ edit_entry.quantity_kg if edit_entry else '' }}" required></label>
+  <label>Score intestinal (0 a 4)<select name="intestinal_score"><option value="">—</option>{% for n in range(0,5) %}<option value="{{ n }}" {% if edit_entry and edit_entry.intestinal_score==n %}selected{% endif %}>{{ n }}</option>{% endfor %}</select></label>
+  <label class="full">Observações<textarea name="notes">{{ edit_entry.notes if edit_entry else '' }}</textarea></label>
+  <div class="form-actions action-row-between"><button type="submit">{{ 'Salvar alterações' if edit_entry else 'Salvar alimentação' }}</button>{% if edit_entry %}<a class="secondary-link-button" href="{{ url_for('nursery_feed_page') }}">Cancelar</a>{% endif %}</div>
+</form>
+</section>
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos lançamentos</h2></div></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia</th><th>Score</th><th>Obs.</th><th></th></tr></thead>
+<tbody>
+{% for e in entries %}
+<tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ e.quantity_kg }}</td><td>{{ e.intestinal_score if e.intestinal_score is not none else '—' }}</td><td>{{ e.notes or '—' }}</td><td><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id) }}">Editar</a></td></tr>
+{% else %}<tr><td colspan="7" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
+</tbody></table></div>
+</section>
+</div>
+{% endblock %}

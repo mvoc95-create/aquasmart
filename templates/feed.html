@@ -7,119 +7,34 @@
   <div class="metric-card"><span class="metric-label">Produtos ativos</span><strong>{{ active_product_count }}</strong><small>Itens disponíveis para seleção no manejo diário.</small></div>
   <div class="metric-card danger"><span class="metric-label">Estoque baixo</span><strong>{{ low_stock_count }}</strong><small>Produtos abaixo do estoque mínimo cadastrado.</small></div>
 </div>
-
 <div class="grid-2">
 <section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Cadastro</p><h2>Novo produto de ração</h2></div></div>
+<div class="panel-head"><div><p class="panel-kicker">Cadastro</p><h2>{{ 'Editar produto de ração' if edit_product else 'Novo produto de ração' }}</h2></div></div>
 <form method="post" class="form-grid">
-  <input type="hidden" name="form_mode" value="product">
-  <label>Marca<input name="brand" required></label>
-  <label>Tipo da ração<input name="feed_type" required placeholder="Ex.: Engorda 35%"></label>
-  <label>Proteína bruta (%)<input type="number" step="0.01" name="protein_pct"></label>
-  <label>Granulometria (mm)<input type="number" step="0.01" name="pellet_size_mm"></label>
-  <label>Estoque mínimo (kg)<input type="number" step="0.01" name="minimum_stock_kg"></label>
-  <label class="full">Observação<textarea name="product_notes"></textarea></label>
-  <div class="form-actions"><button type="submit">Cadastrar produto</button></div>
+  <input type="hidden" name="form_mode" value="{{ 'edit_product' if edit_product else 'product' }}">{% if edit_product %}<input type="hidden" name="product_id" value="{{ edit_product.id }}">{% endif %}
+  <label>Marca<input name="brand" value="{{ edit_product.brand if edit_product else '' }}" required></label>
+  <label>Tipo da ração<input name="feed_type" value="{{ edit_product.feed_type if edit_product else '' }}" required></label>
+  <label>Proteína bruta (%)<input type="number" step="0.01" name="protein_pct" value="{{ edit_product.protein_pct if edit_product else '' }}"></label>
+  <label>Granulometria (mm)<input type="number" step="0.01" name="pellet_size_mm" value="{{ edit_product.pellet_size_mm if edit_product else '' }}"></label>
+  <label>Estoque mínimo (kg)<input type="number" step="0.01" name="minimum_stock_kg" value="{{ edit_product.minimum_stock_kg if edit_product else '' }}"></label>
+  <label class="full">Observação<textarea name="product_notes">{{ edit_product.notes if edit_product else '' }}</textarea></label>
+  <div class="form-actions action-row-between"><button type="submit">{{ 'Salvar produto' if edit_product else 'Cadastrar produto' }}</button>{% if edit_product %}<a class="secondary-link-button" href="{{ url_for('feed_page') }}">Cancelar</a>{% endif %}</div>
 </form>
 </section>
 <section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Movimentação manual</p><h2>Entrada ou saída</h2></div></div>
-<form method="post" class="form-grid" id="feed-movement-form">
-  <input type="hidden" name="form_mode" value="movement">
-  <label>Data<input type="date" name="movement_date" value="{{ today.isoformat() }}" required></label>
-  <label>Movimentação<select name="movement_type" id="movement_type"><option value="entrada">Entrada</option><option value="saida">Saída manual</option></select></label>
-  <label class="full">Produto de ração
-    <select name="feed_product_id" id="movement_feed_product_id" required>
-      <option value="">Selecione o produto</option>
-      {% for p in feed_products %}
-      <option value="{{ p.id }}" data-stock="{{ stock_by_product.get(p.id, 0) }}" {% if not p.active %}data-inactive="1"{% endif %}>{{ p.full_name }}{% if p.technical_summary %} · {{ p.technical_summary }}{% endif %}{% if not p.active %} · inativa{% endif %}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <div class="full selection-info" id="movement-feed-info">Selecione o produto para conferir o saldo antes da movimentação.</div>
-  <label>Quantidade (kg)<input type="number" step="0.01" name="quantity_kg" required></label>
-  <label>Custo unitário<input type="number" step="0.01" name="unit_cost" placeholder="Preencha nas entradas"></label>
-  <label class="full">Observação<textarea name="notes" placeholder="Ex.: compra, ajuste de inventário, devolução, perda"></textarea></label>
-  <div class="form-actions"><button type="submit">Salvar movimentação</button></div>
+<div class="panel-head"><div><p class="panel-kicker">Movimentação manual</p><h2>{{ 'Editar movimentação' if edit_movement else 'Entrada ou saída' }}</h2></div></div>
+<form method="post" class="form-grid">
+  <input type="hidden" name="form_mode" value="{{ 'edit_movement' if edit_movement else 'movement' }}">{% if edit_movement %}<input type="hidden" name="movement_id" value="{{ edit_movement.id }}">{% endif %}
+  <label>Data<input type="date" name="movement_date" value="{{ edit_movement.movement_date.isoformat() if edit_movement and edit_movement.movement_date else today.isoformat() }}" required></label>
+  <label>Movimentação<select name="movement_type"><option value="entrada" {% if edit_movement and edit_movement.movement_type=='entrada' %}selected{% endif %}>Entrada</option><option value="saida" {% if edit_movement and edit_movement.movement_type=='saida' %}selected{% endif %}>Saída manual</option></select></label>
+  <label class="full">Produto de ração<select name="feed_product_id" required><option value="">Selecione o produto</option>{% for p in feed_products %}<option value="{{ p.id }}" {% if edit_movement and edit_movement.feed_product_id==p.id %}selected{% endif %}>{{ p.full_name }}</option>{% endfor %}</select></label>
+  <label>Quantidade (kg)<input type="number" step="0.01" name="quantity_kg" value="{{ edit_movement.quantity_kg if edit_movement else '' }}" required></label>
+  <label>Custo unitário<input type="number" step="0.01" name="unit_cost" value="{{ edit_movement.unit_cost if edit_movement and edit_movement.unit_cost is not none else '' }}"></label>
+  <label class="full">Observação<textarea name="notes">{{ edit_movement.notes if edit_movement else '' }}</textarea></label>
+  <div class="form-actions action-row-between"><button type="submit">{{ 'Salvar movimentação' if edit_movement else 'Salvar movimentação' }}</button>{% if edit_movement %}<a class="secondary-link-button" href="{{ url_for('feed_page') }}">Cancelar</a>{% endif %}</div>
 </form>
 </section>
 </div>
-
-<section class="panel full-width-panel">
-<div class="panel-head"><div><p class="panel-kicker">Saldo por produto</p><h2>Estoque consolidado</h2></div></div>
-<div class="table-wrap">
-<table>
-<thead><tr><th>Marca</th><th>Tipo</th><th>Ficha técnica</th><th>Saldo (kg)</th><th>Estoque mínimo</th><th>Custo médio</th><th>Status</th><th>Ação</th></tr></thead>
-<tbody>
-{% for row in snapshot_rows %}
-<tr>
-  <td>{{ row.brand }}</td>
-  <td>{{ row.feed_type }}</td>
-  <td>{{ row.technical_summary or '—' }}</td>
-  <td>{{ row.stock_kg }}</td>
-  <td>{{ row.minimum_stock_kg }}</td>
-  <td>{{ row.avg_unit_cost|money if row.avg_unit_cost is not none else '—' }}</td>
-  <td>
-    {% if row.status == 'baixo' %}<span class="badge amarelo">Baixo</span>{% else %}<span class="badge verde">OK</span>{% endif %}
-    {% if not row.product.active %}<span class="badge cinza">Inativa</span>{% endif %}
-  </td>
-  <td>
-    <form method="post" action="{{ url_for('toggle_feed_product', product_id=row.product.id) }}">
-      <button type="submit" class="secondary-button small-button">{{ 'Reativar' if not row.product.active else 'Inativar' }}</button>
-    </form>
-  </td>
-</tr>
-{% else %}
-<tr><td colspan="8" class="empty-cell">Nenhum produto de ração cadastrado ainda.</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-</section>
-
-<section class="panel full-width-panel">
-<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimas movimentações</h2></div></div>
-<div class="table-wrap">
-<table>
-<thead><tr><th>Data</th><th>Produto</th><th>Origem</th><th>Movimento</th><th>Quantidade (kg)</th><th>Unidade</th><th>Lote</th><th>Custo</th><th>Observação</th></tr></thead>
-<tbody>
-{% for r in rows %}
-<tr>
-  <td>{{ r.movement_date|brdate }}</td>
-  <td>{% if r.feed_product %}{{ r.feed_product.full_name }}{% else %}{{ r.feed_name }}{% endif %}</td>
-  <td>{{ movement_origin_label(r.source_type) }}</td>
-  <td>{{ r.movement_type|title }}</td>
-  <td>{{ r.quantity_kg }}</td>
-  <td>{{ r.unit.name if r.unit else '—' }}</td>
-  <td>{{ r.lot.lot_code if r.lot else '—' }}</td>
-  <td>{{ r.unit_cost|money if r.unit_cost is not none else '—' }}</td>
-  <td>{{ r.notes or '—' }}</td>
-</tr>
-{% else %}
-<tr><td colspan="9" class="empty-cell">Nenhuma movimentação registrada ainda.</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-</section>
-
-<script>
-(function () {
-  const select = document.getElementById('movement_feed_product_id');
-  const info = document.getElementById('movement-feed-info');
-  if (!select || !info) return;
-  const render = () => {
-    const option = select.options[select.selectedIndex];
-    if (!option || !option.value) {
-      info.textContent = 'Selecione o produto para conferir o saldo antes da movimentação.';
-      return;
-    }
-    const stock = option.dataset.stock || '0';
-    const inactive = option.dataset.inactive === '1';
-    info.textContent = `${option.text} — saldo atual: ${stock} kg${inactive ? ' (produto inativo)' : ''}`;
-  };
-  select.addEventListener('change', render);
-  render();
-})();
-</script>
+<section class="panel full-width-panel"><div class="panel-head"><div><p class="panel-kicker">Saldo por produto</p><h2>Estoque consolidado</h2></div></div><div class="table-wrap"><table><thead><tr><th>Marca</th><th>Tipo</th><th>Ficha técnica</th><th>Saldo (kg)</th><th>Estoque mínimo</th><th>Custo médio</th><th>Status</th><th>Ação</th><th></th></tr></thead><tbody>{% for row in snapshot_rows %}<tr><td>{{ row.brand }}</td><td>{{ row.feed_type }}</td><td>{{ row.technical_summary or '—' }}</td><td>{{ row.stock_kg }}</td><td>{{ row.minimum_stock_kg }}</td><td>{{ row.avg_unit_cost|money if row.avg_unit_cost is not none else '—' }}</td><td>{% if row.status == 'baixo' %}<span class="badge amarelo">Baixo</span>{% else %}<span class="badge verde">OK</span>{% endif %}{% if not row.product.active %}<span class="badge cinza">Inativa</span>{% endif %}</td><td><form method="post" action="{{ url_for('toggle_feed_product', product_id=row.product.id) }}"><button type="submit" class="secondary-button small-button">{{ 'Reativar' if not row.product.active else 'Inativar' }}</button></form></td><td><a class="link-button small-button" href="{{ url_for('feed_page', edit_product_id=row.product.id) }}">Editar</a></td></tr>{% else %}<tr><td colspan="9" class="empty-cell">Nenhum produto de ração cadastrado ainda.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel full-width-panel"><div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimas movimentações</h2></div></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Produto</th><th>Origem</th><th>Movimento</th><th>Quantidade (kg)</th><th>Unidade</th><th>Lote</th><th>Custo</th><th>Observação</th><th></th></tr></thead><tbody>{% for r in rows %}<tr><td>{{ r.movement_date|brdate }}</td><td>{% if r.feed_product %}{{ r.feed_product.full_name }}{% else %}{{ r.feed_name }}{% endif %}</td><td>{{ movement_origin_label(r.source_type) }}</td><td>{{ r.movement_type|title }}</td><td>{{ r.quantity_kg }}</td><td>{{ r.unit.name if r.unit else '—' }}</td><td>{{ r.lot.lot_code if r.lot else '—' }}</td><td>{{ r.unit_cost|money if r.unit_cost is not none else '—' }}</td><td>{{ r.notes or '—' }}</td><td>{% if r.source_type == 'manual' %}<a class="link-button small-button" href="{{ url_for('feed_page', edit_movement_id=r.id) }}">Editar</a>{% endif %}</td></tr>{% else %}<tr><td colspan="10" class="empty-cell">Nenhuma movimentação registrada ainda.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}

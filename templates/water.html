@@ -161,7 +161,7 @@
             <th>Sal. (‰)</th>
             <th>Transp. (cm)</th>
             <th>Amônia (mg/L)</th>
-            <th>Nitrito (mg/L)</th>
+            <th>Nitrito</th><th>Nitrato</th><th>Alcalin.</th><th>Dureza</th>
             <th>Obs.</th>
           </tr>
         </thead>
@@ -178,7 +178,7 @@
             <td><input type="number" step="0.1" name="salinity" placeholder="--"></td>
             <td><input type="number" step="0.1" name="transparency_cm" placeholder="--"></td>
             <td><input type="number" step="0.01" name="ammonia" placeholder="--"></td>
-            <td><input type="number" step="0.01" name="nitrite" placeholder="--"></td>
+            <td><input type="number" step="0.01" name="nitrite" placeholder="--"></td><td><input type="number" step="0.01" name="nitrate" placeholder="--"></td><td><input type="number" step="0.01" name="alkalinity" placeholder="--"></td><td><input type="number" step="0.01" name="hardness" placeholder="--"></td>
             <td><input type="text" name="observation" placeholder="Opcional"></td>
           </tr>
           {% endfor %}
@@ -207,7 +207,7 @@
     <label>Salinidade (‰)<input type="number" step="0.1" name="salinity"></label>
     <label>Transparência (cm)<input type="number" step="0.1" name="transparency_cm"></label>
     <label>Amônia (mg/L)<input type="number" step="0.01" name="ammonia"></label>
-    <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite"></label>
+    <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite"></label><label>Nitrato (mg/L)<input type="number" step="0.01" name="nitrate"></label><label>Alcalinidade (mg/L)<input type="number" step="0.01" name="alkalinity"></label><label>Dureza (mg/L)<input type="number" step="0.01" name="hardness"></label>
     <label class="full">Observação<textarea name="observation"></textarea></label>
     <div class="form-actions"><button type="submit">Salvar leitura avulsa</button></div>
   </form>
@@ -289,7 +289,7 @@
   <label>Salinidade (‰)<input type="number" step="0.1" name="salinity" value="{{ edit_record.salinity if edit_record.salinity is not none else '' }}"></label>
   <label>Transparência (cm)<input type="number" step="0.1" name="transparency_cm" value="{{ edit_record.transparency_cm if edit_record.transparency_cm is not none else '' }}"></label>
   <label>Amônia (mg/L)<input type="number" step="0.01" name="ammonia" value="{{ edit_record.ammonia if edit_record.ammonia is not none else '' }}"></label>
-  <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite" value="{{ edit_record.nitrite if edit_record.nitrite is not none else '' }}"></label>
+  <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite" value="{{ edit_record.nitrite if edit_record.nitrite is not none else '' }}"></label><label>Nitrato (mg/L)<input type="number" step="0.01" name="nitrate" value="{{ edit_record.nitrate if edit_record.nitrate is not none else '' }}"></label><label>Alcalinidade (mg/L)<input type="number" step="0.01" name="alkalinity" value="{{ edit_record.alkalinity if edit_record.alkalinity is not none else '' }}"></label><label>Dureza (mg/L)<input type="number" step="0.01" name="hardness" value="{{ edit_record.hardness if edit_record.hardness is not none else '' }}"></label>
   <label class="full">Observação<textarea name="observation">{{ edit_record.observation or '' }}</textarea></label>
   <div class="form-actions action-row-between">
     <button type="submit">Salvar alterações</button>
