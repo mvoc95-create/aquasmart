@@ -17,11 +17,12 @@ from flask_login import (
     logout_user,
 )
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import case, func, inspect, text
+from sqlalchemy import case, func, inspect, text, or_
 from sqlalchemy.orm import joinedload
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 import io
+from openpyxl import Workbook
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
@@ -53,6 +54,7 @@ TARGET_SALINITY_MIN = float(os.getenv('TARGET_SALINITY_MIN', '0'))
 TARGET_SALINITY_MAX = float(os.getenv('TARGET_SALINITY_MAX', '40'))
 TARGET_AMMONIA_MAX = float(os.getenv('TARGET_AMMONIA_MAX', '0.5'))
 TARGET_NITRITE_MAX = float(os.getenv('TARGET_NITRITE_MAX', '1.0'))
+TARGET_HARVEST_WEIGHT_G = float(os.getenv('TARGET_HARVEST_WEIGHT_G', '15'))
 
 
 def optional_env_float(name: str, default=None):
@@ -149,8 +151,49 @@ class Lot(db.Model):
     initial_count = db.Column(db.Integer, nullable=False, default=0)
     estimated_weight_g = db.Column(db.Float, default=0)
     status = db.Column(db.String(20), default='ativo')
+    end_date = db.Column(db.Date)
+    closed_reason = db.Column(db.String(60))
     notes = db.Column(db.Text)
+    larva_supplier = db.Column(db.String(120))
+    entry_pl_stage = db.Column(db.Integer)
     unit = db.relationship('Unit')
+
+
+class LotUnitAllocation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'), nullable=False)
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'), nullable=False)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date)
+    quantity_allocated = db.Column(db.Integer)
+    notes = db.Column(db.Text)
+    lot = db.relationship('Lot')
+    unit = db.relationship('Unit')
+
+
+class FixedCost(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    monthly_amount = db.Column(db.Float, nullable=False, default=0)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class NurseryFeeding(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    feed_date = db.Column(db.Date, nullable=False)
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'), nullable=False)
+    lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
+    quantity_kg = db.Column(db.Float, nullable=False, default=0)
+    intestinal_score = db.Column(db.Float)
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    unit = db.relationship('Unit')
+    lot = db.relationship('Lot')
 
 
 class WaterMonitoring(db.Model):
@@ -167,6 +210,9 @@ class WaterMonitoring(db.Model):
     transparency_cm = db.Column(db.Float)
     ammonia = db.Column(db.Float)
     nitrite = db.Column(db.Float)
+    nitrate = db.Column(db.Float)
+    alkalinity = db.Column(db.Float)
+    hardness = db.Column(db.Float)
     observation = db.Column(db.Text)
     unit = db.relationship('Unit')
     lot = db.relationship('Lot')
@@ -238,6 +284,12 @@ class WaterReferenceConfig(db.Model):
     ammonia_max = db.Column(db.Float, default=TARGET_AMMONIA_MAX)
     nitrite_min = db.Column(db.Float)
     nitrite_max = db.Column(db.Float, default=TARGET_NITRITE_MAX)
+    nitrate_min = db.Column(db.Float)
+    nitrate_max = db.Column(db.Float)
+    alkalinity_min = db.Column(db.Float)
+    alkalinity_max = db.Column(db.Float)
+    hardness_min = db.Column(db.Float)
+    hardness_max = db.Column(db.Float)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by = db.relationship('User', foreign_keys=[updated_by_id])
@@ -314,6 +366,8 @@ class Sale(db.Model):
     channel = db.Column(db.String(40), nullable=False)
     quantity_kg = db.Column(db.Float, nullable=False)
     unit_price = db.Column(db.Float, nullable=False)
+    average_weight_g = db.Column(db.Float)
+    harvested_units = db.Column(db.Integer)
     notes = db.Column(db.Text)
     unit = db.relationship('Unit')
     lot = db.relationship('Lot')
@@ -632,7 +686,7 @@ def upsert_water_reading(unit_id: int, slot_date: date, slot_time, values: dict)
         WaterMonitoring.monitor_time == slot_time,
     ).order_by(WaterMonitoring.id.desc()).first()
 
-    lot = active_lot_for_unit(unit_id)
+    lot = active_lot_for_unit(unit_id, on_date=slot_date)
     record = existing or WaterMonitoring(
         unit_id=unit_id,
         monitor_date=slot_date,
@@ -647,6 +701,9 @@ def upsert_water_reading(unit_id: int, slot_date: date, slot_time, values: dict)
     record.ph = values.get('ph')
     record.ammonia = values.get('ammonia')
     record.nitrite = values.get('nitrite')
+    record.nitrate = values.get('nitrate')
+    record.alkalinity = values.get('alkalinity')
+    record.hardness = values.get('hardness')
     note = values.get('observation')
     if note:
         record.observation = note
@@ -720,6 +777,33 @@ WATER_PARAMETER_SPECS = [
         'short_status_low': 'nitrito baixo',
         'short_status_high': 'nitrito alto',
     },
+    {
+        'field': 'nitrate',
+        'label': 'Nitrato',
+        'unit': 'mg/L',
+        'min_attr': 'nitrate_min',
+        'max_attr': 'nitrate_max',
+        'short_status_low': 'nitrato baixo',
+        'short_status_high': 'nitrato alto',
+    },
+    {
+        'field': 'alkalinity',
+        'label': 'Alcalinidade',
+        'unit': 'mg/L',
+        'min_attr': 'alkalinity_min',
+        'max_attr': 'alkalinity_max',
+        'short_status_low': 'alcalinidade baixa',
+        'short_status_high': 'alcalinidade alta',
+    },
+    {
+        'field': 'hardness',
+        'label': 'Dureza',
+        'unit': 'mg/L',
+        'min_attr': 'hardness_min',
+        'max_attr': 'hardness_max',
+        'short_status_low': 'dureza baixa',
+        'short_status_high': 'dureza alta',
+    },
 ]
 
 
@@ -740,6 +824,372 @@ def parse_int(value, default=None):
         return default
     return int(value)
 
+
+NURSERY_PROTOCOL_BASE_POPULATION = 265000
+NURSERY_PROTOCOL_ROWS = [
+    {'pl_stage': 11, 'survival_pct': 100.0, 'individual_weight_g': 0.003, 'feed_rate_pct': 35.0, 'total_day_g': 279, 'nutrisphera_225_g': 279, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 23},
+    {'pl_stage': 12, 'survival_pct': 99.0, 'individual_weight_g': 0.004, 'feed_rate_pct': 34.0, 'total_day_g': 357, 'nutrisphera_225_g': 357, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 30},
+    {'pl_stage': 13, 'survival_pct': 98.0, 'individual_weight_g': 0.010, 'feed_rate_pct': 30.0, 'total_day_g': 456, 'nutrisphera_225_g': 342, 'nutrisphera_450_g': 114, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 38},
+    {'pl_stage': 14, 'survival_pct': 97.5, 'individual_weight_g': 0.010, 'feed_rate_pct': 29.0, 'total_day_g': 663, 'nutrisphera_225_g': 332, 'nutrisphera_450_g': 332, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 55},
+    {'pl_stage': 15, 'survival_pct': 97.0, 'individual_weight_g': 0.010, 'feed_rate_pct': 28.0, 'total_day_g': 923, 'nutrisphera_225_g': 231, 'nutrisphera_450_g': 692, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 77},
+    {'pl_stage': 16, 'survival_pct': 96.75, 'individual_weight_g': 0.020, 'feed_rate_pct': 26.0, 'total_day_g': 1130, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1130, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 94},
+    {'pl_stage': 17, 'survival_pct': 96.5, 'individual_weight_g': 0.020, 'feed_rate_pct': 24.0, 'total_day_g': 1334, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1334, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 111},
+    {'pl_stage': 18, 'survival_pct': 96.25, 'individual_weight_g': 0.030, 'feed_rate_pct': 22.0, 'total_day_g': 1559, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1559, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 130},
+    {'pl_stage': 19, 'survival_pct': 96.0, 'individual_weight_g': 0.030, 'feed_rate_pct': 20.0, 'total_day_g': 1754, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1754, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 146},
+    {'pl_stage': 20, 'survival_pct': 95.75, 'individual_weight_g': 0.040, 'feed_rate_pct': 18.0, 'total_day_g': 1986, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1986, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 165},
+    {'pl_stage': 21, 'survival_pct': 95.5, 'individual_weight_g': 0.050, 'feed_rate_pct': 17.0, 'total_day_g': 2264, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2264, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 189},
+    {'pl_stage': 22, 'survival_pct': 95.25, 'individual_weight_g': 0.060, 'feed_rate_pct': 16.0, 'total_day_g': 2524, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2524, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 210},
+    {'pl_stage': 23, 'survival_pct': 95.0, 'individual_weight_g': 0.070, 'feed_rate_pct': 15.0, 'total_day_g': 2697, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2697, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 225},
+    {'pl_stage': 24, 'survival_pct': 94.75, 'individual_weight_g': 0.080, 'feed_rate_pct': 14.0, 'total_day_g': 2929, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2197, 'triturada_1_g': 732, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 244},
+    {'pl_stage': 25, 'survival_pct': 94.5, 'individual_weight_g': 0.130, 'feed_rate_pct': 13.0, 'total_day_g': 4232, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2116, 'triturada_1_g': 2116, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 353},
+    {'pl_stage': 26, 'survival_pct': 94.25, 'individual_weight_g': 0.180, 'feed_rate_pct': 12.0, 'total_day_g': 5395, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1349, 'triturada_1_g': 4046, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 450},
+    {'pl_stage': 27, 'survival_pct': 94.0, 'individual_weight_g': 0.230, 'feed_rate_pct': 11.0, 'total_day_g': 6302, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 6302, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 525},
+    {'pl_stage': 28, 'survival_pct': 93.75, 'individual_weight_g': 0.280, 'feed_rate_pct': 10.0, 'total_day_g': 6956, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 6956, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 580},
+    {'pl_stage': 29, 'survival_pct': 93.5, 'individual_weight_g': 0.330, 'feed_rate_pct': 9.0, 'total_day_g': 7359, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 7359, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 613},
+    {'pl_stage': 30, 'survival_pct': 93.25, 'individual_weight_g': 0.380, 'feed_rate_pct': 8.5, 'total_day_g': 7982, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 7982, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 665},
+    {'pl_stage': 31, 'survival_pct': 93.0, 'individual_weight_g': 0.430, 'feed_rate_pct': 7.6, 'total_day_g': 8054, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8054, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 671},
+    {'pl_stage': 32, 'survival_pct': 92.75, 'individual_weight_g': 0.480, 'feed_rate_pct': 7.3, 'total_day_g': 8612, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8612, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 718},
+    {'pl_stage': 33, 'survival_pct': 92.5, 'individual_weight_g': 0.520, 'feed_rate_pct': 6.8, 'total_day_g': 8668, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8668, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 722},
+    {'pl_stage': 34, 'survival_pct': 92.25, 'individual_weight_g': 0.570, 'feed_rate_pct': 6.4, 'total_day_g': 8918, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8918, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 743},
+    {'pl_stage': 35, 'survival_pct': 92.0, 'individual_weight_g': 0.620, 'feed_rate_pct': 6.4, 'total_day_g': 9674, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 7255, 'triturada_2_g': 2418, 'feedings_per_day': 12, 'per_feeding_g': 806},
+    {'pl_stage': 36, 'survival_pct': 91.75, 'individual_weight_g': 0.670, 'feed_rate_pct': 6.3, 'total_day_g': 10263, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 5131, 'triturada_2_g': 5131, 'feedings_per_day': 12, 'per_feeding_g': 855},
+    {'pl_stage': 37, 'survival_pct': 91.5, 'individual_weight_g': 0.720, 'feed_rate_pct': 6.2, 'total_day_g': 10824, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 2706, 'triturada_2_g': 8118, 'feedings_per_day': 12, 'per_feeding_g': 902},
+    {'pl_stage': 38, 'survival_pct': 91.25, 'individual_weight_g': 0.770, 'feed_rate_pct': 6.1, 'total_day_g': 11358, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 11358, 'feedings_per_day': 12, 'per_feeding_g': 946},
+    {'pl_stage': 39, 'survival_pct': 91.0, 'individual_weight_g': 0.820, 'feed_rate_pct': 6.0, 'total_day_g': 11865, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 11865, 'feedings_per_day': 12, 'per_feeding_g': 989},
+    {'pl_stage': 40, 'survival_pct': 90.75, 'individual_weight_g': 0.870, 'feed_rate_pct': 5.9, 'total_day_g': 12344, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 12344, 'feedings_per_day': 12, 'per_feeding_g': 1029},
+    {'pl_stage': 41, 'survival_pct': 90.5, 'individual_weight_g': 0.910, 'feed_rate_pct': 5.8, 'total_day_g': 12658, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 12658, 'feedings_per_day': 12, 'per_feeding_g': 1055},
+    {'pl_stage': 42, 'survival_pct': 90.25, 'individual_weight_g': 0.960, 'feed_rate_pct': 5.7, 'total_day_g': 13087, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 13087, 'feedings_per_day': 12, 'per_feeding_g': 1091},
+    {'pl_stage': 43, 'survival_pct': 90.0, 'individual_weight_g': 1.010, 'feed_rate_pct': 5.6, 'total_day_g': 13490, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 13490, 'feedings_per_day': 12, 'per_feeding_g': 1124},
+]
+NURSERY_FEED_TIMES = ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00', '00:00', '02:00', '04:00']
+
+
+def get_nursery_protocol_row(pl_stage: int | None):
+    if pl_stage is None:
+        return None
+    if pl_stage <= NURSERY_PROTOCOL_ROWS[0]['pl_stage']:
+        return NURSERY_PROTOCOL_ROWS[0]
+    if pl_stage >= NURSERY_PROTOCOL_ROWS[-1]['pl_stage']:
+        return NURSERY_PROTOCOL_ROWS[-1]
+    return next((row for row in NURSERY_PROTOCOL_ROWS if row['pl_stage'] == pl_stage), None)
+
+
+def grams_to_kg(value):
+    return round((value or 0) / 1000.0, 3)
+
+
+def nursery_score_factor(score):
+    if score is None:
+        return 1.0
+    try:
+        score = float(score)
+    except (TypeError, ValueError):
+        return 1.0
+    if 0 <= score <= 1.0:
+        return 1.30
+    if score <= 2.0:
+        return 1.20
+    if score <= 3.0:
+        return 1.10
+    if score <= 3.5:
+        return 1.00
+    if score <= 4.0:
+        return 0.90
+    return 1.0
+
+
+def nursery_score_factor_label(factor):
+    pct = int(round((factor - 1.0) * 100))
+    if pct > 0:
+        return f'+{pct}%'
+    if pct < 0:
+        return f'{pct}%'
+    return 'sem ajuste'
+
+
+def build_even_schedule(total_day_g: int, feedings_per_day: int):
+    if not feedings_per_day or total_day_g <= 0:
+        return []
+    base_value = total_day_g // feedings_per_day
+    remainder = total_day_g % feedings_per_day
+    return [base_value + (1 if idx < remainder else 0) for idx in range(feedings_per_day)]
+
+
+def build_nursery_management_note_block(entry, mix_label=None):
+    lines = [
+        '[Integração berçário]',
+        'Integração automática da alimentação de berçário.',
+        f'Origem ID: {entry.id}',
+    ]
+    if mix_label:
+        lines.append(f'Produto do mix: {mix_label}')
+    if entry.intestinal_score is not None:
+        lines.append(f'Score intestinal: {entry.intestinal_score}')
+    if (entry.notes or '').strip():
+        lines.append(f'Observações do berçário: {(entry.notes or '').strip()}')
+    lines.append('[/Integração berçário]')
+    return '\n'.join(lines)
+
+
+def nursery_management_source_marker(entry_id):
+    return f'Origem ID: {entry_id}'
+
+
+def nursery_management_records_for_entry(entry):
+    query = DailyManagement.query.filter(
+        DailyManagement.manage_date == entry.feed_date,
+        DailyManagement.unit_id == entry.unit_id,
+        DailyManagement.notes.contains(nursery_management_source_marker(entry.id)),
+    )
+    if entry.lot_id is None:
+        query = query.filter(DailyManagement.lot_id.is_(None))
+    else:
+        query = query.filter(DailyManagement.lot_id == entry.lot_id)
+    return query.order_by(DailyManagement.id.asc()).all()
+
+
+def delete_management_record_with_inventory(record):
+    movement = get_management_feed_movement(record.id)
+    if movement:
+        db.session.delete(movement)
+    db.session.delete(record)
+
+
+def delete_nursery_management_records(entry):
+    for record in nursery_management_records_for_entry(entry):
+        delete_management_record_with_inventory(record)
+
+
+def nursery_feed_alias_tokens(label: str):
+    normalized = normalize_text(label)
+    replacements = {
+        'nutrisphera': 'nutrisfera',
+        'bercario': 'bercario',
+        'bercario': 'bercario',
+    }
+    tokens = set(normalized.split())
+    expanded = set(tokens)
+    for token in list(tokens):
+        if token in replacements:
+            expanded.add(replacements[token])
+    if 'triturada' in expanded:
+        expanded.add('triturado')
+    return expanded
+
+
+def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, create_missing=True):
+    label = (label or '').strip()
+    normalized_label = normalize_text(label)
+    if not normalized_label:
+        return None
+    label_tokens = nursery_feed_alias_tokens(label)
+    numeric_tokens = {token for token in label_tokens if token.isdigit()}
+
+    best_product = None
+    best_score = -1
+    for product in FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all():
+        if exclude_product_id is not None and product.id == exclude_product_id:
+            continue
+        product_text = f'{product.brand} {product.feed_type} {product.technical_summary or ""}'
+        product_tokens = nursery_feed_alias_tokens(product_text)
+        product_numbers = {token for token in product_tokens if token.isdigit()}
+
+        if numeric_tokens and product_numbers and not numeric_tokens.intersection(product_numbers):
+            continue
+
+        score = len(label_tokens.intersection(product_tokens))
+        if numeric_tokens and numeric_tokens.issubset(product_numbers):
+            score += 3
+        if 'nutrisfera' in label_tokens and 'nutrisfera' in product_tokens:
+            score += 3
+        if 'triturada' in label_tokens.intersection(product_tokens) or 'triturado' in label_tokens.intersection(product_tokens):
+            score += 2
+        if normalized_label == normalize_text(product_text):
+            score += 5
+
+        if score > best_score:
+            best_score = score
+            best_product = product
+
+    if best_product and best_score >= 3:
+        return best_product
+
+    if not create_missing:
+        return None
+
+    # Cria só quando realmente não encontrou produto compatível.
+    product = FeedProduct(brand=label, feed_type='Berçário', active=True)
+    db.session.add(product)
+    db.session.flush()
+    return product
+
+
+def scale_nursery_mixes(mixes, quantity_kg):
+    target_total_g = int(round((quantity_kg or 0) * 1000))
+    if target_total_g <= 0:
+        return []
+    source_total_g = sum(int(item.get('grams') or 0) for item in mixes)
+    if source_total_g <= 0:
+        return []
+    scaled = []
+    distributed = 0
+    fractions = []
+    for idx, item in enumerate(mixes):
+        exact_value = (int(item.get('grams') or 0) * target_total_g) / source_total_g
+        whole = int(exact_value)
+        distributed += whole
+        scaled.append({'label': item.get('label'), 'grams': whole})
+        fractions.append((exact_value - whole, idx))
+    remainder = target_total_g - distributed
+    for _, idx in sorted(fractions, reverse=True)[:remainder]:
+        scaled[idx]['grams'] += 1
+    return [item for item in scaled if item['grams'] > 0]
+
+
+def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, intestinal_score=None):
+    target_date = target_date or date.today()
+    if not lot or not unit or not lot.start_date or lot.entry_pl_stage is None:
+        return None
+
+    days_since_start = max((target_date - lot.start_date).days, 0)
+    stage_today = min(43, max(11, lot.entry_pl_stage + days_since_start))
+    row = get_nursery_protocol_row(stage_today)
+    if not row:
+        return None
+
+    factor = (lot.initial_count or 0) / float(NURSERY_PROTOCOL_BASE_POPULATION or 1)
+
+    def scaled(value):
+        return int(round((value or 0) * factor))
+
+    base_total_day_g = scaled(row['total_day_g'])
+    correction_factor = nursery_score_factor(intestinal_score)
+    correction_label = nursery_score_factor_label(correction_factor)
+
+    projected_population = int(round((lot.initial_count or 0) * (row['survival_pct'] / 100.0)))
+    biomass_kg = round((projected_population * row['individual_weight_g']) / 1000.0, 2)
+    base_mixes = [
+        {'label': 'NutriSphera 225', 'grams': scaled(row['nutrisphera_225_g'])},
+        {'label': 'NutriSphera 450', 'grams': scaled(row['nutrisphera_450_g'])},
+        {'label': 'Triturada 1', 'grams': scaled(row['triturada_1_g'])},
+        {'label': 'Triturada 2', 'grams': scaled(row['triturada_2_g'])},
+    ]
+    base_mixes = [item for item in base_mixes if item['grams'] > 0]
+    mixes = [
+        {'label': item['label'], 'grams': int(round(item['grams'] * correction_factor))}
+        for item in base_mixes
+    ]
+    mixes = [item for item in mixes if item['grams'] > 0]
+    total_day_g = sum(item['grams'] for item in mixes) if mixes else int(round(base_total_day_g * correction_factor))
+
+    feedings_per_day = row['feedings_per_day']
+    portion_values = build_even_schedule(total_day_g, feedings_per_day)
+    per_feeding_g = int(round(total_day_g / feedings_per_day)) if feedings_per_day else 0
+    schedule = []
+    for idx, time_label in enumerate(NURSERY_FEED_TIMES[:feedings_per_day]):
+        schedule.append({'time': time_label, 'grams': portion_values[idx] if idx < len(portion_values) else per_feeding_g})
+
+    message_lines = [
+        f"*{unit.name}* — Lote {lot.lot_code}",
+        f"Data: {target_date.strftime('%d/%m/%Y')}",
+        f"Estágio do dia: PL{stage_today}",
+        f"População estimada: {projected_population:,} PL".replace(',', '.'),
+    ]
+    if intestinal_score is not None:
+        message_lines.append(f"Score intestinal: {float(intestinal_score):.1f} · ajuste {correction_label}".replace('.', ','))
+    message_lines.extend([
+        f"Total base: {base_total_day_g:,} g".replace(',', '.'),
+        f"Total corrigido do dia: {total_day_g:,} g".replace(',', '.'),
+        '',
+        '*Mix do dia*',
+    ])
+    for item in mixes or [{'label': 'Sem mistura cadastrada', 'grams': 0}]:
+        message_lines.append(f"- {item['label']}: {item['grams']:,} g".replace(',', '.'))
+    message_lines.extend(['', '*Porções a cada 2 horas*'])
+    for item in schedule:
+        message_lines.append(f"- {item['time']} — {item['grams']:,} g".replace(',', '.'))
+
+    return {
+        'unit': unit,
+        'lot': lot,
+        'target_date': target_date,
+        'day_index': days_since_start + 1,
+        'stage_today': stage_today,
+        'base_row': row,
+        'projected_population': projected_population,
+        'biomass_kg': biomass_kg,
+        'feed_rate_pct': row['feed_rate_pct'],
+        'base_total_day_g': base_total_day_g,
+        'base_total_day_kg': grams_to_kg(base_total_day_g),
+        'score_factor': correction_factor,
+        'score_factor_label': correction_label,
+        'score_adjustment_pct': int(round((correction_factor - 1.0) * 100)),
+        'intestinal_score': intestinal_score,
+        'total_day_g': total_day_g,
+        'total_day_kg': grams_to_kg(total_day_g),
+        'mixes': mixes,
+        'feedings_per_day': feedings_per_day,
+        'per_feeding_g': per_feeding_g,
+        'per_feeding_min_g': min((item['grams'] for item in schedule), default=0),
+        'per_feeding_max_g': max((item['grams'] for item in schedule), default=0),
+        'schedule': schedule,
+        'message_text': '\n'.join(message_lines),
+    }
+
+
+def build_nursery_digest_for_date(target_date: date | None = None):
+    target_date = target_date or date.today()
+    plans = []
+    nursery_units = Unit.query.filter_by(active=True, phase='bercario').order_by(Unit.name).all()
+    for unit in nursery_units:
+        lot = active_lot_for_unit(unit.id, on_date=target_date)
+        if not lot or lot.status != 'ativo':
+            continue
+        entry = NurseryFeeding.query.filter_by(feed_date=target_date, unit_id=unit.id).order_by(NurseryFeeding.id.desc()).first()
+        plan = build_nursery_protocol_for_date(lot, unit, target_date=target_date, intestinal_score=entry.intestinal_score if entry else None)
+        if plan:
+            plan['existing_entry'] = entry
+            plans.append(plan)
+    return plans
+
+
+def sync_nursery_feed_to_management(entry):
+    if not entry:
+        return []
+
+    delete_nursery_management_records(entry)
+
+    unit = db.session.get(Unit, entry.unit_id) if entry.unit_id else None
+    lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else None
+    plan = build_nursery_protocol_for_date(lot, unit, target_date=entry.feed_date, intestinal_score=entry.intestinal_score) if unit and lot else None
+    scaled_mixes = scale_nursery_mixes(plan.get('mixes', []) if plan else [], entry.quantity_kg)
+
+    if not scaled_mixes:
+        fallback_product = find_or_create_nursery_feed_product('Ração berçário')
+        scaled_mixes = [{'label': fallback_product.full_name if fallback_product else 'Ração berçário', 'grams': int(round((entry.quantity_kg or 0) * 1000))}]
+
+    created_records = []
+    for item in scaled_mixes:
+        offered_kg = grams_to_kg(item['grams'])
+        feed_product = find_or_create_nursery_feed_product(item['label'])
+        management = DailyManagement(
+            manage_date=entry.feed_date,
+            unit_id=entry.unit_id,
+            lot_id=entry.lot_id,
+            feed_product_id=feed_product.id if feed_product else None,
+            feed_offered_kg=offered_kg,
+            feed_consumed_kg=offered_kg,
+            mortality_qty=0,
+            average_weight_g=None,
+            estimated_biomass_kg=None,
+            notes=build_nursery_management_note_block(entry, mix_label=item['label']),
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add(management)
+        db.session.flush()
+        sync_management_feed_movement(management, feed_product, offered_kg)
+        created_records.append(management)
+    return created_records
 
 def combine_monitor_datetime(record):
     return datetime.combine(record.monitor_date, record.monitor_time or time.min)
@@ -925,7 +1375,7 @@ def run_lightweight_migrations():
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
 
-    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct):
+    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, LotUnitAllocation, FixedCost, NurseryFeeding):
         table_name = model.__table__.name
         if table_name not in tables:
             model.__table__.create(bind=db.engine)
@@ -955,9 +1405,38 @@ def run_lightweight_migrations():
         add_column_if_missing('user', user_columns, 'created_at', f"ALTER TABLE user ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE "user" ADD COLUMN created_at TIMESTAMP')
         add_column_if_missing('user', user_columns, 'is_active_user', 'ALTER TABLE user ADD COLUMN is_active_user BOOLEAN DEFAULT 1', 'ALTER TABLE "user" ADD COLUMN is_active_user BOOLEAN DEFAULT TRUE')
 
+    if 'lot' in tables:
+        lot_columns = get_columns('lot')
+        add_column_if_missing('lot', lot_columns, 'end_date', 'ALTER TABLE lot ADD COLUMN end_date DATE', 'ALTER TABLE lot ADD COLUMN end_date DATE')
+        add_column_if_missing('lot', lot_columns, 'closed_reason', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)')
+        add_column_if_missing('lot', lot_columns, 'larva_supplier', 'ALTER TABLE lot ADD COLUMN larva_supplier VARCHAR(120)', 'ALTER TABLE lot ADD COLUMN larva_supplier VARCHAR(120)')
+        add_column_if_missing('lot', lot_columns, 'entry_pl_stage', 'ALTER TABLE lot ADD COLUMN entry_pl_stage INTEGER', 'ALTER TABLE lot ADD COLUMN entry_pl_stage INTEGER')
+
+
+    if 'lot_unit_allocation' in tables:
+        allocation_columns = get_columns('lot_unit_allocation')
+        add_column_if_missing('lot_unit_allocation', allocation_columns, 'quantity_allocated', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER')
+
+    if 'sale' in tables:
+        sale_columns = get_columns('sale')
+        add_column_if_missing('sale', sale_columns, 'average_weight_g', 'ALTER TABLE sale ADD COLUMN average_weight_g FLOAT', 'ALTER TABLE sale ADD COLUMN average_weight_g DOUBLE PRECISION')
+        add_column_if_missing('sale', sale_columns, 'harvested_units', 'ALTER TABLE sale ADD COLUMN harvested_units INTEGER', 'ALTER TABLE sale ADD COLUMN harvested_units INTEGER')
+
     if 'water_monitoring' in tables:
         water_columns = get_columns('water_monitoring')
         add_column_if_missing('water_monitoring', water_columns, 'monitor_time', 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME')
+        add_column_if_missing('water_monitoring', water_columns, 'nitrate', 'ALTER TABLE water_monitoring ADD COLUMN nitrate FLOAT', 'ALTER TABLE water_monitoring ADD COLUMN nitrate DOUBLE PRECISION')
+        add_column_if_missing('water_monitoring', water_columns, 'alkalinity', 'ALTER TABLE water_monitoring ADD COLUMN alkalinity FLOAT', 'ALTER TABLE water_monitoring ADD COLUMN alkalinity DOUBLE PRECISION')
+        add_column_if_missing('water_monitoring', water_columns, 'hardness', 'ALTER TABLE water_monitoring ADD COLUMN hardness FLOAT', 'ALTER TABLE water_monitoring ADD COLUMN hardness DOUBLE PRECISION')
+
+    if 'water_reference_config' in tables:
+        reference_columns = get_columns('water_reference_config')
+        add_column_if_missing('water_reference_config', reference_columns, 'nitrate_min', 'ALTER TABLE water_reference_config ADD COLUMN nitrate_min FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN nitrate_min DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'nitrate_max', 'ALTER TABLE water_reference_config ADD COLUMN nitrate_max FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN nitrate_max DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'alkalinity_min', 'ALTER TABLE water_reference_config ADD COLUMN alkalinity_min FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN alkalinity_min DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'alkalinity_max', 'ALTER TABLE water_reference_config ADD COLUMN alkalinity_max FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN alkalinity_max DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'hardness_min', 'ALTER TABLE water_reference_config ADD COLUMN hardness_min FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN hardness_min DOUBLE PRECISION')
+        add_column_if_missing('water_reference_config', reference_columns, 'hardness_max', 'ALTER TABLE water_reference_config ADD COLUMN hardness_max FLOAT', 'ALTER TABLE water_reference_config ADD COLUMN hardness_max DOUBLE PRECISION')
 
     if 'protocol_document' in tables:
         protocol_columns = get_columns('protocol_document')
@@ -986,6 +1465,10 @@ def run_lightweight_migrations():
         add_column_if_missing('daily_management', daily_management_columns, 'created_at', f"ALTER TABLE daily_management ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE daily_management ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         add_column_if_missing('daily_management', daily_management_columns, 'updated_at', f"ALTER TABLE daily_management ADD COLUMN updated_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE daily_management ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
 
+    if dialect != 'sqlite' and 'nursery_feeding' in tables:
+        # Allow decimal intestinal scores such as 2.5 instead of only whole numbers.
+        run_sql('', 'ALTER TABLE nursery_feeding ALTER COLUMN intestinal_score TYPE DOUBLE PRECISION USING intestinal_score::double precision')
+
     if 'feed_inventory' in tables:
         feed_inventory_columns = get_columns('feed_inventory')
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'feed_product_id', 'ALTER TABLE feed_inventory ADD COLUMN feed_product_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN feed_product_id INTEGER')
@@ -996,6 +1479,7 @@ def run_lightweight_migrations():
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'created_by_id', 'ALTER TABLE feed_inventory ADD COLUMN created_by_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN created_by_id INTEGER')
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'created_at', f"ALTER TABLE feed_inventory ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE feed_inventory ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
 
+    backfill_lot_allocations_and_status()
     sync_feed_products_from_legacy_movements()
 
 
@@ -1008,8 +1492,27 @@ def init_db():
         get_water_reference_config()
 
 
-def active_lot_for_unit(unit_id):
-    return Lot.query.filter_by(unit_id=unit_id, status='ativo').order_by(Lot.start_date.desc()).first()
+def active_lot_allocation_for_unit(unit_id, on_date=None):
+    on_date = on_date or date.today()
+    return (
+        LotUnitAllocation.query.options(joinedload(LotUnitAllocation.lot), joinedload(LotUnitAllocation.unit))
+        .join(Lot, Lot.id == LotUnitAllocation.lot_id)
+        .filter(
+            LotUnitAllocation.unit_id == unit_id,
+            LotUnitAllocation.start_date <= on_date,
+            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+            Lot.start_date <= on_date,
+            Lot.status == 'ativo',
+            or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
+        )
+        .order_by(Lot.start_date.desc(), LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc())
+        .first()
+    )
+
+
+def active_lot_for_unit(unit_id, on_date=None):
+    allocation = active_lot_allocation_for_unit(unit_id, on_date=on_date)
+    return allocation.lot if allocation else None
 
 
 def latest_water(unit_id):
@@ -1018,6 +1521,240 @@ def latest_water(unit_id):
 
 def latest_mgmt(unit_id):
     return DailyManagement.query.filter_by(unit_id=unit_id).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).first()
+
+
+def backfill_lot_allocations_and_status():
+    created = 0
+    for lot in Lot.query.all():
+        exists = LotUnitAllocation.query.filter_by(lot_id=lot.id).first()
+        if not exists:
+            db.session.add(LotUnitAllocation(
+                lot_id=lot.id,
+                unit_id=lot.unit_id,
+                start_date=lot.start_date,
+                end_date=lot.end_date,
+                quantity_allocated=lot.initial_count,
+                notes='Alocação inicial criada automaticamente.'
+            ))
+            created += 1
+        else:
+            for allocation in LotUnitAllocation.query.filter_by(lot_id=lot.id).all():
+                if allocation.quantity_allocated is None:
+                    allocation.quantity_allocated = lot.initial_count
+        if lot.status == 'encerrado' and lot.end_date is None:
+            last_sale = Sale.query.filter_by(lot_id=lot.id).order_by(Sale.sale_date.desc(), Sale.id.desc()).first()
+            lot.end_date = last_sale.sale_date if last_sale else date.today()
+            if not lot.closed_reason:
+                lot.closed_reason = 'encerrado_manual'
+    if created:
+        db.session.flush()
+
+
+def close_lot(lot: Lot, close_date: date, reason: str = 'encerrado_manual'):
+    if not lot:
+        return
+    lot.status = 'encerrado'
+    lot.end_date = close_date
+    lot.closed_reason = reason
+    LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot.id,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date > close_date),
+    ).update({'end_date': close_date}, synchronize_session=False)
+
+
+def lot_current_units(lot: Lot, on_date=None):
+    on_date = on_date or date.today()
+    allocations = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+    ).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
+    return [allocation.unit for allocation in allocations]
+
+
+def active_lots_on_date(on_date: date):
+    return Lot.query.filter(
+        Lot.start_date <= on_date,
+        or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
+    ).all()
+
+
+def active_allocations_on_date(on_date: date):
+    return LotUnitAllocation.query.join(Lot, Lot.id == LotUnitAllocation.lot_id).filter(
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+        Lot.status == 'ativo',
+        Lot.start_date <= on_date,
+        or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
+    ).all()
+
+
+def allocation_density(allocation: LotUnitAllocation):
+    if not allocation or not allocation.unit or not allocation.unit.area_m2 or not allocation.quantity_allocated:
+        return None
+    return round((allocation.quantity_allocated or 0) / allocation.unit.area_m2, 2)
+
+
+def find_active_allocation(lot_id: int, unit_id: int, on_date: date):
+    return LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot_id,
+        LotUnitAllocation.unit_id == unit_id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+    ).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
+
+
+def calculate_fixed_cost_for_lot(lot: Lot):
+    if not lot:
+        return 0.0
+    start = lot.start_date
+    end = lot.end_date or date.today()
+    if end < start:
+        return 0.0
+
+    total = 0.0
+    cursor = start
+    while cursor <= end:
+        active_costs = FixedCost.query.filter(
+            FixedCost.start_date <= cursor,
+            or_(FixedCost.end_date.is_(None), FixedCost.end_date >= cursor),
+            FixedCost.active.is_(True),
+        ).all()
+        if active_costs:
+            active_allocations = active_allocations_on_date(cursor)
+            divisor = len(active_allocations) or 1
+            lot_allocations = [allocation for allocation in active_allocations if allocation.lot_id == lot.id]
+            daily_cost = sum((cost.monthly_amount or 0) / 30 for cost in active_costs)
+            total += daily_cost * (len(lot_allocations) / divisor)
+        cursor += timedelta(days=1)
+    return round(total, 2)
+
+
+def calculate_fixed_cost_for_allocation(lot: Lot, unit_id: int, start_date: date, end_date: date | None = None):
+    if not lot or not unit_id:
+        return 0.0
+    start = max(lot.start_date, start_date or lot.start_date)
+    end = end_date or lot.end_date or date.today()
+    if end < start:
+        return 0.0
+    total = 0.0
+    cursor = start
+    while cursor <= end:
+        active_costs = FixedCost.query.filter(
+            FixedCost.start_date <= cursor,
+            or_(FixedCost.end_date.is_(None), FixedCost.end_date >= cursor),
+            FixedCost.active.is_(True),
+        ).all()
+        if active_costs:
+            active_allocations = active_allocations_on_date(cursor)
+            divisor = len(active_allocations) or 1
+            current_allocation = find_active_allocation(lot.id, unit_id, cursor)
+            if current_allocation:
+                daily_cost = sum((cost.monthly_amount or 0) / 30 for cost in active_costs)
+                total += daily_cost / divisor
+        cursor += timedelta(days=1)
+    return round(total, 2)
+
+
+def calculate_feed_cost_for_unit(lot_id: int, unit_id: int, end_date: date | None = None):
+    query = db.session.query(func.coalesce(func.sum(DailyManagement.feed_total_cost), 0)).filter(
+        DailyManagement.lot_id == lot_id,
+        DailyManagement.unit_id == unit_id,
+    )
+    if end_date:
+        query = query.filter(DailyManagement.manage_date <= end_date)
+    return round(query.scalar() or 0, 2)
+
+
+def lot_total_harvested_units(lot_id: int):
+    total = db.session.query(func.coalesce(func.sum(Sale.harvested_units), 0)).filter(Sale.lot_id == lot_id).scalar() or 0
+    return int(total or 0)
+
+
+def lot_total_harvested_kg(lot_id: int):
+    total = db.session.query(func.coalesce(func.sum(Sale.quantity_kg), 0)).filter(Sale.lot_id == lot_id).scalar() or 0
+    return round(total, 2)
+
+
+def lot_total_revenue(lot_id: int):
+    total = db.session.query(func.coalesce(func.sum(Sale.quantity_kg * Sale.unit_price), 0)).filter(Sale.lot_id == lot_id).scalar() or 0
+    return round(total, 2)
+
+
+def build_allocation_rows(lot: Lot, on_date=None):
+    on_date = on_date or date.today()
+    allocations = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+    ).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
+    rows = []
+    for allocation in allocations:
+        rows.append({
+            'unit_name': allocation.unit.name if allocation.unit else '—',
+            'phase': allocation.unit.phase if allocation.unit else lot.phase,
+            'allocated_qty': allocation.quantity_allocated or 0,
+            'density': allocation_density(allocation),
+        })
+    return rows
+
+
+def lot_financial_summary(lot: Lot):
+    feed_cost = db.session.query(func.coalesce(func.sum(DailyManagement.feed_total_cost), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
+    fixed_cost = calculate_fixed_cost_for_lot(lot)
+    current_units = lot_current_units(lot)
+    allocation_rows = build_allocation_rows(lot)
+    harvested_units = lot_total_harvested_units(lot.id)
+    survival_pct = round((harvested_units / lot.initial_count) * 100, 2) if lot.initial_count else None
+    total_feed_offered = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
+    harvested_kg = lot_total_harvested_kg(lot.id)
+    fcr_real = round(total_feed_offered / harvested_kg, 2) if harvested_kg else None
+    return {
+        'lot': lot,
+        'feed_cost': round(feed_cost, 2),
+        'fixed_cost': fixed_cost,
+        'total_cost': round((feed_cost or 0) + fixed_cost, 2),
+        'current_units': current_units,
+        'allocations': allocation_rows,
+        'harvested_units': harvested_units,
+        'survival_pct': survival_pct,
+        'fcr_real': fcr_real,
+    }
+
+
+def sale_financial_summary(sale: Sale):
+    if not sale.lot or not sale.unit_id:
+        return None
+    allocation = find_active_allocation(sale.lot_id, sale.unit_id, sale.sale_date)
+    feed_cost = calculate_feed_cost_for_unit(sale.lot_id, sale.unit_id, sale.sale_date)
+    fixed_cost = calculate_fixed_cost_for_allocation(sale.lot, sale.unit_id, sale.lot.start_date, sale.sale_date)
+    total_cost = round(feed_cost + fixed_cost, 2)
+    revenue = round((sale.quantity_kg or 0) * (sale.unit_price or 0), 2)
+    harvested_units = sale.harvested_units or 0
+    if not harvested_units and sale.average_weight_g:
+        harvested_units = int(round((sale.quantity_kg * 1000) / sale.average_weight_g)) if sale.average_weight_g else 0
+    lot_harvested_units = lot_total_harvested_units(sale.lot_id)
+    survival_pct = round((lot_harvested_units / sale.lot.initial_count) * 100, 2) if sale.lot.initial_count else None
+    total_feed_offered = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(
+        DailyManagement.lot_id == sale.lot_id,
+        DailyManagement.manage_date <= sale.sale_date,
+    ).scalar() or 0
+    harvested_kg_lot = lot_total_harvested_kg(sale.lot_id)
+    fcr_real = round(total_feed_offered / harvested_kg_lot, 2) if harvested_kg_lot else None
+    return {
+        'sale': sale,
+        'allocation_qty': allocation.quantity_allocated if allocation else None,
+        'density': allocation_density(allocation) if allocation else None,
+        'feed_cost': feed_cost,
+        'fixed_cost': fixed_cost,
+        'total_cost': total_cost,
+        'revenue': revenue,
+        'profit': round(revenue - total_cost, 2),
+        'status': 'Lucro' if revenue >= total_cost else 'Prejuízo',
+        'harvested_units': harvested_units,
+        'survival_pct': survival_pct,
+        'fcr_real': fcr_real,
+    }
 
 
 def sync_feed_products_from_legacy_movements():
@@ -1242,20 +1979,240 @@ def water_status(rec, config=None):
     return ' | '.join(alert['message'] for alert in alerts) if alerts else 'ok'
 
 
+def month_start(value: date):
+    return value.replace(day=1)
+
+
+def safe_round(value, digits=1):
+    if value is None:
+        return None
+    return round(value, digits)
+
+
+def latest_weight_for_lot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]]):
+    records = records_by_lot.get(lot.id, [])
+    for record in sorted(records, key=lambda item: (item.manage_date, item.id), reverse=True):
+        if record.average_weight_g is not None:
+            return round(record.average_weight_g, 3)
+    if lot.estimated_weight_g is not None:
+        return round(lot.estimated_weight_g, 3)
+    return None
+
+
+def latest_biomass_for_lot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]], allocations_by_lot: dict[int, list[LotUnitAllocation]]):
+    records = records_by_lot.get(lot.id, [])
+    for record in sorted(records, key=lambda item: (item.manage_date, item.id), reverse=True):
+        if record.estimated_biomass_kg is not None:
+            return round(record.estimated_biomass_kg, 1)
+    latest_weight = latest_weight_for_lot(lot, records_by_lot)
+    if latest_weight is None:
+        return None
+    qty = sum((allocation.quantity_allocated or 0) for allocation in allocations_by_lot.get(lot.id, [])) or lot.initial_count or 0
+    if qty <= 0:
+        return None
+    return round((qty * latest_weight) / 1000, 1)
+
+
+def lot_mortality_total(lot_id: int, records_by_lot: dict[int, list[DailyManagement]]):
+    return int(sum(record.mortality_qty or 0 for record in records_by_lot.get(lot_id, [])))
+
+
+def survival_estimate_for_lot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]]):
+    if not lot.initial_count:
+        return None
+    losses = lot_mortality_total(lot.id, records_by_lot) + lot_total_harvested_units(lot.id)
+    survivors = max(lot.initial_count - losses, 0)
+    return round((survivors / lot.initial_count) * 100, 1)
+
+
+def average_daily_growth(records: list[DailyManagement]):
+    weighted_records = [record for record in sorted(records, key=lambda item: (item.manage_date, item.id)) if record.average_weight_g is not None]
+    if len(weighted_records) < 2:
+        return None
+    latest = weighted_records[-1]
+    baseline = None
+    for candidate in reversed(weighted_records[:-1]):
+        days = (latest.manage_date - candidate.manage_date).days
+        if days >= 5:
+            baseline = candidate
+            break
+    if baseline is None:
+        baseline = weighted_records[-2]
+    days = max((latest.manage_date - baseline.manage_date).days, 1)
+    return max((latest.average_weight_g - baseline.average_weight_g) / days, 0)
+
+
+def growth_weekly_pct(records: list[DailyManagement]):
+    weighted_records = [record for record in sorted(records, key=lambda item: (item.manage_date, item.id)) if record.average_weight_g is not None]
+    if len(weighted_records) < 2:
+        return None
+    latest = weighted_records[-1]
+    baseline = None
+    for candidate in reversed(weighted_records[:-1]):
+        days = (latest.manage_date - candidate.manage_date).days
+        if days >= 5:
+            baseline = candidate
+            break
+    if baseline is None:
+        baseline = weighted_records[-2]
+    if not baseline.average_weight_g:
+        return None
+    return round(((latest.average_weight_g - baseline.average_weight_g) / baseline.average_weight_g) * 100, 1)
+
+
+def phase_growth_baselines():
+    rows = DailyManagement.query.join(Lot, Lot.id == DailyManagement.lot_id).filter(DailyManagement.average_weight_g.isnot(None)).order_by(DailyManagement.lot_id, DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()
+    grouped = defaultdict(list)
+    for record in rows:
+        grouped[record.lot_id].append(record)
+    phase_values = defaultdict(list)
+    for lot_id, records in grouped.items():
+        lot = records[0].lot if records and records[0].lot else None
+        if not lot:
+            continue
+        growth = average_daily_growth(records)
+        if growth is not None and growth > 0:
+            phase_values[lot.phase].append(growth)
+    return {phase: (sum(values) / len(values) if values else None) for phase, values in phase_values.items()}
+
+
+def phase_fcr_baselines():
+    values = defaultdict(list)
+    lots = Lot.query.all()
+    for lot in lots:
+        harvested_kg = lot_total_harvested_kg(lot.id)
+        if harvested_kg <= 0:
+            continue
+        total_feed = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
+        if total_feed > 0:
+            values[lot.phase].append(round(total_feed / harvested_kg, 2))
+    return {phase: (sum(items) / len(items) if items else None) for phase, items in values.items()}
+
+
+def predict_lot_metrics(lot: Lot, records_by_lot: dict[int, list[DailyManagement]], allocations_by_lot: dict[int, list[LotUnitAllocation]], phase_growth_map: dict, phase_fcr_map: dict, today: date):
+    records = records_by_lot.get(lot.id, [])
+    current_weight = latest_weight_for_lot(lot, records_by_lot) or 0
+    current_biomass = latest_biomass_for_lot(lot, records_by_lot, allocations_by_lot)
+    lot_growth = average_daily_growth(records)
+    growth_used = lot_growth if lot_growth is not None else (phase_growth_map.get(lot.phase) or 0.08)
+    predicted_7 = round(current_weight + growth_used * 7, 1) if current_weight else None
+    predicted_14 = round(current_weight + growth_used * 14, 1) if current_weight else None
+    survival_now = survival_estimate_for_lot(lot, records_by_lot)
+    recent_mortality = sum((record.mortality_qty or 0) for record in records if (today - record.manage_date).days <= 7)
+    predicted_survival = survival_now
+    if survival_now is not None and lot.initial_count:
+        predicted_survival = round(max(survival_now - ((recent_mortality / lot.initial_count) * 100), 0), 1)
+    total_feed = sum(record.feed_offered_kg or 0 for record in records)
+    partial_fcr = round(total_feed / current_biomass, 2) if current_biomass and current_biomass > 0 else None
+    predicted_fcr = partial_fcr if partial_fcr is not None else phase_fcr_map.get(lot.phase)
+    if predicted_fcr is not None:
+        predicted_fcr = round(predicted_fcr, 2)
+    harvest_date = None
+    if current_weight and growth_used > 0:
+        if current_weight >= TARGET_HARVEST_WEIGHT_G:
+            harvest_date = today
+        else:
+            days_left = int(round((TARGET_HARVEST_WEIGHT_G - current_weight) / growth_used))
+            days_left = max(days_left, 1)
+            harvest_date = today + timedelta(days=days_left)
+    measurements = len([record for record in records if record.average_weight_g is not None])
+    confidence = min(95, 48 + (measurements * 9) + min((today - lot.start_date).days, 30))
+    return {
+        'lot': lot,
+        'current_weight': round(current_weight, 1) if current_weight else None,
+        'predicted_7d': predicted_7,
+        'predicted_14d': predicted_14,
+        'predicted_survival': predicted_survival,
+        'predicted_fcr': predicted_fcr,
+        'harvest_date': harvest_date,
+        'confidence': int(confidence),
+        'daily_growth': round(growth_used, 3),
+        'current_biomass': current_biomass,
+        'partial_fcr': partial_fcr,
+    }
+
+
 def dashboard_data():
     today = date.today()
-    config = get_water_reference_config()
-    units = Unit.query.filter_by(active=True).order_by(Unit.phase, Unit.name).all()
+    default_start = month_start(today)
+    start_date = parse_date(request.args.get('start_date'), default_start)
+    end_date = parse_date(request.args.get('end_date'), today)
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
 
-    water_today_records = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit), joinedload(WaterMonitoring.lot)).filter(WaterMonitoring.monitor_date == today).all()
+    selected_lot_id = parse_int(request.args.get('lot_id'))
+    selected_unit_id = parse_int(request.args.get('unit_id'))
+    selected_phase = (request.args.get('phase') or '').strip()
+    selected_status = (request.args.get('status') or 'ativos').strip()
+    selected_supplier = (request.args.get('supplier') or '').strip()
+
+    config = get_water_reference_config()
+    all_units = Unit.query.filter_by(active=True).order_by(Unit.phase, Unit.name).all()
+    all_lots = Lot.query.options(joinedload(Lot.unit)).order_by(Lot.start_date.desc(), Lot.lot_code.asc()).all()
+    supplier_options = sorted({lot.larva_supplier for lot in all_lots if lot.larva_supplier})
+
+    def lot_matches_filters(lot: Lot):
+        if selected_lot_id and lot.id != selected_lot_id:
+            return False
+        if selected_phase and lot.phase != selected_phase:
+            return False
+        if selected_supplier and (lot.larva_supplier or '') != selected_supplier:
+            return False
+        if selected_status == 'ativos' and lot.status != 'ativo':
+            return False
+        if selected_status == 'encerrados' and lot.status != 'encerrado':
+            return False
+        if selected_unit_id:
+            current_unit_ids = {unit.id for unit in lot_current_units(lot)}
+            if selected_unit_id not in current_unit_ids and selected_unit_id != lot.unit_id:
+                return False
+        return True
+
+    filtered_lots = [lot for lot in all_lots if lot_matches_filters(lot)]
+    filtered_lot_ids = [lot.id for lot in filtered_lots]
+    active_lots = [lot for lot in filtered_lots if lot.status == 'ativo' and lot.start_date <= today and (lot.end_date is None or lot.end_date >= today)]
+    active_lot_ids = [lot.id for lot in active_lots]
+
+    if filtered_lot_ids:
+        mgmt_records = DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.lot)).filter(DailyManagement.lot_id.in_(filtered_lot_ids)).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()
+        water_records = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit), joinedload(WaterMonitoring.lot)).filter(WaterMonitoring.lot_id.in_(filtered_lot_ids)).order_by(WaterMonitoring.monitor_date.asc(), WaterMonitoring.monitor_time.asc(), WaterMonitoring.id.asc()).all()
+        nursery_records = NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot)).filter(NurseryFeeding.lot_id.in_(filtered_lot_ids)).order_by(NurseryFeeding.feed_date.asc(), NurseryFeeding.id.asc()).all()
+        sales_records = Sale.query.options(joinedload(Sale.unit), joinedload(Sale.lot)).filter(Sale.lot_id.in_(filtered_lot_ids)).order_by(Sale.sale_date.desc(), Sale.id.desc()).all()
+        transfer_records = Transfer.query.options(joinedload(Transfer.source_unit), joinedload(Transfer.destination_unit), joinedload(Transfer.source_lot)).filter(Transfer.source_lot_id.in_(filtered_lot_ids)).order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).all()
+        allocation_records = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit), joinedload(LotUnitAllocation.lot)).filter(LotUnitAllocation.lot_id.in_(filtered_lot_ids)).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
+    else:
+        mgmt_records = []
+        water_records = []
+        nursery_records = []
+        sales_records = []
+        transfer_records = []
+        allocation_records = []
+
+    records_by_lot = defaultdict(list)
+    for record in mgmt_records:
+        records_by_lot[record.lot_id].append(record)
+
+    allocation_records_today = [allocation for allocation in allocation_records if allocation.start_date <= today and (allocation.end_date is None or allocation.end_date >= today) and allocation.lot_id in active_lot_ids]
+    if selected_unit_id:
+        allocation_records_today = [allocation for allocation in allocation_records_today if allocation.unit_id == selected_unit_id]
+    allocations_by_lot = defaultdict(list)
+    for allocation in allocation_records_today:
+        allocations_by_lot[allocation.lot_id].append(allocation)
+
+    water_today_records = [record for record in water_records if record.monitor_date == today and (not selected_unit_id or record.unit_id == selected_unit_id)]
     water_today_unit_ids = {record.unit_id for record in water_today_records}
-    mgmt_today_unit_ids = {u for (u,) in db.session.query(DailyManagement.unit_id).filter(DailyManagement.manage_date == today).distinct().all()}
+    mgmt_today_records = [record for record in mgmt_records if record.manage_date == today and (not selected_unit_id or record.unit_id == selected_unit_id)]
+    mgmt_today_unit_ids = {record.unit_id for record in mgmt_today_records}
     water_alert_rows = build_water_alert_rows(water_today_records, config)
 
-    nursery_ready = []
     semaforo = []
-    for unit in units:
+    nursery_ready = []
+    active_unit_ids = {allocation.unit_id for allocation in allocation_records_today}
+    active_units = [unit for unit in all_units if unit.id in active_unit_ids]
+    for unit in active_units:
         lot = active_lot_for_unit(unit.id)
+        if lot and lot.id not in active_lot_ids:
+            continue
         water = latest_water(unit.id)
         mgmt = latest_mgmt(unit.id)
         status = 'verde'
@@ -1264,14 +2221,9 @@ def dashboard_data():
             if unit.phase == 'bercario':
                 days = (today - lot.start_date).days
                 if days >= TARGET_NURSERY_DAYS:
-                    nursery_ready.append({
-                        'unit_name': unit.name,
-                        'lot_code': lot.lot_code,
-                        'days': days,
-                        'start_date': lot.start_date,
-                    })
+                    nursery_ready.append({'unit_name': unit.name, 'lot_code': lot.lot_code, 'days': days, 'start_date': lot.start_date})
                     status = 'amarelo'
-                    reasons.append('pronto p/ transferência')
+                    reasons.append('pronto para transferência')
             current_water_status = water_status(water, config)
             if current_water_status != 'ok':
                 status = 'vermelho'
@@ -1287,27 +2239,247 @@ def dashboard_data():
         else:
             status = 'cinza'
             reasons.append('sem lote')
-        semaforo.append({
-            'unit': unit,
-            'lot': lot,
-            'status': status,
-            'water': water,
-            'mgmt': mgmt,
-            'reasons': ', '.join(dict.fromkeys(reasons)),
-        })
+        semaforo.append({'unit': unit, 'lot': lot, 'status': status, 'water': water, 'mgmt': mgmt, 'reasons': ', '.join(dict.fromkeys(reasons))})
 
     feed_snapshot = build_feed_stock_snapshot()
     total_stock = feed_snapshot['total_stock_kg']
-    avg_daily_feed = db.session.query(func.coalesce(func.avg(DailyManagement.feed_offered_kg), 0)).filter(
-        DailyManagement.manage_date >= today - timedelta(days=7)
-    ).scalar() or 0
+    avg_daily_feed = db.session.query(func.coalesce(func.avg(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.manage_date >= today - timedelta(days=7)).scalar() or 0
     feed_coverage = round(total_stock / avg_daily_feed, 1) if avg_daily_feed > 0 else None
+
+    latest_weight_map = {lot.id: latest_weight_for_lot(lot, records_by_lot) for lot in active_lots}
+    latest_biomass_map = {lot.id: latest_biomass_for_lot(lot, records_by_lot, allocations_by_lot) for lot in active_lots}
+    survival_map = {lot.id: survival_estimate_for_lot(lot, records_by_lot) for lot in active_lots}
+    weekly_growth_values = [value for value in (growth_weekly_pct(records_by_lot.get(lot.id, [])) for lot in active_lots) if value is not None]
+    avg_growth_weekly = round(sum(weekly_growth_values) / len(weekly_growth_values), 1) if weekly_growth_values else None
+    avg_weight = round(sum(value for value in latest_weight_map.values() if value is not None) / max(len([value for value in latest_weight_map.values() if value is not None]), 1), 1) if any(value is not None for value in latest_weight_map.values()) else None
+    avg_survival = round(sum(value for value in survival_map.values() if value is not None) / max(len([value for value in survival_map.values() if value is not None]), 1), 1) if any(value is not None for value in survival_map.values()) else None
+
+    total_feed_offered_active = round(sum(record.feed_offered_kg or 0 for record in mgmt_records if record.lot_id in active_lot_ids), 1)
+    total_biomass_active = round(sum(value for value in latest_biomass_map.values() if value is not None), 1)
+    partial_fcr = round(total_feed_offered_active / total_biomass_active, 2) if total_biomass_active > 0 else None
+
+    lot_summaries = [lot_financial_summary(lot) for lot in active_lots]
+    total_feed_cost = round(sum(summary['feed_cost'] for summary in lot_summaries), 2)
+    total_fixed_cost = round(sum(summary['fixed_cost'] for summary in lot_summaries), 2)
+    total_cost_active = round(sum(summary['total_cost'] for summary in lot_summaries), 2)
+    estimated_cost_per_kg = round(total_cost_active / total_biomass_active, 2) if total_biomass_active > 0 else None
+
+    sales_in_period = [sale for sale in sales_records if start_date <= sale.sale_date <= end_date and (not selected_unit_id or sale.unit_id == selected_unit_id)]
+    sales_summaries = [summary for summary in (sale_financial_summary(sale) for sale in sales_in_period) if summary]
+    total_revenue_period = round(sum(summary['revenue'] for summary in sales_summaries), 2)
+    total_profit_period = round(sum(summary['profit'] for summary in sales_summaries), 2)
+
+    nursery_today_records = [record for record in nursery_records if record.feed_date == today and (not selected_unit_id or record.unit_id == selected_unit_id)]
+    avg_intestinal_score = round(sum(record.intestinal_score or 0 for record in nursery_today_records) / len([record for record in nursery_today_records if record.intestinal_score is not None]), 1) if any(record.intestinal_score is not None for record in nursery_today_records) else None
+
+    latest_water_by_unit = {}
+    for record in sorted(water_records, key=lambda item: (item.monitor_date, item.monitor_time or time.min, item.id), reverse=True):
+        latest_water_by_unit.setdefault(record.unit_id, record)
+    latest_mgmt_by_unit = {}
+    for record in sorted(mgmt_records, key=lambda item: (item.manage_date, item.id), reverse=True):
+        latest_mgmt_by_unit.setdefault(record.unit_id, record)
+    latest_nursery_by_unit = {}
+    for record in sorted(nursery_records, key=lambda item: (item.feed_date, item.id), reverse=True):
+        latest_nursery_by_unit.setdefault(record.unit_id, record)
+
+    operation_rows = []
+    for unit in active_units[:8]:
+        lot = active_lot_for_unit(unit.id)
+        if not lot or lot.id not in active_lot_ids:
+            continue
+        water = latest_water_by_unit.get(unit.id)
+        mgmt = latest_mgmt_by_unit.get(unit.id)
+        nursery_feed = latest_nursery_by_unit.get(unit.id)
+        status_label = 'Normal'
+        if water and water_alerts_for_record(water, config):
+            status_label = 'Atenção'
+        elif not water or water.monitor_date != today or not mgmt or mgmt.manage_date != today:
+            status_label = 'Pendente'
+        operation_rows.append({
+            'unit_name': unit.name,
+            'lot_code': lot.lot_code,
+            'last_monitoring': f"{water.monitor_date.strftime('%d/%m')} {water.monitor_time.strftime('%H:%M') if water and water.monitor_time else ''}".strip() if water else '—',
+            'last_management': mgmt.manage_date.strftime('%d/%m') if mgmt else (nursery_feed.feed_date.strftime('%d/%m') if nursery_feed else '—'),
+            'consumption_today': round(sum(record.feed_offered_kg or 0 for record in mgmt_today_records if record.unit_id == unit.id), 1),
+            'status': status_label,
+        })
+
+    phase_growth_map = phase_growth_baselines()
+    phase_fcr_map = phase_fcr_baselines()
+    prediction_rows = [predict_lot_metrics(lot, records_by_lot, allocations_by_lot, phase_growth_map, phase_fcr_map, today) for lot in active_lots]
+    prediction_rows.sort(key=lambda row: (row['harvest_date'] or date.max, row['lot'].lot_code))
+    upcoming_harvest_count = sum(1 for row in prediction_rows if row['harvest_date'] and row['harvest_date'] <= today + timedelta(days=14))
+
+    financial_rows = []
+    for summary in lot_summaries:
+        lot = summary['lot']
+        biomass = latest_biomass_map.get(lot.id)
+        revenue_realized = lot_total_revenue(lot.id)
+        result_value = round(revenue_realized - summary['total_cost'], 2)
+        financial_rows.append({
+            'lot_code': lot.lot_code,
+            'cost_total': summary['total_cost'],
+            'biomass': biomass,
+            'cost_per_kg': round(summary['total_cost'] / biomass, 2) if biomass else None,
+            'result': result_value,
+        })
+    financial_rows.sort(key=lambda row: row['cost_total'], reverse=True)
+
+    biomass_unit_rows = []
+    for unit in active_units:
+        lot = active_lot_for_unit(unit.id)
+        if not lot or lot.id not in active_lot_ids:
+            continue
+        unit_biomass = None
+        latest_unit_mgmt = latest_mgmt_by_unit.get(unit.id)
+        if latest_unit_mgmt and latest_unit_mgmt.estimated_biomass_kg is not None:
+            unit_biomass = round(latest_unit_mgmt.estimated_biomass_kg, 1)
+        else:
+            allocation = next((allocation for allocation in allocations_by_lot.get(lot.id, []) if allocation.unit_id == unit.id), None)
+            if allocation and latest_weight_map.get(lot.id) is not None and allocation.quantity_allocated:
+                unit_biomass = round((allocation.quantity_allocated * latest_weight_map[lot.id]) / 1000, 1)
+        biomass_unit_rows.append({'unit_name': unit.name, 'biomass': unit_biomass or 0})
+    biomass_unit_rows.sort(key=lambda row: row['biomass'], reverse=True)
+
+    growth_alerts = []
+    for lot in active_lots:
+        weekly = growth_weekly_pct(records_by_lot.get(lot.id, []))
+        if weekly is not None and avg_growth_weekly is not None and weekly < (avg_growth_weekly * 0.75):
+            growth_alerts.append({'lot_code': lot.lot_code, 'value': weekly})
+
+    critical_alerts = []
+    for row in water_alert_rows[:3]:
+        critical_alerts.append({'level': 'high', 'text': f"{row['unit_name']} · {row['message']}"})
+    for record in sorted(nursery_today_records, key=lambda item: (item.intestinal_score or 99, item.unit.name if item.unit else '')):
+        if record.intestinal_score is not None and record.intestinal_score <= 1:
+            critical_alerts.append({'level': 'medium', 'text': f"{record.unit.name if record.unit else 'Berçário'} · score intestinal {record.intestinal_score}"})
+    for item in growth_alerts[:2]:
+        critical_alerts.append({'level': 'medium', 'text': f"{item['lot_code']} · crescimento {item['value']}% abaixo da curva esperada"})
+    if not critical_alerts:
+        critical_alerts.append({'level': 'ok', 'text': 'Nenhum alerta crítico identificado hoje.'})
+    critical_alerts = critical_alerts[:4]
+
+    pending_items = []
+    water_pending_count = sum(1 for item in semaforo if item['lot'] and item['unit'].id not in water_today_unit_ids)
+    management_pending_count = sum(1 for item in semaforo if item['lot'] and item['unit'].id not in mgmt_today_unit_ids)
+    if water_pending_count:
+        pending_items.append(f'{water_pending_count} unidade(s) sem monitoramento hoje')
+    if management_pending_count:
+        pending_items.append(f'{management_pending_count} unidade(s) sem manejo hoje')
+    if feed_snapshot['low_stock_count']:
+        pending_items.append(f"{feed_snapshot['low_stock_count']} item(ns) de ração com estoque baixo")
+    missing_supplier_count = sum(1 for lot in active_lots if not lot.larva_supplier)
+    if missing_supplier_count:
+        pending_items.append(f'{missing_supplier_count} lote(s) sem fornecedor de PL cadastrado')
+    if not pending_items:
+        pending_items.append('Operação sem pendências críticas no momento.')
+    pending_items = pending_items[:4]
+
+    movement_rows = []
+    for record in water_today_records[:5]:
+        movement_rows.append({'sort_key': datetime.combine(record.monitor_date, record.monitor_time or time.min), 'date_label': f"{record.monitor_date.strftime('%d/%m/%Y')} {record.monitor_time.strftime('%H:%M') if record.monitor_time else ''}".strip(), 'type': 'Monitoramento', 'entity': record.unit.name if record.unit else 'Unidade', 'user': 'Equipe', 'detail': f"OD {record.dissolved_oxygen or '—'} mg/L · Temp. {record.temperature_c or '—'} °C"})
+    for record in mgmt_today_records[:5]:
+        movement_rows.append({'sort_key': datetime.combine(record.manage_date, time(hour=8)), 'date_label': record.manage_date.strftime('%d/%m/%Y'), 'type': 'Manejo', 'entity': record.unit.name if record.unit else 'Unidade', 'user': 'Equipe', 'detail': f"Ração ofertada {round(record.feed_offered_kg or 0, 1)} kg"})
+    for record in nursery_today_records[:5]:
+        movement_rows.append({'sort_key': datetime.combine(record.feed_date, time(hour=7, minute=30)), 'date_label': record.feed_date.strftime('%d/%m/%Y'), 'type': 'Berçário', 'entity': record.unit.name if record.unit else 'Berçário', 'user': 'Equipe', 'detail': f"Quantidade {round(record.quantity_kg or 0, 1)} kg · score {record.intestinal_score if record.intestinal_score is not None else '—'}"})
+    for record in transfer_records[:3]:
+        movement_rows.append({'sort_key': datetime.combine(record.transfer_date, time(hour=7, minute=45)), 'date_label': record.transfer_date.strftime('%d/%m/%Y'), 'type': 'Transferência', 'entity': record.source_lot.lot_code if record.source_lot else 'Lote', 'user': 'Equipe', 'detail': f"{record.transferred_qty} un. para {record.destination_unit.name if record.destination_unit else 'destino'}"})
+    for record in sales_in_period[:3]:
+        movement_rows.append({'sort_key': datetime.combine(record.sale_date, time(hour=7, minute=30)), 'date_label': record.sale_date.strftime('%d/%m/%Y'), 'type': 'Despesca', 'entity': record.lot.lot_code if record.lot else 'Lote', 'user': 'Equipe', 'detail': f"{round(record.quantity_kg or 0, 1)} kg vendidos"})
+    movement_rows.sort(key=lambda row: row['sort_key'], reverse=True)
+    movement_rows = movement_rows[:6]
+
+    chart_colors = ['#3b82f6', '#22c55e', '#7c3aed', '#f97316']
+    growth_chart_labels = sorted({record.manage_date.strftime('%d/%m') for lot in active_lots[:4] for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None})[-6:]
+    growth_chart_datasets = []
+    for idx, lot in enumerate(active_lots[:4]):
+        lookup = {record.manage_date.strftime('%d/%m'): round(record.average_weight_g, 2) for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None}
+        if not lookup:
+            continue
+        growth_chart_datasets.append({'label': lot.lot_code, 'data': [lookup.get(label) for label in growth_chart_labels], 'borderColor': chart_colors[idx % len(chart_colors)], 'backgroundColor': chart_colors[idx % len(chart_colors)]})
+
+    chart_payload = {
+        'growth': {'labels': growth_chart_labels, 'datasets': growth_chart_datasets},
+        'biomass': {'labels': [row['unit_name'] for row in biomass_unit_rows[:6]], 'data': [row['biomass'] for row in biomass_unit_rows[:6]]},
+    }
+
+    prediction_table_rows = []
+    for row in prediction_rows[:6]:
+        prediction_table_rows.append({
+            'lot_code': row['lot'].lot_code,
+            'current_weight': row['current_weight'],
+            'predicted_7d': row['predicted_7d'],
+            'predicted_14d': row['predicted_14d'],
+            'predicted_survival': row['predicted_survival'],
+            'predicted_fcr': row['predicted_fcr'],
+            'harvest_date': row['harvest_date'],
+            'confidence': row['confidence'],
+        })
 
     return {
         'today': today,
-        'units': units,
-        'water_pending': sum(1 for s in semaforo if s['lot'] and s['unit'].id not in water_today_unit_ids),
-        'management_pending': sum(1 for s in semaforo if s['lot'] and s['unit'].id not in mgmt_today_unit_ids),
+        'start_date': start_date,
+        'end_date': end_date,
+        'filters': {
+            'lot_id': selected_lot_id,
+            'unit_id': selected_unit_id,
+            'phase': selected_phase,
+            'status': selected_status,
+            'supplier': selected_supplier,
+        },
+        'filter_options': {
+            'lots': all_lots,
+            'units': all_units,
+            'suppliers': supplier_options,
+        },
+        'summary': {
+            'lots_active': len(active_lots),
+            'units_active': len(active_units),
+            'biomass_estimated': total_biomass_active,
+            'feed_today': round(sum(record.feed_offered_kg or 0 for record in mgmt_today_records), 1),
+            'cost_accumulated': total_cost_active,
+            'revenue_period': total_revenue_period,
+            'result_period': total_profit_period,
+            'next_harvests': upcoming_harvest_count,
+        },
+        'alerts': critical_alerts,
+        'pendings': pending_items,
+        'operation': {
+            'feed_today': round(sum(record.feed_offered_kg or 0 for record in mgmt_today_records), 1),
+            'monitored_units': len(water_today_unit_ids),
+            'monitored_total': len(active_units),
+            'nursery_fed_count': len(nursery_today_records),
+            'avg_intestinal_score': avg_intestinal_score,
+            'rows': operation_rows,
+        },
+        'production': {
+            'avg_weight': avg_weight,
+            'weekly_growth_pct': avg_growth_weekly,
+            'avg_survival': avg_survival,
+            'partial_fcr': partial_fcr,
+            'biomass_rows': biomass_unit_rows,
+        },
+        'financial': {
+            'feed_cost': total_feed_cost,
+            'fixed_cost': total_fixed_cost,
+            'estimated_cost_per_kg': estimated_cost_per_kg,
+            'month_profit': total_profit_period,
+            'rows': financial_rows[:6],
+        },
+        'predictions': {
+            'avg_7d': round(sum(row['predicted_7d'] for row in prediction_rows if row['predicted_7d'] is not None) / max(len([row for row in prediction_rows if row['predicted_7d'] is not None]), 1), 1) if any(row['predicted_7d'] is not None for row in prediction_rows) else None,
+            'avg_14d': round(sum(row['predicted_14d'] for row in prediction_rows if row['predicted_14d'] is not None) / max(len([row for row in prediction_rows if row['predicted_14d'] is not None]), 1), 1) if any(row['predicted_14d'] is not None for row in prediction_rows) else None,
+            'avg_survival': round(sum(row['predicted_survival'] for row in prediction_rows if row['predicted_survival'] is not None) / max(len([row for row in prediction_rows if row['predicted_survival'] is not None]), 1), 1) if any(row['predicted_survival'] is not None for row in prediction_rows) else None,
+            'avg_fcr': round(sum(row['predicted_fcr'] for row in prediction_rows if row['predicted_fcr'] is not None) / max(len([row for row in prediction_rows if row['predicted_fcr'] is not None]), 1), 2) if any(row['predicted_fcr'] is not None for row in prediction_rows) else None,
+            'next_harvest_date': prediction_rows[0]['harvest_date'] if prediction_rows else None,
+            'avg_confidence': round(sum(row['confidence'] for row in prediction_rows) / len(prediction_rows), 0) if prediction_rows else None,
+            'rows': prediction_table_rows,
+        },
+        'movements': movement_rows,
+        'chart_payload': chart_payload,
+        'units': all_units,
+        'water_pending': water_pending_count,
+        'management_pending': management_pending_count,
         'water_alerts': len(water_alert_rows),
         'water_alert_rows': water_alert_rows,
         'nursery_ready': nursery_ready,
@@ -1358,6 +2530,7 @@ def logout():
 
 
 @app.route('/')
+@app.route('/dashboard')
 @login_required
 @requires_permission('dashboard')
 def index():
@@ -1426,6 +2599,7 @@ def update_water_reference_ranges():
         'od_min', 'od_max', 'ph_min', 'ph_max', 'temperature_min', 'temperature_max',
         'salinity_min', 'salinity_max', 'transparency_min', 'transparency_max',
         'ammonia_min', 'ammonia_max', 'nitrite_min', 'nitrite_max',
+        'nitrate_min', 'nitrate_max', 'alkalinity_min', 'alkalinity_max', 'hardness_min', 'hardness_max',
     ]
     for field in fields:
         setattr(config, field, parse_float(request.form.get(field)))
@@ -1440,54 +2614,104 @@ def update_water_reference_ranges():
 @login_required
 @requires_permission('units_view')
 def units_page():
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_unit = db.session.get(Unit, edit_id) if edit_id else None
     if request.method == 'POST':
         if not user_can_manage_units(current_user):
             abort(403)
+        form_mode = request.form.get('form_mode', 'create')
+        target = db.session.get(Unit, parse_int(request.form.get('unit_id'))) if form_mode == 'edit' else Unit()
+        if form_mode == 'edit' and not target:
+            flash('Unidade não encontrada para edição.', 'danger')
+            return redirect(url_for('units_page'))
         name = request.form.get('name', '').strip()
         if not name:
             flash('Informe o nome do viveiro/unidade.', 'danger')
             return redirect(url_for('units_page'))
         code = (request.form.get('code') or '').strip().upper() or suggest_unit_code(name)
-        if Unit.query.filter(func.lower(Unit.code) == code.lower()).first():
+        existing = Unit.query.filter(func.lower(Unit.code) == code.lower(), Unit.id != getattr(target, 'id', 0)).first()
+        if existing:
             flash('Já existe uma unidade com esse código.', 'danger')
-            return redirect(url_for('units_page'))
-        unit = Unit(
-            code=code,
-            name=name,
-            area_m2=float(request.form.get('area_m2') or 0),
-            phase=request.form.get('phase') or 'engorda',
-            structure_type=request.form.get('structure_type') or 'escavado',
-            active=bool(request.form.get('active', '1') == '1')
-        )
-        db.session.add(unit)
+            return redirect(url_for('units_page', edit_id=getattr(target, 'id', None)))
+        target.code = code
+        target.name = name
+        target.area_m2 = parse_float(request.form.get('area_m2'), 0) or 0
+        target.phase = request.form.get('phase') or 'engorda'
+        target.structure_type = request.form.get('structure_type') or 'escavado'
+        target.active = bool(request.form.get('active', '1') == '1')
+        if form_mode != 'edit':
+            db.session.add(target)
         db.session.commit()
-        flash('Unidade cadastrada com sucesso.', 'success')
+        flash('Unidade salva com sucesso.' if form_mode == 'edit' else 'Unidade cadastrada com sucesso.', 'success')
         return redirect(url_for('units_page'))
     units = Unit.query.order_by(Unit.phase, Unit.name).all()
-    return render_template('units.html', units=units)
+    return render_template('units.html', units=units, edit_unit=edit_unit)
 
 
 @app.route('/lots', methods=['GET', 'POST'])
 @login_required
 @requires_permission('lots_manage')
 def lots_page():
+    edit_lot_id = parse_int(request.args.get('edit_lot_id'))
+    edit_cost_id = parse_int(request.args.get('edit_cost_id'))
+    edit_lot = db.session.get(Lot, edit_lot_id) if edit_lot_id else None
+    edit_cost = db.session.get(FixedCost, edit_cost_id) if edit_cost_id else None
     if request.method == 'POST':
-        lot = Lot(
-            lot_code=request.form['lot_code'],
-            phase=request.form['phase'],
-            start_date=parse_date(request.form['start_date']),
-            unit_id=int(request.form['unit_id']),
-            initial_count=int(request.form['initial_count'] or 0),
-            estimated_weight_g=float(request.form['estimated_weight_g'] or 0),
-            notes=request.form.get('notes')
-        )
-        db.session.add(lot)
+        form_mode = request.form.get('form_mode', 'lot')
+        if form_mode in {'fixed_cost', 'edit_fixed_cost'}:
+            cost = db.session.get(FixedCost, parse_int(request.form.get('fixed_cost_id'))) if form_mode == 'edit_fixed_cost' else FixedCost()
+            if form_mode == 'edit_fixed_cost' and not cost:
+                flash('Custo fixo não encontrado.', 'warning')
+                return redirect(url_for('lots_page'))
+            cost.name = (request.form.get('name') or 'Funcionário').strip()
+            cost.monthly_amount = parse_float(request.form.get('monthly_amount'), 0) or 0
+            cost.start_date = parse_date(request.form.get('start_date'), date.today())
+            cost.end_date = parse_date(request.form.get('end_date')) if request.form.get('end_date') else None
+            cost.active = bool(request.form.get('active', '1') == '1')
+            cost.notes = request.form.get('notes')
+            if form_mode == 'fixed_cost':
+                db.session.add(cost)
+            db.session.commit()
+            flash('Custo fixo salvo com sucesso.', 'success')
+            return redirect(url_for('lots_page'))
+        if form_mode == 'close_lot':
+            lot = db.session.get(Lot, int(request.form['lot_id']))
+            if not lot:
+                flash('Lote não encontrado.', 'warning')
+                return redirect(url_for('lots_page'))
+            close_date = parse_date(request.form.get('end_date'), date.today())
+            close_lot(lot, close_date, reason='encerrado_manual')
+            db.session.commit()
+            flash('Lote encerrado manualmente.', 'success')
+            return redirect(url_for('lots_page'))
+        lot = db.session.get(Lot, parse_int(request.form.get('lot_id'))) if form_mode == 'edit_lot' else Lot()
+        if form_mode == 'edit_lot' and not lot:
+            flash('Lote não encontrado para edição.', 'warning')
+            return redirect(url_for('lots_page'))
+        lot.lot_code = (request.form['lot_code'] or '').strip().upper()
+        lot.phase = request.form['phase']
+        lot.start_date = parse_date(request.form['start_date'])
+        lot.unit_id = int(request.form['unit_id'])
+        lot.initial_count = int(request.form['initial_count'] or 0)
+        lot.estimated_weight_g = parse_float(request.form.get('estimated_weight_g'), 0) or 0
+        lot.status = request.form.get('status') or lot.status or 'ativo'
+        lot.larva_supplier = (request.form.get('larva_supplier') or '').strip() or None
+        lot.entry_pl_stage = parse_int(request.form.get('entry_pl_stage'))
+        lot.notes = request.form.get('notes')
+        if lot.status == 'encerrado' and request.form.get('end_date'):
+            lot.end_date = parse_date(request.form.get('end_date'))
+        if form_mode != 'edit_lot':
+            db.session.add(lot)
+            db.session.flush()
+            db.session.add(LotUnitAllocation(lot_id=lot.id, unit_id=lot.unit_id, start_date=lot.start_date, quantity_allocated=lot.initial_count, notes='Alocação inicial do lote.'))
         db.session.commit()
-        flash('Lote cadastrado.', 'success')
+        flash('Lote salvo com sucesso.' if form_mode == 'edit_lot' else 'Lote cadastrado.', 'success')
         return redirect(url_for('lots_page'))
-    lots = Lot.query.order_by(Lot.start_date.desc()).all()
+    lots = Lot.query.order_by(Lot.start_date.desc(), Lot.id.desc()).all()
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
-    return render_template('lots.html', lots=lots, units=units)
+    fixed_costs = FixedCost.query.order_by(FixedCost.start_date.desc(), FixedCost.id.desc()).all()
+    lot_summaries = [lot_financial_summary(lot) for lot in lots]
+    return render_template('lots.html', lots=lots, units=units, fixed_costs=fixed_costs, lot_summaries=lot_summaries, today=date.today(), lot_current_units=lot_current_units, edit_lot=edit_lot, edit_cost=edit_cost)
 
 
 @app.post('/water/import-sheet')
@@ -1608,8 +2832,8 @@ def water_page():
     if request.method == 'POST':
         mode = request.form.get('entry_mode', 'single')
         unit_id = int(request.form['unit_id'])
-        lot = active_lot_for_unit(unit_id)
         monitor_date = parse_date(request.form.get('monitor_date'), date.today())
+        lot = active_lot_for_unit(unit_id, on_date=monitor_date)
 
         if mode == 'batch':
             slot_times = request.form.getlist('slot_time')
@@ -1620,11 +2844,14 @@ def water_page():
             transparencies = parse_multi_float_list(request.form.getlist('transparency_cm'))
             ammonias = parse_multi_float_list(request.form.getlist('ammonia'))
             nitrites = parse_multi_float_list(request.form.getlist('nitrite'))
+            nitrates = parse_multi_float_list(request.form.getlist('nitrate'))
+            alkalinities = parse_multi_float_list(request.form.getlist('alkalinity'))
+            hardness_values = parse_multi_float_list(request.form.getlist('hardness'))
             observations = request.form.getlist('observation')
 
             created = 0
             for idx, slot in enumerate(slot_times):
-                values = [temperatures[idx], oxygens[idx], ph_values[idx], salinities[idx], transparencies[idx], ammonias[idx], nitrites[idx], (observations[idx] or '').strip()]
+                values = [temperatures[idx], oxygens[idx], ph_values[idx], salinities[idx], transparencies[idx], ammonias[idx], nitrites[idx], nitrates[idx], alkalinities[idx], hardness_values[idx], (observations[idx] or '').strip()]
                 has_data = any(v not in (None, '') for v in values)
                 if not has_data:
                     continue
@@ -1642,6 +2869,9 @@ def water_page():
                     transparency_cm=transparencies[idx],
                     ammonia=ammonias[idx],
                     nitrite=nitrites[idx],
+                    nitrate=nitrates[idx],
+                    alkalinity=alkalinities[idx],
+                    hardness=hardness_values[idx],
                     observation=(observations[idx] or '').strip() or None,
                 )
                 db.session.add(rec)
@@ -1668,6 +2898,9 @@ def water_page():
             transparency_cm=parse_float(request.form.get('transparency_cm')),
             ammonia=parse_float(request.form.get('ammonia')),
             nitrite=parse_float(request.form.get('nitrite')),
+            nitrate=parse_float(request.form.get('nitrate')),
+            alkalinity=parse_float(request.form.get('alkalinity')),
+            hardness=parse_float(request.form.get('hardness')),
             observation=request.form.get('observation')
         )
         db.session.add(rec)
@@ -1726,7 +2959,8 @@ def water_page():
 def management_page():
     if request.method == 'POST':
         unit_id = int(request.form['unit_id'])
-        lot = active_lot_for_unit(unit_id)
+        manage_date = parse_date(request.form['manage_date'], date.today())
+        lot = active_lot_for_unit(unit_id, on_date=manage_date)
         feed_product = selected_feed_product_from_form()
         feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
         feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
@@ -1739,7 +2973,7 @@ def management_page():
             return redirect(url_for('management_page', unit_id=unit_id))
 
         rec = DailyManagement(
-            manage_date=parse_date(request.form['manage_date'], date.today()),
+            manage_date=manage_date,
             unit_id=unit_id,
             lot_id=lot.id if lot else None,
             feed_product_id=feed_product.id if feed_product else None,
@@ -1825,8 +3059,8 @@ def edit_water_record(record_id):
         flash('Registro de água não encontrado.', 'warning')
         return redirect(url_for('water_page'))
     unit_id = int(request.form['unit_id'])
-    lot = active_lot_for_unit(unit_id)
     rec.monitor_date = parse_date(request.form['monitor_date'], rec.monitor_date)
+    lot = active_lot_for_unit(unit_id, on_date=rec.monitor_date)
     rec.shift = request.form['shift']
     rec.monitor_time = parse_time(request.form.get('monitor_time'))
     rec.unit_id = unit_id
@@ -1838,6 +3072,9 @@ def edit_water_record(record_id):
     rec.transparency_cm = parse_float(request.form.get('transparency_cm'))
     rec.ammonia = parse_float(request.form.get('ammonia'))
     rec.nitrite = parse_float(request.form.get('nitrite'))
+    rec.nitrate = parse_float(request.form.get('nitrate'))
+    rec.alkalinity = parse_float(request.form.get('alkalinity'))
+    rec.hardness = parse_float(request.form.get('hardness'))
     rec.observation = request.form.get('observation')
     db.session.commit()
     flash('Registro de água atualizado.', 'success')
@@ -1854,7 +3091,8 @@ def edit_management_record(record_id):
         return redirect(url_for('management_page'))
 
     unit_id = int(request.form['unit_id'])
-    lot = active_lot_for_unit(unit_id)
+    new_manage_date = parse_date(request.form['manage_date'], rec.manage_date)
+    lot = active_lot_for_unit(unit_id, on_date=new_manage_date)
     feed_product = selected_feed_product_from_form()
     feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
     feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
@@ -1869,7 +3107,7 @@ def edit_management_record(record_id):
         flash(validation_error, 'danger')
         return redirect(request.referrer or url_for('management_page'))
 
-    rec.manage_date = parse_date(request.form['manage_date'], rec.manage_date)
+    rec.manage_date = new_manage_date
     rec.unit_id = unit_id
     rec.lot_id = lot.id if lot else None
     rec.feed_product_id = feed_product.id if feed_product else None
@@ -2119,7 +3357,7 @@ def protocols_page():
     category_filter = (request.args.get('category') or '').strip()
     protocols_query = ProtocolDocument.query
     if search:
-        protocols_query = protocols_query.filter(db.or_(
+        protocols_query = protocols_query.filter(or_(
             ProtocolDocument.title.ilike(f'%{search}%'),
             ProtocolDocument.category.ilike(f'%{search}%'),
             ProtocolDocument.notes.ilike(f'%{search}%'),
@@ -2233,7 +3471,7 @@ def farm_documents_page():
     category_filter = (request.args.get('category') or '').strip()
     documents_query = FarmDocument.query
     if search:
-        documents_query = documents_query.filter(db.or_(
+        documents_query = documents_query.filter(or_(
             FarmDocument.title.ilike(f'%{search}%'),
             FarmDocument.category.ilike(f'%{search}%'),
             FarmDocument.notes.ilike(f'%{search}%'),
@@ -2298,117 +3536,119 @@ def delete_farm_document(document_id):
 @login_required
 @requires_permission('transfers_manage')
 def transfers_page():
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_transfer = db.session.get(Transfer, edit_id) if edit_id else None
     if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'create')
+        transfer_date = parse_date(request.form['transfer_date'], date.today())
         src_id = int(request.form['source_unit_id'])
-        src_lot = active_lot_for_unit(src_id)
-        if not src_lot and not request.form.get('source_lot_id'):
+        source_lot_id = int(request.form['source_lot_id']) if request.form.get('source_lot_id') else None
+        src_lot = db.session.get(Lot, source_lot_id) if source_lot_id else active_lot_for_unit(src_id, on_date=transfer_date)
+        if not src_lot:
             flash('Selecione um lote de origem válido.', 'danger')
             return redirect(url_for('transfers_page'))
-        tr = Transfer(
-            transfer_date=parse_date(request.form['transfer_date'], date.today()),
-            source_unit_id=src_id,
-            destination_unit_id=int(request.form['destination_unit_id']),
-            source_lot_id=src_lot.id if src_lot else int(request.form['source_lot_id']),
-            destination_lot_code=request.form['destination_lot_code'],
-            transferred_qty=int(request.form['transferred_qty']),
-            avg_weight_g=float(request.form['avg_weight_g']) if request.form.get('avg_weight_g') else None,
-            notes=request.form.get('notes')
-        )
+        destination_unit_id = int(request.form['destination_unit_id'])
+        transferred_qty = int(request.form['transferred_qty'])
+        if form_mode == 'edit':
+            tr = db.session.get(Transfer, parse_int(request.form.get('transfer_id')))
+            if not tr:
+                flash('Transferência não encontrada.', 'warning')
+                return redirect(url_for('transfers_page'))
+            tr.transfer_date = transfer_date
+            tr.source_unit_id = src_id
+            tr.destination_unit_id = destination_unit_id
+            tr.source_lot_id = src_lot.id
+            tr.destination_lot_code = src_lot.lot_code
+            tr.transferred_qty = transferred_qty
+            tr.avg_weight_g = parse_float(request.form.get('avg_weight_g'))
+            tr.notes = request.form.get('notes')
+            db.session.commit()
+            flash('Transferência atualizada.', 'success')
+            return redirect(url_for('transfers_page'))
+        existing_allocation = LotUnitAllocation.query.filter(LotUnitAllocation.lot_id == src_lot.id, LotUnitAllocation.unit_id == destination_unit_id, LotUnitAllocation.start_date <= transfer_date, or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date)).first()
+        if not existing_allocation:
+            db.session.add(LotUnitAllocation(lot_id=src_lot.id, unit_id=destination_unit_id, start_date=transfer_date, quantity_allocated=transferred_qty, notes='Transferência bifásica.'))
+        else:
+            existing_allocation.quantity_allocated = (existing_allocation.quantity_allocated or 0) + transferred_qty
+        tr = Transfer(transfer_date=transfer_date, source_unit_id=src_id, destination_unit_id=destination_unit_id, source_lot_id=src_lot.id, destination_lot_code=src_lot.lot_code, transferred_qty=transferred_qty, avg_weight_g=parse_float(request.form.get('avg_weight_g')), notes=request.form.get('notes'))
         db.session.add(tr)
+        allocation = LotUnitAllocation.query.filter(LotUnitAllocation.lot_id == src_lot.id, LotUnitAllocation.unit_id == src_id, LotUnitAllocation.start_date <= transfer_date, or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date)).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
+        if allocation:
+            remaining_qty = max((allocation.quantity_allocated or 0) - transferred_qty, 0)
+            if request.form.get('close_source_allocation') == '1' or remaining_qty == 0:
+                allocation.end_date = transfer_date
+            allocation.quantity_allocated = remaining_qty
         db.session.commit()
-        flash('Transferência registrada.', 'success')
+        flash('Transferência registrada. O mesmo lote agora pode seguir em múltiplos viveiros.', 'success')
         return redirect(url_for('transfers_page'))
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
     rows = Transfer.query.order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).limit(50).all()
-    return render_template('transfers.html', units=units, lots=lots, rows=rows, today=date.today())
+    return render_template('transfers.html', units=units, lots=lots, rows=rows, today=date.today(), edit_transfer=edit_transfer)
 
 
 @app.route('/feed', methods=['GET', 'POST'])
 @login_required
 @requires_permission('feed_manage')
 def feed_page():
+    edit_product_id = parse_int(request.args.get('edit_product_id'))
+    edit_movement_id = parse_int(request.args.get('edit_movement_id'))
+    edit_product = db.session.get(FeedProduct, edit_product_id) if edit_product_id else None
+    edit_movement = db.session.get(FeedInventory, edit_movement_id) if edit_movement_id else None
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'movement')
-        if form_mode == 'product':
+        if form_mode in {'product', 'edit_product'}:
+            product = db.session.get(FeedProduct, parse_int(request.form.get('product_id'))) if form_mode == 'edit_product' else FeedProduct(active=True)
+            if form_mode == 'edit_product' and not product:
+                flash('Produto de ração não encontrado.', 'warning')
+                return redirect(url_for('feed_page'))
             brand = (request.form.get('brand') or '').strip()
             feed_type = (request.form.get('feed_type') or '').strip()
             if not brand or not feed_type:
                 flash('Informe marca e tipo da ração para cadastrar o produto.', 'danger')
                 return redirect(url_for('feed_page'))
-
-            existing = FeedProduct.query.filter(
-                func.lower(FeedProduct.brand) == brand.lower(),
-                func.lower(FeedProduct.feed_type) == feed_type.lower(),
-            ).first()
-            if existing:
-                flash('Já existe uma ração cadastrada com essa marca e tipo.', 'warning')
-                return redirect(url_for('feed_page'))
-
-            product = FeedProduct(
-                brand=brand,
-                feed_type=feed_type,
-                protein_pct=parse_float(request.form.get('protein_pct')),
-                pellet_size_mm=parse_float(request.form.get('pellet_size_mm')),
-                minimum_stock_kg=parse_float(request.form.get('minimum_stock_kg'), 0) or 0,
-                notes=request.form.get('product_notes'),
-                active=True,
-            )
-            db.session.add(product)
+            product.brand = brand
+            product.feed_type = feed_type
+            product.protein_pct = parse_float(request.form.get('protein_pct'))
+            product.pellet_size_mm = parse_float(request.form.get('pellet_size_mm'))
+            product.minimum_stock_kg = parse_float(request.form.get('minimum_stock_kg'), 0) or 0
+            product.notes = request.form.get('product_notes')
+            if form_mode != 'edit_product':
+                db.session.add(product)
             db.session.commit()
-            flash('Produto de ração cadastrado com sucesso.', 'success')
+            flash('Produto de ração salvo com sucesso.', 'success')
             return redirect(url_for('feed_page'))
-
         feed_product_id = parse_int(request.form.get('feed_product_id'))
         feed_product = db.session.get(FeedProduct, feed_product_id) if feed_product_id else None
         if not feed_product:
             flash('Selecione a ração que será movimentada.', 'danger')
             return redirect(url_for('feed_page'))
-
         movement_type = request.form['movement_type']
         quantity_kg = parse_float(request.form.get('quantity_kg'))
         if quantity_kg is None or quantity_kg <= 0:
             flash('Informe uma quantidade válida em kg.', 'danger')
             return redirect(url_for('feed_page'))
-
-        if movement_type == 'saida':
-            available_stock = available_stock_for_product(feed_product.id)
-            if quantity_kg > available_stock:
-                flash(f'Estoque insuficiente para {feed_product.full_name}. Disponível: {round(available_stock, 1)} kg.', 'danger')
-                return redirect(url_for('feed_page'))
-
-        row = FeedInventory(
-            movement_date=parse_date(request.form['movement_date'], date.today()),
-            feed_name=feed_product.full_name,
-            feed_product_id=feed_product.id,
-            movement_type=movement_type,
-            quantity_kg=quantity_kg,
-            unit_cost=parse_float(request.form.get('unit_cost')),
-            notes=request.form.get('notes'),
-            source_type='manual',
-            created_by_id=getattr(current_user, 'id', None),
-        )
-        db.session.add(row)
+        row = db.session.get(FeedInventory, parse_int(request.form.get('movement_id'))) if form_mode == 'edit_movement' else FeedInventory(source_type='manual', created_by_id=getattr(current_user, 'id', None))
+        if form_mode == 'edit_movement' and not row:
+            flash('Movimentação não encontrada.', 'warning')
+            return redirect(url_for('feed_page'))
+        row.movement_date = parse_date(request.form['movement_date'], date.today())
+        row.feed_name = feed_product.full_name
+        row.feed_product_id = feed_product.id
+        row.movement_type = movement_type
+        row.quantity_kg = quantity_kg
+        row.unit_cost = parse_float(request.form.get('unit_cost'))
+        row.notes = request.form.get('notes')
+        if form_mode != 'edit_movement':
+            db.session.add(row)
         db.session.commit()
-        flash('Movimentação de ração lançada.', 'success')
+        flash('Movimentação de ração salva.', 'success')
         return redirect(url_for('feed_page'))
-
     snapshot = build_feed_stock_snapshot()
     rows = FeedInventory.query.options(joinedload(FeedInventory.feed_product), joinedload(FeedInventory.unit), joinedload(FeedInventory.lot)).order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).limit(80).all()
     feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
     stock_by_product = {row['product'].id: row['stock_kg'] for row in snapshot['rows']}
-    return render_template(
-        'feed.html',
-        rows=rows,
-        today=date.today(),
-        total_stock=snapshot['total_stock_kg'],
-        snapshot_rows=snapshot['rows'],
-        low_stock_count=snapshot['low_stock_count'],
-        active_product_count=snapshot['active_product_count'],
-        feed_products=feed_products,
-        stock_by_product=stock_by_product,
-        movement_origin_label=movement_origin_label,
-    )
+    return render_template('feed.html', rows=rows, today=date.today(), total_stock=snapshot['total_stock_kg'], snapshot_rows=snapshot['rows'], low_stock_count=snapshot['low_stock_count'], active_product_count=snapshot['active_product_count'], feed_products=feed_products, stock_by_product=stock_by_product, movement_origin_label=movement_origin_label, edit_product=edit_product, edit_movement=edit_movement)
 
 
 @app.post('/feed/products/<int:product_id>/toggle')
@@ -2425,30 +3665,234 @@ def toggle_feed_product(product_id):
     return redirect(url_for('feed_page'))
 
 
+@app.post('/feed/products/<int:product_id>/delete')
+@login_required
+@requires_permission('feed_manage')
+def delete_feed_product(product_id):
+    product = db.session.get(FeedProduct, product_id)
+    if not product:
+        flash('Produto de ração não encontrado.', 'warning')
+        return redirect(url_for('feed_page'))
+
+    has_movements = FeedInventory.query.filter_by(feed_product_id=product.id).count() > 0
+    has_management = DailyManagement.query.filter_by(feed_product_id=product.id).count() > 0
+
+    if has_movements or has_management:
+        canonical = find_or_create_nursery_feed_product(product.full_name, exclude_product_id=product.id, create_missing=False)
+        if canonical:
+            for movement in FeedInventory.query.filter_by(feed_product_id=product.id).all():
+                movement.feed_product_id = canonical.id
+                movement.feed_name = canonical.full_name
+            for record in DailyManagement.query.filter_by(feed_product_id=product.id).all():
+                record.feed_product_id = canonical.id
+            db.session.delete(product)
+            flash(f'Produto duplicado removido. O histórico foi transferido para {canonical.full_name}.', 'success')
+        else:
+            product.active = False
+            flash('Este produto tem histórico vinculado e não encontrei outro produto compatível para unir. Ele foi inativado para preservar os relatórios.', 'warning')
+    else:
+        db.session.delete(product)
+        flash('Produto de ração excluído.', 'success')
+
+    db.session.commit()
+    return redirect(url_for('feed_page'))
+
+
+@app.route('/nursery-feed', methods=['GET', 'POST'])
+@login_required
+@requires_permission('management_manage')
+def nursery_feed_page():
+    selected_date = parse_date(request.args.get('feed_date'), date.today())
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_entry = db.session.get(NurseryFeeding, edit_id) if edit_id else None
+    nursery_units = Unit.query.filter_by(active=True, phase='bercario').order_by(Unit.name).all()
+
+    if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'create')
+        entry = db.session.get(NurseryFeeding, parse_int(request.form.get('entry_id'))) if form_mode == 'edit' else NurseryFeeding()
+        if form_mode == 'edit' and not entry:
+            flash('Registro de alimentação de berçário não encontrado.', 'warning')
+            return redirect(url_for('nursery_feed_page'))
+
+        entry.feed_date = parse_date(request.form['feed_date'])
+        entry.unit_id = int(request.form['unit_id'])
+        active_lot = active_lot_for_unit(entry.unit_id, on_date=entry.feed_date)
+        entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
+        submitted_quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
+        entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
+        if entry.intestinal_score is not None and entry.lot_id:
+            lot_for_plan = db.session.get(Lot, entry.lot_id)
+            unit_for_plan = db.session.get(Unit, entry.unit_id)
+            adjusted_plan = build_nursery_protocol_for_date(lot_for_plan, unit_for_plan, target_date=entry.feed_date, intestinal_score=entry.intestinal_score)
+            entry.quantity_kg = adjusted_plan['total_day_kg'] if adjusted_plan else submitted_quantity_kg
+        else:
+            entry.quantity_kg = submitted_quantity_kg
+        entry.notes = request.form.get('notes')
+        entry.updated_at = datetime.utcnow()
+        if form_mode != 'edit':
+            db.session.add(entry)
+        db.session.flush()
+        sync_nursery_feed_to_management(entry)
+        db.session.commit()
+        flash('Alimentação de berçário salva e integrada ao manejo diário.', 'success')
+        return redirect(url_for('nursery_feed_page', feed_date=entry.feed_date.isoformat()))
+
+    entries = NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot)).order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc()).limit(60).all()
+    plans = build_nursery_digest_for_date(selected_date)
+    entry_by_unit_id = {entry.unit_id: entry for entry in NurseryFeeding.query.filter_by(feed_date=selected_date).all()}
+    for plan in plans:
+        plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
+    combined_message = '\n\n'.join(plan['message_text'] for plan in plans)
+    return render_template('nursery_feed.html', today=date.today(), selected_date=selected_date, nursery_units=nursery_units, entries=entries, edit_entry=edit_entry, plans=plans, combined_message=combined_message)
+
+
+
+@app.post('/nursery-feed/<int:entry_id>/delete')
+@login_required
+@requires_permission('management_manage')
+def delete_nursery_feed_entry(entry_id):
+    entry = db.session.get(NurseryFeeding, entry_id)
+    if not entry:
+        flash('Registro de alimentação de berçário não encontrado.', 'warning')
+        return redirect(request.referrer or url_for('nursery_feed_page'))
+    feed_date = entry.feed_date
+    delete_nursery_management_records(entry)
+    db.session.delete(entry)
+    db.session.commit()
+    flash('Lançamento do berçário excluído e removido do manejo diário.', 'success')
+    return redirect(url_for('nursery_feed_page', feed_date=feed_date.isoformat()))
+
+
+@app.get('/api/nursery-feed-digest')
+def nursery_feed_digest_api():
+    token = os.getenv('NURSERY_DIGEST_TOKEN', '').strip()
+    provided = (request.headers.get('X-Nursery-Token') or request.args.get('token') or '').strip()
+    if token and provided != token:
+        return jsonify({'ok': False, 'message': 'Token inválido.'}), 403
+
+    target_date = parse_date(request.args.get('feed_date'), date.today())
+    plans = build_nursery_digest_for_date(target_date)
+    return jsonify({
+        'ok': True,
+        'feed_date': target_date.isoformat(),
+        'count': len(plans),
+        'messages': [
+            {
+                'unit': plan['unit'].name,
+                'lot': plan['lot'].lot_code,
+                'text': plan['message_text'],
+            }
+            for plan in plans
+        ],
+        'combined_message': '\n\n'.join(plan['message_text'] for plan in plans),
+    })
+
 @app.route('/sales', methods=['GET', 'POST'])
 @login_required
 @requires_permission('sales_manage')
 def sales_page():
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_sale = db.session.get(Sale, edit_id) if edit_id else None
     if request.method == 'POST':
-        sale = Sale(
-            sale_date=parse_date(request.form['sale_date'], date.today()),
-            unit_id=int(request.form['unit_id']) if request.form.get('unit_id') else None,
-            lot_id=int(request.form['lot_id']) if request.form.get('lot_id') else None,
-            client_name=request.form['client_name'],
-            channel=request.form['channel'],
-            quantity_kg=float(request.form['quantity_kg']),
-            unit_price=float(request.form['unit_price']),
-            notes=request.form.get('notes')
-        )
-        db.session.add(sale)
+        form_mode = request.form.get('form_mode', 'create')
+        sale_date = parse_date(request.form['sale_date'], date.today())
+        unit_id = int(request.form['unit_id']) if request.form.get('unit_id') else None
+        lot_id = int(request.form['lot_id']) if request.form.get('lot_id') else None
+        if unit_id and not lot_id:
+            allocation = active_lot_allocation_for_unit(unit_id, on_date=sale_date)
+            lot_id = allocation.lot_id if allocation else None
+        if lot_id and unit_id is None:
+            current_units = lot_current_units(db.session.get(Lot, lot_id), on_date=sale_date)
+            if len(current_units) == 1:
+                unit_id = current_units[0].id
+        average_weight_g = parse_float(request.form.get('average_weight_g'))
+        harvested_units = parse_int(request.form.get('harvested_units'))
+        quantity_kg = parse_float(request.form['quantity_kg'], 0) or 0
+        if harvested_units is None and average_weight_g:
+            harvested_units = int(round((quantity_kg * 1000) / average_weight_g)) if average_weight_g else None
+        sale = db.session.get(Sale, parse_int(request.form.get('sale_id'))) if form_mode == 'edit' else Sale()
+        if form_mode == 'edit' and not sale:
+            flash('Registro de despesca não encontrado.', 'warning')
+            return redirect(url_for('sales_page'))
+        sale.sale_date = sale_date
+        sale.unit_id = unit_id
+        sale.lot_id = lot_id
+        sale.client_name = request.form['client_name']
+        sale.channel = request.form['channel']
+        sale.quantity_kg = quantity_kg
+        sale.unit_price = parse_float(request.form['unit_price'], 0) or 0
+        sale.average_weight_g = average_weight_g
+        sale.harvested_units = harvested_units
+        sale.notes = request.form.get('notes')
+        if form_mode != 'edit':
+            db.session.add(sale)
+            if lot_id and unit_id and request.form.get('close_unit_after_sale', '1') == '1':
+                allocation = find_active_allocation(lot_id, unit_id, sale_date)
+                if allocation:
+                    allocation.end_date = sale_date
+                    allocation.quantity_allocated = 0
+                remaining = LotUnitAllocation.query.filter(LotUnitAllocation.lot_id == lot_id, LotUnitAllocation.start_date <= sale_date, or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date > sale_date)).count()
+                if remaining == 0:
+                    lot = db.session.get(Lot, lot_id)
+                    if lot:
+                        close_lot(lot, sale_date, reason='despesca_venda')
+            elif lot_id and request.form.get('close_lot_after_sale', '0') == '1':
+                lot = db.session.get(Lot, lot_id)
+                if lot:
+                    close_lot(lot, sale_date, reason='despesca_venda')
         db.session.commit()
-        flash('Venda registrada.', 'success')
+        flash('Despesca/venda salva com sucesso.', 'success')
         return redirect(url_for('sales_page'))
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     lots = Lot.query.order_by(Lot.start_date.desc()).all()
-    rows = Sale.query.order_by(Sale.sale_date.desc(), Sale.id.desc()).limit(50).all()
+    rows = Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc(), Sale.id.desc()).limit(50).all()
+    row_summaries = [summary for sale in rows if (summary := sale_financial_summary(sale))]
     total_revenue = db.session.query(func.coalesce(func.sum(Sale.quantity_kg * Sale.unit_price), 0)).scalar() or 0
-    return render_template('sales.html', units=units, lots=lots, rows=rows, today=date.today(), total_revenue=total_revenue)
+    selected_summary = row_summaries[0] if row_summaries else None
+    return render_template('sales.html', units=units, lots=lots, rows=rows, row_summaries=row_summaries, today=date.today(), total_revenue=total_revenue, edit_sale=edit_sale, selected_summary=selected_summary)
+
+
+@app.get('/sales/export-history.xlsx')
+@login_required
+@requires_permission('sales_manage')
+def export_sales_history():
+    rows = Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.asc(), Sale.id.asc()).all()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Historico despesca'
+    headers = [
+        'Data', 'Lote', 'Viveiro', 'Cliente', 'Canal', 'Qtd kg', 'Preco kg', 'Faturamento',
+        'Peso medio g', 'Unidades despescadas', 'Custo racao viveiro', 'Custo fixo viveiro',
+        'Custo total viveiro', 'Resultado', 'Status', 'FCR real lote', 'Sobrevivencia lote %'
+    ]
+    ws.append(headers)
+    for sale in rows:
+        summary = sale_financial_summary(sale)
+        if not summary:
+            continue
+        ws.append([
+            sale.sale_date.strftime('%d/%m/%Y') if sale.sale_date else '',
+            sale.lot.lot_code if sale.lot else '',
+            sale.unit.name if sale.unit else '',
+            sale.client_name,
+            sale.channel,
+            sale.quantity_kg,
+            sale.unit_price,
+            summary['revenue'],
+            sale.average_weight_g,
+            summary['harvested_units'],
+            summary['feed_cost'],
+            summary['fixed_cost'],
+            summary['total_cost'],
+            summary['profit'],
+            summary['status'],
+            summary['fcr_real'],
+            summary['survival_pct'],
+        ])
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name='historico_despesca_lotes.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @app.route('/users', methods=['GET', 'POST'])
