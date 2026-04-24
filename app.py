@@ -907,6 +907,32 @@ def nursery_score_factor_label(factor):
     return 'sem ajuste'
 
 
+def nursery_cumulative_adjustments(lot_id: int | None, target_date: date):
+    if not lot_id or not target_date:
+        return {'factor': 1.0, 'events': []}
+
+    records = NurseryFeeding.query.filter(
+        NurseryFeeding.lot_id == lot_id,
+        NurseryFeeding.feed_date < target_date,
+        NurseryFeeding.intestinal_score.isnot(None),
+    ).order_by(NurseryFeeding.feed_date.asc(), NurseryFeeding.id.asc()).all()
+
+    cumulative_factor = 1.0
+    events = []
+    for record in records:
+        daily_factor = nursery_score_factor(record.intestinal_score)
+        cumulative_factor *= daily_factor
+        events.append({
+            'date': record.feed_date,
+            'score': record.intestinal_score,
+            'factor': daily_factor,
+            'factor_label': nursery_score_factor_label(daily_factor),
+            'cumulative_factor': cumulative_factor,
+            'cumulative_label': nursery_score_factor_label(cumulative_factor),
+        })
+    return {'factor': cumulative_factor, 'events': events}
+
+
 def build_even_schedule(total_day_g: int, feedings_per_day: int):
     if not feedings_per_day or total_day_g <= 0:
         return []
@@ -1046,7 +1072,7 @@ def scale_nursery_mixes(mixes, quantity_kg):
     return [item for item in scaled if item['grams'] > 0]
 
 
-def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, intestinal_score=None):
+def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, cumulative_factor=1.0, correction_events=None):
     target_date = target_date or date.today()
     if not lot or not unit or not lot.start_date or lot.entry_pl_stage is None:
         return None
@@ -1063,8 +1089,9 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         return int(round((value or 0) * factor))
 
     base_total_day_g = scaled(row['total_day_g'])
-    correction_factor = nursery_score_factor(intestinal_score)
+    correction_factor = cumulative_factor or 1.0
     correction_label = nursery_score_factor_label(correction_factor)
+    correction_events = correction_events or []
 
     projected_population = int(round((lot.initial_count or 0) * (row['survival_pct'] / 100.0)))
     biomass_kg = round((projected_population * row['individual_weight_g']) / 1000.0, 2)
@@ -1095,8 +1122,12 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         f"Estágio do dia: PL{stage_today}",
         f"População estimada: {projected_population:,} PL".replace(',', '.'),
     ]
-    if intestinal_score is not None:
-        message_lines.append(f"Score intestinal: {float(intestinal_score):.1f} · ajuste {correction_label}".replace('.', ','))
+    if correction_events:
+        last_event = correction_events[-1]
+        message_lines.append(f"Correção acumulada ativa: {correction_label} sobre o protocolo base")
+        message_lines.append(f"Último score usado: {float(last_event['score']):.1f} em {last_event['date'].strftime('%d/%m/%Y')} ({last_event['factor_label']})".replace('.', ','))
+    elif correction_factor != 1.0:
+        message_lines.append(f"Correção acumulada ativa: {correction_label} sobre o protocolo base")
     message_lines.extend([
         f"Total base: {base_total_day_g:,} g".replace(',', '.'),
         f"Total corrigido do dia: {total_day_g:,} g".replace(',', '.'),
@@ -1124,7 +1155,9 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         'score_factor': correction_factor,
         'score_factor_label': correction_label,
         'score_adjustment_pct': int(round((correction_factor - 1.0) * 100)),
-        'intestinal_score': intestinal_score,
+        'correction_events': correction_events,
+        'correction_source_date': correction_events[-1]['date'] if correction_events else None,
+        'intestinal_score': correction_events[-1]['score'] if correction_events else None,
         'total_day_g': total_day_g,
         'total_day_kg': grams_to_kg(total_day_g),
         'mixes': mixes,
@@ -1146,9 +1179,18 @@ def build_nursery_digest_for_date(target_date: date | None = None):
         if not lot or lot.status != 'ativo':
             continue
         entry = NurseryFeeding.query.filter_by(feed_date=target_date, unit_id=unit.id).order_by(NurseryFeeding.id.desc()).first()
-        plan = build_nursery_protocol_for_date(lot, unit, target_date=target_date, intestinal_score=entry.intestinal_score if entry else None)
+        adjustment = nursery_cumulative_adjustments(lot.id, target_date)
+        plan = build_nursery_protocol_for_date(
+            lot,
+            unit,
+            target_date=target_date,
+            cumulative_factor=adjustment['factor'],
+            correction_events=adjustment['events'],
+        )
         if plan:
             plan['existing_entry'] = entry
+            plan['correction_source_entry'] = correction_entry
+            plan['correction_source_date'] = correction_entry.feed_date if correction_entry else None
             plans.append(plan)
     return plans
 
@@ -1161,7 +1203,14 @@ def sync_nursery_feed_to_management(entry):
 
     unit = db.session.get(Unit, entry.unit_id) if entry.unit_id else None
     lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else None
-    plan = build_nursery_protocol_for_date(lot, unit, target_date=entry.feed_date, intestinal_score=entry.intestinal_score) if unit and lot else None
+    adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
+    plan = build_nursery_protocol_for_date(
+        lot,
+        unit,
+        target_date=entry.feed_date,
+        cumulative_factor=adjustment['factor'],
+        correction_events=adjustment['events'],
+    ) if unit and lot else None
     scaled_mixes = scale_nursery_mixes(plan.get('mixes', []) if plan else [], entry.quantity_kg)
 
     if not scaled_mixes:
@@ -3720,13 +3769,7 @@ def nursery_feed_page():
         entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
         submitted_quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
         entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
-        if entry.intestinal_score is not None and entry.lot_id:
-            lot_for_plan = db.session.get(Lot, entry.lot_id)
-            unit_for_plan = db.session.get(Unit, entry.unit_id)
-            adjusted_plan = build_nursery_protocol_for_date(lot_for_plan, unit_for_plan, target_date=entry.feed_date, intestinal_score=entry.intestinal_score)
-            entry.quantity_kg = adjusted_plan['total_day_kg'] if adjusted_plan else submitted_quantity_kg
-        else:
-            entry.quantity_kg = submitted_quantity_kg
+        entry.quantity_kg = submitted_quantity_kg
         entry.notes = request.form.get('notes')
         entry.updated_at = datetime.utcnow()
         if form_mode != 'edit':
