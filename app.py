@@ -1189,8 +1189,6 @@ def build_nursery_digest_for_date(target_date: date | None = None):
         )
         if plan:
             plan['existing_entry'] = entry
-            plan['correction_source_entry'] = correction_entry
-            plan['correction_source_date'] = correction_entry.feed_date if correction_entry else None
             plans.append(plan)
     return plans
 
