@@ -57,6 +57,7 @@
   <div class="nursery-summary-strip">
     <div class="summary-chip"><strong>{{ '%.2f'|format(plan.feed_rate_pct) }}%</strong><span>taxa de alimentação</span></div>
     <div class="summary-chip"><strong>{{ '{:,.0f}'.format(plan.total_day_g).replace(',', '.') }} g</strong><span>{{ '%.3f'|format(plan.total_day_kg) }} kg no dia</span></div>
+    <div class="summary-chip"><strong>{{ plan.score_factor_label }}</strong><span>correção pelo score{% if plan.intestinal_score is not none %} {{ '%.1f'|format(plan.intestinal_score) }}{% endif %}</span></div>
     <div class="summary-chip"><strong>{{ plan.feedings_per_day }}</strong><span>alimentações no dia</span></div>
     <div class="summary-chip"><strong>{% if plan.per_feeding_min_g != plan.per_feeding_max_g %}{{ '{:,.0f}'.format(plan.per_feeding_min_g).replace(',', '.') }}–{{ '{:,.0f}'.format(plan.per_feeding_max_g).replace(',', '.') }} g{% else %}{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g{% endif %}</strong><span>por porção</span></div>
   </div>
@@ -100,15 +101,11 @@
       <input type="hidden" name="feed_date" value="{{ selected_date.isoformat() }}">
       <input type="hidden" name="unit_id" value="{{ plan.unit.id }}">
       <input type="hidden" name="lot_id" value="{{ plan.lot.id }}">
-      <label>Quantidade real do dia (kg)<input type="number" step="0.001" name="quantity_kg" value="{{ plan.existing_entry.quantity_kg if plan.existing_entry else plan.total_day_kg }}" required></label>
-      <label>Score intestinal (0 a 4)
-        <select name="intestinal_score">
-          <option value="">—</option>
-          {% for n in range(0,5) %}
-          <option value="{{ n }}" {% if plan.existing_entry and plan.existing_entry.intestinal_score==n %}selected{% endif %}>{{ n }}</option>
-          {% endfor %}
-        </select>
+      <label>Quantidade real do dia (kg)<input type="number" step="0.001" name="quantity_kg" value="{{ plan.existing_entry.quantity_kg if plan.existing_entry else plan.total_day_kg }}" data-base-kg="{{ plan.base_total_day_kg }}" required></label>
+      <label>Score intestinal (0,0 a 4,0)
+        <input type="number" step="0.1" min="0" max="4" name="intestinal_score" class="intestinal-score-input" value="{{ '%.1f'|format(plan.existing_entry.intestinal_score) if plan.existing_entry and plan.existing_entry.intestinal_score is not none else '' }}" placeholder="Ex.: 2,5">
       </label>
+      <div class="full selection-info score-adjustment-info">Informe o score para corrigir automaticamente a sugestão: 0,0–1,0 +30%; 1,1–2,0 +20%; 2,1–3,0 +10%; 3,1–3,5 mantém; 3,6–4,0 -10%.</div>
       <label class="full">Observações<textarea name="notes">{{ plan.existing_entry.notes if plan.existing_entry else '' }}</textarea></label>
       <div class="form-actions"><button type="submit">{{ 'Salvar alterações' if plan.existing_entry else 'Salvar alimentação' }}</button></div>
     </form>
@@ -136,12 +133,50 @@
     <thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Obs.</th><th></th></tr></thead>
     <tbody>
     {% for e in entries %}
-    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ e.intestinal_score if e.intestinal_score is not none else '—' }}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for('delete_nursery_feed_entry', entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento do berçário? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
+    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ '%.1f'|format(e.intestinal_score) if e.intestinal_score is not none else '—' }}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for('delete_nursery_feed_entry', entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento do berçário? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
     {% else %}<tr><td colspan="7" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
     </tbody></table></div>
 </section>
 
 <script>
+function nurseryScoreFactor(score) {
+  const value = Number(String(score).replace(',', '.'));
+  if (Number.isNaN(value)) return 1.0;
+  if (value >= 0 && value <= 1.0) return 1.30;
+  if (value <= 2.0) return 1.20;
+  if (value <= 3.0) return 1.10;
+  if (value <= 3.5) return 1.00;
+  if (value <= 4.0) return 0.90;
+  return 1.0;
+}
+
+function nurseryScoreLabel(factor) {
+  const pct = Math.round((factor - 1.0) * 100);
+  if (pct > 0) return `+${pct}%`;
+  if (pct < 0) return `${pct}%`;
+  return 'sem ajuste';
+}
+
+document.querySelectorAll('.nursery-entry-form').forEach((form) => {
+  const scoreInput = form.querySelector('.intestinal-score-input');
+  const quantityInput = form.querySelector('input[name="quantity_kg"]');
+  const info = form.querySelector('.score-adjustment-info');
+  if (!scoreInput || !quantityInput) return;
+  const baseKg = Number(quantityInput.dataset.baseKg || quantityInput.dataset.baseKg === '0' ? quantityInput.dataset.baseKg : quantityInput.value);
+  const updateQuantity = () => {
+    if (!scoreInput.value) {
+      if (info) info.textContent = 'Sem score informado: usando a tabela padrão do protocolo.';
+      return;
+    }
+    const factor = nurseryScoreFactor(scoreInput.value);
+    const corrected = Math.max(baseKg * factor, 0);
+    quantityInput.value = corrected.toFixed(3);
+    if (info) info.textContent = `Score ${scoreInput.value}: ajuste ${nurseryScoreLabel(factor)} aplicado sobre a tabela padrão. A proporção do mix será mantida.`;
+  };
+  scoreInput.addEventListener('input', updateQuantity);
+  updateQuantity();
+});
+
 document.addEventListener('click', async (event) => {
   const btn = event.target.closest('.copy-message-btn');
   if (!btn) return;
