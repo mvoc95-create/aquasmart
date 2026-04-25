@@ -338,3 +338,65 @@ button:hover{transform:translateY(-1px)}
   .compact-grid,.nursery-entry-form{grid-template-columns:1fr}
   .summary-chip{min-width:unset;flex:1 1 180px}
 }
+
+/* ===== Ajustes de contraste e novos módulos ===== */
+.modern-sidebar{
+  background:linear-gradient(180deg,#f7fbff 0%, #eef4ff 100%);
+  border-right:1px solid #c7d6ea;
+}
+.modern-brand-wrap .brand{color:#08758a;font-weight:900}
+.modern-brand-wrap .brand-sub{color:#4b6b8b;font-weight:700}
+.sidebar-user-card{
+  background:linear-gradient(180deg,#ffffff 0%, #edf4ff 100%);
+  border-color:#c7d6ea;
+  box-shadow:0 8px 18px rgba(37,99,235,.06);
+}
+.sidebar-user-card strong{color:#0f172a}
+.sidebar-user-card small{color:#475569}
+.nav-link-main{
+  background:#ffffff;
+  border-color:#d5e1f0;
+  color:#1e293b;
+  box-shadow:0 4px 10px rgba(15,23,42,.03);
+}
+.nav-link-main:hover{background:#eef5ff;border-color:#bfd3f2;color:#0f172a}
+.nav-link-main.active{background:linear-gradient(180deg,#dbeafe 0%, #edf5ff 100%);border-color:#9fbffc;color:#1d4ed8}
+.nav-group{border-color:#c7d6ea;box-shadow:0 4px 10px rgba(15,23,42,.03)}
+.nav-group-summary{color:#1e293b;background:#ffffff}
+.nav-group[open] .nav-group-summary{background:linear-gradient(180deg,#f5f9ff 0%, #eef5ff 100%)}
+.nav-group-label i{color:#2563eb}
+.nav-sublink{color:#334155}
+.nav-sublink:hover{background:#eef5ff;color:#0f172a}
+.nav-sublink.active{background:linear-gradient(180deg,#dbeafe 0%, #edf5ff 100%);color:#1d4ed8;font-weight:800}
+.modern-sidebar-footer{background:linear-gradient(180deg,#ffffff 0%, #edf4ff 100%);border-color:#c7d6ea}
+.modern-sidebar-footer .sidebar-label{color:#2563eb}
+.modern-sidebar-footer .sidebar-note{color:#475569}
+.modern-sidebar-footer .sidebar-action{background:#1d4ed8;color:#fff}
+
+.supply-section{
+  padding:14px;
+  border:1px solid var(--line);
+  border-radius:18px;
+  background:#f8fbff;
+}
+.tight-panel-head{margin-bottom:10px}
+.tight-panel-head h2{font-size:18px}
+.supply-usage-wrap{display:grid;gap:12px}
+.supply-usage-row{
+  display:grid;
+  grid-template-columns:1.4fr .8fr 1fr auto;
+  gap:10px;
+  align-items:end;
+  padding:12px;
+  border:1px solid #d9e4f2;
+  border-radius:16px;
+  background:#fff;
+}
+.supply-usage-row label{margin:0}
+.table-subtext{font-size:12px;color:var(--muted);margin-top:4px}
+.report-card-stack{display:grid;gap:10px}
+.report-card-stack .link-button{justify-content:flex-start}
+
+@media (max-width:960px){
+  .supply-usage-row{grid-template-columns:1fr}
+}
