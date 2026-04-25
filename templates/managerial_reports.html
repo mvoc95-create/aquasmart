@@ -1,0 +1,130 @@
+{% extends 'base.html' %}
+{% block page_title %}Relatórios gerenciais{% endblock %}
+{% block page_subtitle %}Consolidados prontos para análise da operação, estoque, produção, financeiro e qualidade da água.{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <div><p class="panel-kicker">Período</p><h2>Gerar visão gerencial</h2></div>
+  </div>
+  <form method="get" class="form-grid compact-form">
+    <label>Janela de análise
+      <select name="days">
+        {% for option in [7, 30, 90, 180, 365] %}
+        <option value="{{ option }}" {% if period_days == option %}selected{% endif %}>Últimos {{ option }} dias</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="form-actions"><button type="submit">Atualizar</button></div>
+  </form>
+  <p class="empty-state">Período analisado desde <strong>{{ start_date|brdate }}</strong>.</p>
+</section>
+
+<div class="cards compact-cards">
+  <div class="metric-card"><span class="metric-label">Estoque de ração</span><strong>{{ feed_snapshot.total_stock_kg }} kg</strong><small>{{ feed_snapshot.low_stock_count }} item(ns) em alerta.</small></div>
+  <div class="metric-card"><span class="metric-label">Outros insumos</span><strong>{{ supply_snapshot.total_stock_qty }}</strong><small>{{ supply_snapshot.low_stock_count }} item(ns) em alerta.</small></div>
+  <div class="metric-card"><span class="metric-label">Receita no período</span><strong>{{ financial_totals.revenue_period|money }}</strong><small>Resultado gerado pelas despescas registradas.</small></div>
+  <div class="metric-card"><span class="metric-label">Resultado no período</span><strong>{{ financial_totals.profit_period|money }}</strong><small>Receita menos custos dos registros vendidos.</small></div>
+</div>
+
+<div class="grid-2">
+  <section class="panel">
+    <div class="panel-head">
+      <div><p class="panel-kicker">Estoque</p><h2>Exportações</h2></div>
+    </div>
+    <div class="report-card-stack">
+      <a class="link-button" href="{{ url_for('export_managerial_report', report_key='stock') }}">Baixar relatório de estoque (.xlsx)</a>
+      <a class="link-button" href="{{ url_for('export_managerial_report', report_key='production') }}">Baixar relatório de produção (.xlsx)</a>
+      <a class="link-button" href="{{ url_for('export_managerial_report', report_key='financial') }}">Baixar relatório financeiro (.xlsx)</a>
+      <a class="link-button" href="{{ url_for('export_managerial_report', report_key='water_quality') }}">Baixar relatório de qualidade da água (.xlsx)</a>
+    </div>
+    <hr class="panel-divider">
+    <p class="inline-hint">Esses relatórios já saem separados por tema para facilitar impressão, envio para sócio e fechamento mensal.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div><p class="panel-kicker">Financeiro</p><h2>Resumo acumulado dos lotes ativos</h2></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <tr><th>Custo com ração</th><td>{{ financial_totals.feed_cost|money }}</td></tr>
+          <tr><th>Custo com insumos e materiais</th><td>{{ financial_totals.supply_cost|money }}</td></tr>
+          <tr><th>Custo fixo rateado</th><td>{{ financial_totals.fixed_cost|money }}</td></tr>
+          <tr><th>Custo total</th><td>{{ financial_totals.total_cost|money }}</td></tr>
+          <tr><th>Receita no período</th><td>{{ financial_totals.revenue_period|money }}</td></tr>
+          <tr><th>Resultado no período</th><td>{{ financial_totals.profit_period|money }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<section class="panel full-width-panel">
+  <div class="panel-head"><div><p class="panel-kicker">Produção</p><h2>Lotes ativos</h2></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Lote</th><th>Ração</th><th>Insumos</th><th>Custo fixo</th><th>Custo total</th><th>FCR real</th><th>Sobrevivência</th></tr></thead>
+      <tbody>
+        {% for row in lot_summaries %}
+        <tr>
+          <td>{{ row.lot.lot_code }}</td>
+          <td>{{ row.feed_cost|money }}</td>
+          <td>{{ row.supply_cost|money }}</td>
+          <td>{{ row.fixed_cost|money }}</td>
+          <td>{{ row.total_cost|money }}</td>
+          <td>{{ row.fcr_real if row.fcr_real is not none else '—' }}</td>
+          <td>{% if row.survival_pct is not none %}{{ row.survival_pct }}%{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty-cell">Nenhum lote ativo encontrado.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="grid-2">
+  <section class="panel">
+    <div class="panel-head"><div><p class="panel-kicker">Qualidade da água</p><h2>Alertas do período</h2></div></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Data</th><th>Unidade</th><th>Alertas</th></tr></thead>
+        <tbody>
+          {% for row in water_alert_rows %}
+          <tr>
+            <td>{{ row.record.monitor_date|brdate }}</td>
+            <td>{{ row.record.unit.name if row.record.unit else '—' }}</td>
+            <td>{% for alert in row.alerts %}<div>{{ alert.message }}</div>{% endfor %}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="empty-cell">Nenhum alerta no período selecionado.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><p class="panel-kicker">Manejo diário</p><h2>Lançamentos recentes</h2></div></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Data</th><th>Unidade</th><th>Lote</th><th>Ração</th><th>Mortalidade</th></tr></thead>
+        <tbody>
+          {% for row in management_rows %}
+          <tr>
+            <td>{{ row.manage_date|brdate }}</td>
+            <td>{{ row.unit.name if row.unit else '—' }}</td>
+            <td>{{ row.lot.lot_code if row.lot else '—' }}</td>
+            <td>{{ row.feed_offered_kg }} kg</td>
+            <td>{{ row.mortality_qty }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="empty-cell">Sem lançamentos no período.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block page_title %}Gráficos{% endblock %}
-{% block page_subtitle %}Agora a visualização fica mais isolada: você escolhe o viveiro, o período e o parâmetro para analisar com mais clareza.{% endblock %}
+{% block page_subtitle %}Escolha o viveiro, o período, o parâmetro e agora também o tipo de visualização de cada gráfico.{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-head">
@@ -22,6 +22,13 @@
         {% endfor %}
       </select>
     </label>
+    <label>Estilo do gráfico
+      <select name="chart_style">
+        {% for option in ['bar', 'line', 'pie', 'doughnut', 'radar'] %}
+        <option value="{{ option }}" {% if chart_style == option %}selected{% endif %}>{{ {'bar':'Barra', 'line':'Curva', 'pie':'Pizza', 'doughnut':'Rosca', 'radar':'Radar'}[option] }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label class="full">Parâmetro
       <select name="parameter">
         {% for key, option in parameter_options.items() %}
@@ -31,7 +38,7 @@
     </label>
     <div class="form-actions"><button type="submit">Atualizar gráfico</button></div>
   </form>
-  <p class="empty-state">Exibindo: <strong>{{ selected_unit.name if selected_unit else 'Todos os viveiros' }}</strong> · Período: <strong>{{ days }} dias</strong> · Parâmetro: <strong>{{ chart_data.parameter.title }}{% if chart_data.parameter.unit %} ({{ chart_data.parameter.unit }}){% endif %}</strong> · Pontos no gráfico: <strong>{{ chart_data.point_count }}</strong>.</p>
+  <p class="empty-state">Exibindo: <strong>{{ selected_unit.name if selected_unit else 'Todos os viveiros' }}</strong> · Período: <strong>{{ days }} dias</strong> · Parâmetro: <strong>{{ chart_data.parameter.title }}{% if chart_data.parameter.unit %} ({{ chart_data.parameter.unit }}){% endif %}</strong> · Estilo: <strong>{{ {'bar':'Barra', 'line':'Curva', 'pie':'Pizza', 'doughnut':'Rosca', 'radar':'Radar'}[chart_style] }}</strong> · Pontos no gráfico: <strong>{{ chart_data.point_count }}</strong>.</p>
 </section>
 
 <section class="panel full-width-panel chart-focus-panel">
@@ -42,7 +49,7 @@
     </div>
     <div class="chart-note-box">
       <strong>Leitura isolada</strong>
-      <small>O gráfico foi ampliado e mostra um parâmetro por vez para facilitar a conferência dos dados.</small>
+      <small>Você pode alternar entre barra, curva, pizza, rosca e radar para cada parâmetro.</small>
     </div>
   </div>
   {% if chart_data.point_count == 0 %}
@@ -52,8 +59,8 @@
     <canvas id="main-chart"></canvas>
   </div>
   <div class="chart-legend-hint">
-    <span>As colunas representam os lançamentos no tempo.</span>
-    {% if chart_data.threshold %}
+    <span>Visualização atual: {{ {'bar':'Barra', 'line':'Curva', 'pie':'Pizza', 'doughnut':'Rosca', 'radar':'Radar'}[chart_style] }}.</span>
+    {% if chart_data.threshold and chart_style in ['bar', 'line'] %}
     <span>As linhas pontilhadas indicam a faixa ideal de referência.</span>
     {% endif %}
   </div>
@@ -64,17 +71,44 @@
 <script>
 const chartData = {{ chart_data|tojson }};
 const canvas = document.getElementById('main-chart');
+const palette = ['#2563eb', '#0f766e', '#7c3aed', '#ea580c', '#16a34a', '#dc2626', '#0891b2', '#9333ea', '#ca8a04', '#1d4ed8'];
 if (canvas && chartData.point_count > 0) {
   const labels = chartData.points.map(point => point.label);
   const values = chartData.points.map(point => point.value);
-  const datasets = [{
-    type: 'bar',
-    label: `${chartData.parameter.label}${chartData.parameter.unit ? ` (${chartData.parameter.unit})` : ''}`,
-    data: values,
-    borderWidth: 1,
-  }];
+  const style = chartData.chart_style || 'bar';
+  const datasets = [];
 
-  if (chartData.threshold) {
+  if (style === 'pie' || style === 'doughnut') {
+    datasets.push({
+      type: style,
+      label: `${chartData.parameter.label}${chartData.parameter.unit ? ` (${chartData.parameter.unit})` : ''}`,
+      data: values,
+      backgroundColor: labels.map((_, idx) => palette[idx % palette.length]),
+      borderWidth: 1,
+    });
+  } else if (style === 'radar') {
+    datasets.push({
+      type: 'radar',
+      label: `${chartData.parameter.label}${chartData.parameter.unit ? ` (${chartData.parameter.unit})` : ''}`,
+      data: values,
+      borderWidth: 2,
+      fill: true,
+      backgroundColor: 'rgba(37, 99, 235, 0.18)',
+      borderColor: '#2563eb',
+      pointBackgroundColor: '#2563eb',
+    });
+  } else {
+    datasets.push({
+      type: style,
+      label: `${chartData.parameter.label}${chartData.parameter.unit ? ` (${chartData.parameter.unit})` : ''}`,
+      data: values,
+      borderWidth: 2,
+      fill: style === 'line',
+      tension: style === 'line' ? 0.28 : 0,
+    });
+  }
+
+  if (chartData.threshold && (style === 'bar' || style === 'line')) {
     if (chartData.threshold.min !== null && chartData.threshold.min !== undefined) {
       datasets.push({
         type: 'line',
@@ -100,6 +134,7 @@ if (canvas && chartData.point_count > 0) {
   }
 
   new Chart(canvas, {
+    type: style,
     data: {
       labels,
       datasets,
@@ -126,7 +161,7 @@ if (canvas && chartData.point_count > 0) {
           }
         }
       },
-      scales: {
+      scales: (style === 'pie' || style === 'doughnut') ? {} : {
         x: {
           ticks: {
             autoSkip: true,

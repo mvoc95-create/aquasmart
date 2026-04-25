@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+{% block page_title %}Insumos e materiais{% endblock %}
+{% block page_subtitle %}Cadastre probióticos, corretivos, desinfetantes e materiais operacionais, acompanhe saldo e conecte esse custo ao manejo diário.{% endblock %}
+{% block content %}
+<div class="cards compact-cards">
+  <div class="metric-card"><span class="metric-label">Saldo total</span><strong>{{ total_stock }}</strong><small>Somatório bruto das movimentações de insumos e materiais.</small></div>
+  <div class="metric-card"><span class="metric-label">Itens ativos</span><strong>{{ active_product_count }}</strong><small>Disponíveis para seleção no manejo diário.</small></div>
+  <div class="metric-card danger"><span class="metric-label">Estoque baixo</span><strong>{{ low_stock_count }}</strong><small>Itens abaixo do estoque mínimo.</small></div>
+</div>
+<div class="grid-2">
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Cadastro</p><h2>{{ 'Editar item' if edit_product else 'Novo insumo/material' }}</h2></div></div>
+<form method="post" class="form-grid">
+  <input type="hidden" name="form_mode" value="{{ 'edit_product' if edit_product else 'product' }}">{% if edit_product %}<input type="hidden" name="product_id" value="{{ edit_product.id }}">{% endif %}
+  <label>Nome do item<input name="name" value="{{ edit_product.name if edit_product else '' }}" required></label>
+  <label>Categoria
+    <select name="category">
+      {% set selected_category = edit_product.category if edit_product else '' %}
+      {% for category in ['Probiótico', 'Qualidade da água', 'Desinfecção', 'Mineralização', 'Sanidade', 'Material operacional', 'Insumo geral'] %}
+      <option value="{{ category }}" {% if selected_category == category %}selected{% endif %}>{{ category }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Unidade de controle
+    <select name="measure_unit">
+      {% set selected_measure = edit_product.measure_unit if edit_product else 'kg' %}
+      {% for unit in ['kg', 'g', 'L', 'mL', 'un', 'saco', 'caixa'] %}
+      <option value="{{ unit }}" {% if selected_measure == unit %}selected{% endif %}>{{ unit }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Estoque mínimo<input type="number" step="0.01" name="minimum_stock_qty" value="{{ edit_product.minimum_stock_qty if edit_product else '' }}"></label>
+  <label class="full">Observação<textarea name="product_notes">{{ edit_product.notes if edit_product else '' }}</textarea></label>
+  <div class="form-actions action-row-between"><button type="submit">{{ 'Salvar item' if edit_product else 'Cadastrar item' }}</button>{% if edit_product %}<a class="secondary-link-button" href="{{ url_for('supplies_page') }}">Cancelar</a>{% endif %}</div>
+</form>
+</section>
+<section class="panel">
+<div class="panel-head"><div><p class="panel-kicker">Movimentação manual</p><h2>{{ 'Editar movimentação' if edit_movement else 'Entrada ou saída' }}</h2></div></div>
+<form method="post" class="form-grid">
+  <input type="hidden" name="form_mode" value="{{ 'edit_movement' if edit_movement else 'movement' }}">{% if edit_movement %}<input type="hidden" name="movement_id" value="{{ edit_movement.id }}">{% endif %}
+  <label>Data<input type="date" name="movement_date" value="{{ edit_movement.movement_date.isoformat() if edit_movement and edit_movement.movement_date else today.isoformat() }}" required></label>
+  <label>Movimentação<select name="movement_type"><option value="entrada" {% if edit_movement and edit_movement.movement_type=='entrada' %}selected{% endif %}>Entrada</option><option value="saida" {% if edit_movement and edit_movement.movement_type=='saida' %}selected{% endif %}>Saída manual</option></select></label>
+  <label class="full">Item<select name="supply_product_id" required><option value="">Selecione o item</option>{% for p in supply_products %}<option value="{{ p.id }}" {% if edit_movement and edit_movement.supply_product_id==p.id %}selected{% endif %}>{{ p.full_name }} · {{ p.category }} · {{ p.measure_unit }}</option>{% endfor %}</select></label>
+  <label>Quantidade<input type="number" step="0.01" name="quantity" value="{{ edit_movement.quantity if edit_movement else '' }}" required></label>
+  <label>Custo unitário<input type="number" step="0.01" name="unit_cost" value="{{ edit_movement.unit_cost if edit_movement and edit_movement.unit_cost is not none else '' }}"></label>
+  <label class="full">Observação<textarea name="notes">{{ edit_movement.notes if edit_movement else '' }}</textarea></label>
+  <div class="form-actions action-row-between"><button type="submit">Salvar movimentação</button>{% if edit_movement %}<a class="secondary-link-button" href="{{ url_for('supplies_page') }}">Cancelar</a>{% endif %}</div>
+</form>
+</section>
+</div>
+<section class="panel full-width-panel"><div class="panel-head"><div><p class="panel-kicker">Saldo por item</p><h2>Estoque consolidado</h2></div></div><div class="table-wrap"><table><thead><tr><th>Item</th><th>Categoria</th><th>Unidade</th><th>Saldo</th><th>Estoque mínimo</th><th>Custo médio</th><th>Status</th><th>Ações</th></tr></thead><tbody>{% for row in snapshot_rows %}<tr><td>{{ row.name }}</td><td>{{ row.category }}</td><td>{{ row.measure_unit }}</td><td>{{ row.stock_qty }}</td><td>{{ row.minimum_stock_qty }}</td><td>{{ row.avg_unit_cost|money if row.avg_unit_cost is not none else '—' }}</td><td>{% if row.status == 'baixo' %}<span class="badge amarelo">Baixo</span>{% else %}<span class="badge verde">OK</span>{% endif %}{% if not row.product.active %}<span class="badge cinza">Inativo</span>{% endif %}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('supplies_page', edit_product_id=row.product.id) }}">Editar</a><form method="post" action="{{ url_for('toggle_supply_product', product_id=row.product.id) }}"><button type="submit" class="secondary-button small-button">{{ 'Reativar' if not row.product.active else 'Inativar' }}</button></form><form method="post" action="{{ url_for('delete_supply_product', product_id=row.product.id) }}" onsubmit="return confirm('Excluir este item? Se houver histórico ele será apenas inativado para preservar os relatórios.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>{% else %}<tr><td colspan="8" class="empty-cell">Nenhum insumo/material cadastrado ainda.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel full-width-panel"><div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimas movimentações</h2></div></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Item</th><th>Origem</th><th>Movimento</th><th>Quantidade</th><th>Unidade</th><th>Lote</th><th>Custo</th><th>Observação</th><th></th></tr></thead><tbody>{% for r in rows %}<tr><td>{{ r.movement_date|brdate }}</td><td>{{ r.supply_product.full_name if r.supply_product else '—' }}</td><td>{{ movement_supply_origin_label(r.source_type) }}</td><td>{{ r.movement_type|title }}</td><td>{{ r.quantity }} {{ r.supply_product.measure_unit if r.supply_product else '' }}</td><td>{{ r.unit.name if r.unit else '—' }}</td><td>{{ r.lot.lot_code if r.lot else '—' }}</td><td>{{ r.unit_cost|money if r.unit_cost is not none else '—' }}</td><td>{{ r.notes or '—' }}</td><td>{% if r.source_type == 'manual' %}<a class="link-button small-button" href="{{ url_for('supplies_page', edit_movement_id=r.id) }}">Editar</a>{% endif %}</td></tr>{% else %}<tr><td colspan="10" class="empty-cell">Nenhuma movimentação registrada ainda.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}
