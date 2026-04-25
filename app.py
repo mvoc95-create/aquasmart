@@ -357,6 +357,64 @@ class FeedInventory(db.Model):
     created_by = db.relationship('User')
 
 
+class SupplyProduct(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False)
+    category = db.Column(db.String(80), nullable=False, default='Insumo geral')
+    measure_unit = db.Column(db.String(20), nullable=False, default='kg')
+    minimum_stock_qty = db.Column(db.Float, nullable=False, default=0)
+    notes = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    @property
+    def full_name(self):
+        return self.name.strip()
+
+    @property
+    def technical_summary(self):
+        details = []
+        if self.category:
+            details.append(self.category)
+        if self.measure_unit:
+            details.append(f'unidade {self.measure_unit}')
+        return ' · '.join(details)
+
+
+class SupplyInventory(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    movement_date = db.Column(db.Date, nullable=False)
+    supply_product_id = db.Column(db.Integer, db.ForeignKey('supply_product.id'), nullable=False)
+    movement_type = db.Column(db.String(20), nullable=False)  # entrada / saida
+    quantity = db.Column(db.Float, nullable=False)
+    unit_cost = db.Column(db.Float)
+    notes = db.Column(db.Text)
+    source_type = db.Column(db.String(30), nullable=False, default='manual')
+    source_ref_id = db.Column(db.Integer)
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'))
+    lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    supply_product = db.relationship('SupplyProduct')
+    unit = db.relationship('Unit')
+    lot = db.relationship('Lot')
+    created_by = db.relationship('User')
+
+
+class ManagementSupplyUsage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    management_id = db.Column(db.Integer, db.ForeignKey('daily_management.id'), nullable=False)
+    supply_product_id = db.Column(db.Integer, db.ForeignKey('supply_product.id'), nullable=False)
+    quantity = db.Column(db.Float, nullable=False, default=0)
+    unit_cost = db.Column(db.Float)
+    total_cost = db.Column(db.Float, nullable=False, default=0)
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    management = db.relationship('DailyManagement')
+    supply_product = db.relationship('SupplyProduct')
+
+
 class Sale(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sale_date = db.Column(db.Date, nullable=False)
@@ -1422,7 +1480,7 @@ def run_lightweight_migrations():
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
 
-    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, LotUnitAllocation, FixedCost, NurseryFeeding):
+    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, SupplyProduct, SupplyInventory, ManagementSupplyUsage, LotUnitAllocation, FixedCost, NurseryFeeding):
         table_name = model.__table__.name
         if table_name not in tables:
             model.__table__.create(bind=db.engine)
@@ -1525,6 +1583,30 @@ def run_lightweight_migrations():
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'lot_id', 'ALTER TABLE feed_inventory ADD COLUMN lot_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN lot_id INTEGER')
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'created_by_id', 'ALTER TABLE feed_inventory ADD COLUMN created_by_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN created_by_id INTEGER')
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'created_at', f"ALTER TABLE feed_inventory ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE feed_inventory ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+
+    if 'supply_product' in tables:
+        supply_product_columns = get_columns('supply_product')
+        add_column_if_missing('supply_product', supply_product_columns, 'category', "ALTER TABLE supply_product ADD COLUMN category VARCHAR(80) DEFAULT 'Insumo geral'", "ALTER TABLE supply_product ADD COLUMN category VARCHAR(80) DEFAULT 'Insumo geral'")
+        add_column_if_missing('supply_product', supply_product_columns, 'measure_unit', "ALTER TABLE supply_product ADD COLUMN measure_unit VARCHAR(20) DEFAULT 'kg'", "ALTER TABLE supply_product ADD COLUMN measure_unit VARCHAR(20) DEFAULT 'kg'")
+        add_column_if_missing('supply_product', supply_product_columns, 'minimum_stock_qty', 'ALTER TABLE supply_product ADD COLUMN minimum_stock_qty FLOAT DEFAULT 0', 'ALTER TABLE supply_product ADD COLUMN minimum_stock_qty DOUBLE PRECISION DEFAULT 0')
+        add_column_if_missing('supply_product', supply_product_columns, 'notes', 'ALTER TABLE supply_product ADD COLUMN notes TEXT')
+        add_column_if_missing('supply_product', supply_product_columns, 'active', 'ALTER TABLE supply_product ADD COLUMN active BOOLEAN DEFAULT 1', 'ALTER TABLE supply_product ADD COLUMN active BOOLEAN DEFAULT TRUE')
+        add_column_if_missing('supply_product', supply_product_columns, 'created_at', f"ALTER TABLE supply_product ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE supply_product ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+
+    if 'supply_inventory' in tables:
+        supply_inventory_columns = get_columns('supply_inventory')
+        add_column_if_missing('supply_inventory', supply_inventory_columns, 'source_type', "ALTER TABLE supply_inventory ADD COLUMN source_type VARCHAR(30) DEFAULT 'manual'", "ALTER TABLE supply_inventory ADD COLUMN source_type VARCHAR(30) DEFAULT 'manual'")
+        add_column_if_missing('supply_inventory', supply_inventory_columns, 'source_ref_id', 'ALTER TABLE supply_inventory ADD COLUMN source_ref_id INTEGER', 'ALTER TABLE supply_inventory ADD COLUMN source_ref_id INTEGER')
+        add_column_if_missing('supply_inventory', supply_inventory_columns, 'unit_id', 'ALTER TABLE supply_inventory ADD COLUMN unit_id INTEGER', 'ALTER TABLE supply_inventory ADD COLUMN unit_id INTEGER')
+        add_column_if_missing('supply_inventory', supply_inventory_columns, 'lot_id', 'ALTER TABLE supply_inventory ADD COLUMN lot_id INTEGER', 'ALTER TABLE supply_inventory ADD COLUMN lot_id INTEGER')
+        add_column_if_missing('supply_inventory', supply_inventory_columns, 'created_by_id', 'ALTER TABLE supply_inventory ADD COLUMN created_by_id INTEGER', 'ALTER TABLE supply_inventory ADD COLUMN created_by_id INTEGER')
+        add_column_if_missing('supply_inventory', supply_inventory_columns, 'created_at', f"ALTER TABLE supply_inventory ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE supply_inventory ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+
+    if 'management_supply_usage' in tables:
+        management_supply_columns = get_columns('management_supply_usage')
+        add_column_if_missing('management_supply_usage', management_supply_columns, 'notes', 'ALTER TABLE management_supply_usage ADD COLUMN notes TEXT')
+        add_column_if_missing('management_supply_usage', management_supply_columns, 'created_at', f"ALTER TABLE management_supply_usage ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE management_supply_usage ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+        add_column_if_missing('management_supply_usage', management_supply_columns, 'updated_at', f"ALTER TABLE management_supply_usage ADD COLUMN updated_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE management_supply_usage ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
 
     backfill_lot_allocations_and_status()
     sync_feed_products_from_legacy_movements()
@@ -1748,6 +1830,7 @@ def build_allocation_rows(lot: Lot, on_date=None):
 
 def lot_financial_summary(lot: Lot):
     feed_cost = db.session.query(func.coalesce(func.sum(DailyManagement.feed_total_cost), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
+    supply_cost = db.session.query(func.coalesce(func.sum(ManagementSupplyUsage.total_cost), 0)).join(DailyManagement, DailyManagement.id == ManagementSupplyUsage.management_id).filter(DailyManagement.lot_id == lot.id).scalar() or 0
     fixed_cost = calculate_fixed_cost_for_lot(lot)
     current_units = lot_current_units(lot)
     allocation_rows = build_allocation_rows(lot)
@@ -1759,8 +1842,9 @@ def lot_financial_summary(lot: Lot):
     return {
         'lot': lot,
         'feed_cost': round(feed_cost, 2),
+        'supply_cost': round(supply_cost, 2),
         'fixed_cost': fixed_cost,
-        'total_cost': round((feed_cost or 0) + fixed_cost, 2),
+        'total_cost': round((feed_cost or 0) + (supply_cost or 0) + fixed_cost, 2),
         'current_units': current_units,
         'allocations': allocation_rows,
         'harvested_units': harvested_units,
@@ -1774,8 +1858,9 @@ def sale_financial_summary(sale: Sale):
         return None
     allocation = find_active_allocation(sale.lot_id, sale.unit_id, sale.sale_date)
     feed_cost = calculate_feed_cost_for_unit(sale.lot_id, sale.unit_id, sale.sale_date)
+    supply_cost = calculate_supply_cost_for_unit(sale.lot_id, sale.unit_id, sale.sale_date)
     fixed_cost = calculate_fixed_cost_for_allocation(sale.lot, sale.unit_id, sale.lot.start_date, sale.sale_date)
-    total_cost = round(feed_cost + fixed_cost, 2)
+    total_cost = round(feed_cost + supply_cost + fixed_cost, 2)
     revenue = round((sale.quantity_kg or 0) * (sale.unit_price or 0), 2)
     harvested_units = sale.harvested_units or 0
     if not harvested_units and sale.average_weight_g:
@@ -1793,6 +1878,7 @@ def sale_financial_summary(sale: Sale):
         'allocation_qty': allocation.quantity_allocated if allocation else None,
         'density': allocation_density(allocation) if allocation else None,
         'feed_cost': feed_cost,
+        'supply_cost': supply_cost,
         'fixed_cost': fixed_cost,
         'total_cost': total_cost,
         'revenue': revenue,
@@ -1993,30 +2079,272 @@ def management_cost_summary(selected_unit_id=None):
     if selected_unit_id:
         query = query.filter(DailyManagement.unit_id == selected_unit_id)
     records = query.order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).all()
+    record_ids = [record.id for record in records]
+    supply_cost_by_record = {record_id: 0 for record_id in record_ids}
+    if record_ids:
+        supply_rows = db.session.query(ManagementSupplyUsage.management_id, func.coalesce(func.sum(ManagementSupplyUsage.total_cost), 0)).filter(ManagementSupplyUsage.management_id.in_(record_ids)).group_by(ManagementSupplyUsage.management_id).all()
+        for management_id, total in supply_rows:
+            supply_cost_by_record[management_id] = total or 0
+
     total_offered = round(sum(record.feed_offered_kg or 0 for record in records), 1)
-    total_cost = round(sum(record.feed_total_cost or 0 for record in records), 2)
-    group_map = defaultdict(lambda: {'offered_kg': 0.0, 'cost_total': 0.0, 'records': 0, 'unit_name': '', 'lot_code': ''})
+    total_feed_cost = round(sum(record.feed_total_cost or 0 for record in records), 2)
+    total_supply_cost = round(sum(supply_cost_by_record.get(record.id, 0) for record in records), 2)
+    total_cost = round(total_feed_cost + total_supply_cost, 2)
+    group_map = defaultdict(lambda: {'offered_kg': 0.0, 'feed_cost_total': 0.0, 'supply_cost_total': 0.0, 'cost_total': 0.0, 'records': 0, 'unit_name': '', 'lot_code': ''})
     for record in records:
         key = (record.unit_id, record.lot_id)
         row = group_map[key]
         row['unit_name'] = record.unit.name if record.unit else '—'
         row['lot_code'] = record.lot.lot_code if record.lot else 'Sem lote'
         row['offered_kg'] += record.feed_offered_kg or 0
-        row['cost_total'] += record.feed_total_cost or 0
+        row['feed_cost_total'] += record.feed_total_cost or 0
+        row['supply_cost_total'] += supply_cost_by_record.get(record.id, 0)
+        row['cost_total'] += (record.feed_total_cost or 0) + supply_cost_by_record.get(record.id, 0)
         row['records'] += 1
     grouped_rows = []
     for row in group_map.values():
         row['offered_kg'] = round(row['offered_kg'], 1)
+        row['feed_cost_total'] = round(row['feed_cost_total'], 2)
+        row['supply_cost_total'] = round(row['supply_cost_total'], 2)
         row['cost_total'] = round(row['cost_total'], 2)
         row['avg_cost_per_kg'] = round((row['cost_total'] / row['offered_kg']), 2) if row['offered_kg'] > 0 else None
         grouped_rows.append(row)
     grouped_rows.sort(key=lambda item: (-item['cost_total'], item['unit_name']))
     return {
         'total_offered_kg': total_offered,
+        'total_feed_cost': total_feed_cost,
+        'total_supply_cost': total_supply_cost,
         'total_cost': total_cost,
         'avg_cost_per_kg': round((total_cost / total_offered), 2) if total_offered > 0 else None,
         'grouped_rows': grouped_rows[:20],
     }
+
+
+
+def supply_product_label(product):
+    if not product:
+        return 'Sem insumo vinculado'
+    return product.full_name
+
+
+def weighted_supply_unit_cost(product_id: int, up_to_date=None):
+    query = SupplyInventory.query.filter(
+        SupplyInventory.supply_product_id == product_id,
+        SupplyInventory.movement_type == 'entrada',
+        SupplyInventory.unit_cost.isnot(None),
+    )
+    if up_to_date is not None:
+        query = query.filter(SupplyInventory.movement_date <= up_to_date)
+    entries = query.all()
+    total_qty = sum(entry.quantity or 0 for entry in entries)
+    if total_qty <= 0:
+        return None
+    total_value = sum((entry.quantity or 0) * (entry.unit_cost or 0) for entry in entries)
+    return round(total_value / total_qty, 4)
+
+
+def available_stock_for_supply(product_id: int) -> float:
+    total = 0.0
+    for movement in SupplyInventory.query.filter(SupplyInventory.supply_product_id == product_id).all():
+        total += movement.quantity if movement.movement_type == 'entrada' else -(movement.quantity or 0)
+    return round(total, 4)
+
+
+def build_supply_stock_snapshot():
+    products = {product.id: product for product in SupplyProduct.query.order_by(SupplyProduct.name.asc()).all()}
+    rows_by_product = {}
+    total_stock = 0.0
+
+    for product in products.values():
+        rows_by_product[product.id] = {
+            'product': product,
+            'name': product.name,
+            'category': product.category,
+            'measure_unit': product.measure_unit,
+            'technical_summary': product.technical_summary,
+            'minimum_stock_qty': round(product.minimum_stock_qty or 0, 2),
+            'stock_qty': 0.0,
+            'avg_unit_cost': weighted_supply_unit_cost(product.id),
+            'movement_count': 0,
+        }
+
+    for movement in SupplyInventory.query.options(joinedload(SupplyInventory.supply_product)).order_by(SupplyInventory.movement_date.desc(), SupplyInventory.id.desc()).all():
+        sign = 1 if movement.movement_type == 'entrada' else -1
+        stock_change = sign * (movement.quantity or 0)
+        total_stock += stock_change
+        row = rows_by_product.get(movement.supply_product_id)
+        if not row:
+            product = movement.supply_product
+            if not product:
+                continue
+            row = rows_by_product[movement.supply_product_id] = {
+                'product': product,
+                'name': product.name,
+                'category': product.category,
+                'measure_unit': product.measure_unit,
+                'technical_summary': product.technical_summary,
+                'minimum_stock_qty': round(product.minimum_stock_qty or 0, 2),
+                'stock_qty': 0.0,
+                'avg_unit_cost': weighted_supply_unit_cost(product.id),
+                'movement_count': 0,
+            }
+        row['stock_qty'] += stock_change
+        row['movement_count'] += 1
+
+    snapshot_rows = []
+    low_stock_count = 0
+    active_product_count = 0
+    for row in rows_by_product.values():
+        product = row['product']
+        if not product:
+            continue
+        active_product_count += 1 if product.active else 0
+        row['stock_qty'] = round(row['stock_qty'], 2)
+        minimum_stock = row['minimum_stock_qty'] or 0
+        row['status'] = 'baixo' if row['stock_qty'] <= minimum_stock and minimum_stock > 0 else 'ok'
+        if row['status'] == 'baixo':
+            low_stock_count += 1
+        snapshot_rows.append(row)
+
+    snapshot_rows.sort(key=lambda item: (item['product'].active is False, item['name'].lower()))
+    return {
+        'rows': snapshot_rows,
+        'total_stock_qty': round(total_stock, 2),
+        'low_stock_count': low_stock_count,
+        'active_product_count': active_product_count,
+    }
+
+
+def management_supply_entries_from_form():
+    entries = []
+    product_ids = request.form.getlist('supply_product_id[]')
+    quantities = request.form.getlist('supply_quantity[]')
+    notes_list = request.form.getlist('supply_notes[]')
+    usage_ids = request.form.getlist('supply_usage_id[]')
+    row_count = max(len(product_ids), len(quantities), len(notes_list), len(usage_ids))
+    for idx in range(row_count):
+        product_id = parse_int(product_ids[idx] if idx < len(product_ids) else None)
+        quantity = parse_float(quantities[idx] if idx < len(quantities) else None)
+        notes = (notes_list[idx] if idx < len(notes_list) else '') or ''
+        usage_id = parse_int(usage_ids[idx] if idx < len(usage_ids) else None)
+        if not product_id and (quantity is None or quantity == 0) and not notes.strip():
+            continue
+        product = db.session.get(SupplyProduct, product_id) if product_id else None
+        entries.append({
+            'usage_id': usage_id,
+            'product': product,
+            'quantity': quantity or 0,
+            'notes': notes.strip(),
+        })
+    return entries
+
+
+def validate_supply_usage(entries, management_record=None):
+    existing_by_product = defaultdict(float)
+    if management_record:
+        for usage in ManagementSupplyUsage.query.filter_by(management_id=management_record.id).all():
+            existing_by_product[usage.supply_product_id] += usage.quantity or 0
+    requested_by_product = defaultdict(float)
+    for entry in entries:
+        product = entry['product']
+        quantity = entry['quantity'] or 0
+        if quantity <= 0:
+            continue
+        if not product:
+            return 'Selecione o insumo utilizado ou remova a linha vazia.'
+        requested_by_product[product.id] += quantity
+    for product_id, quantity in requested_by_product.items():
+        product = db.session.get(SupplyProduct, product_id)
+        available = available_stock_for_supply(product_id) + (existing_by_product.get(product_id) or 0)
+        if quantity > available:
+            unit_label = product.measure_unit if product else 'un'
+            product_name = product.full_name if product else 'insumo'
+            return f'Estoque insuficiente para {product_name}. Disponível: {round(available, 2)} {unit_label}.'
+    return None
+
+
+def management_supply_rows_for_form(record=None, blank_rows=2):
+    rows = []
+    if record:
+        usages = ManagementSupplyUsage.query.options(joinedload(ManagementSupplyUsage.supply_product)).filter_by(management_id=record.id).order_by(ManagementSupplyUsage.id.asc()).all()
+        for usage in usages:
+            rows.append({
+                'usage_id': usage.id,
+                'product_id': usage.supply_product_id,
+                'quantity': usage.quantity,
+                'notes': usage.notes or '',
+            })
+    if not rows:
+        rows.append({'usage_id': '', 'product_id': '', 'quantity': '', 'notes': ''})
+    while len(rows) < blank_rows:
+        rows.append({'usage_id': '', 'product_id': '', 'quantity': '', 'notes': ''})
+    return rows
+
+
+def sync_management_supply_usages(management_record: DailyManagement, entries):
+    existing_usages = ManagementSupplyUsage.query.filter_by(management_id=management_record.id).all()
+    existing_ids = [usage.id for usage in existing_usages]
+    if existing_ids:
+        SupplyInventory.query.filter(
+            SupplyInventory.source_type == 'manejo_insumo',
+            SupplyInventory.source_ref_id.in_(existing_ids),
+        ).delete(synchronize_session=False)
+        ManagementSupplyUsage.query.filter(ManagementSupplyUsage.id.in_(existing_ids)).delete(synchronize_session=False)
+        db.session.flush()
+
+    for entry in entries:
+        product = entry['product']
+        quantity = entry['quantity'] or 0
+        if not product or quantity <= 0:
+            continue
+        unit_cost = weighted_supply_unit_cost(product.id, up_to_date=management_record.manage_date)
+        usage = ManagementSupplyUsage(
+            management_id=management_record.id,
+            supply_product_id=product.id,
+            quantity=quantity,
+            unit_cost=unit_cost,
+            total_cost=round((unit_cost or 0) * quantity, 2),
+            notes=entry['notes'],
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add(usage)
+        db.session.flush()
+        movement = SupplyInventory(
+            movement_date=management_record.manage_date,
+            supply_product_id=product.id,
+            movement_type='saida',
+            quantity=quantity,
+            unit_cost=unit_cost,
+            unit_id=management_record.unit_id,
+            lot_id=management_record.lot_id,
+            source_type='manejo_insumo',
+            source_ref_id=usage.id,
+            created_by_id=getattr(current_user, 'id', None),
+            notes=f'Saída automática pelo manejo diário. {entry["notes"]}'.strip(),
+        )
+        db.session.add(movement)
+
+
+def management_supply_total_for_record(record_id: int):
+    return db.session.query(func.coalesce(func.sum(ManagementSupplyUsage.total_cost), 0)).filter(ManagementSupplyUsage.management_id == record_id).scalar() or 0
+
+
+def calculate_supply_cost_for_unit(lot_id: int, unit_id: int, end_date: date | None = None):
+    query = db.session.query(func.coalesce(func.sum(ManagementSupplyUsage.total_cost), 0)).join(DailyManagement, DailyManagement.id == ManagementSupplyUsage.management_id).filter(
+        DailyManagement.lot_id == lot_id,
+        DailyManagement.unit_id == unit_id,
+    )
+    if end_date is not None:
+        query = query.filter(DailyManagement.manage_date <= end_date)
+    return round(query.scalar() or 0, 2)
+
+
+def movement_supply_origin_label(value: str) -> str:
+    return {
+        'manual': 'Manual',
+        'manejo_insumo': 'Manejo diário',
+        'ajuste': 'Ajuste',
+    }.get(value or '', 'Manual')
 
 
 def water_status(rec, config=None):
@@ -2307,6 +2635,7 @@ def dashboard_data():
 
     lot_summaries = [lot_financial_summary(lot) for lot in active_lots]
     total_feed_cost = round(sum(summary['feed_cost'] for summary in lot_summaries), 2)
+    total_supply_cost = round(sum(summary.get('supply_cost', 0) for summary in lot_summaries), 2)
     total_fixed_cost = round(sum(summary['fixed_cost'] for summary in lot_summaries), 2)
     total_cost_active = round(sum(summary['total_cost'] for summary in lot_summaries), 2)
     estimated_cost_per_kg = round(total_cost_active / total_biomass_active, 2) if total_biomass_active > 0 else None
@@ -2508,6 +2837,7 @@ def dashboard_data():
         },
         'financial': {
             'feed_cost': total_feed_cost,
+            'supply_cost': total_supply_cost,
             'fixed_cost': total_fixed_cost,
             'estimated_cost_per_kg': estimated_cost_per_kg,
             'month_profit': total_profit_period,
@@ -3018,6 +3348,11 @@ def management_page():
         if validation_error:
             flash(validation_error, 'danger')
             return redirect(url_for('management_page', unit_id=unit_id))
+        supply_entries = management_supply_entries_from_form()
+        supply_validation_error = validate_supply_usage(supply_entries)
+        if supply_validation_error:
+            flash(supply_validation_error, 'danger')
+            return redirect(url_for('management_page', unit_id=unit_id))
 
         rec = DailyManagement(
             manage_date=manage_date,
@@ -3035,8 +3370,9 @@ def management_page():
         db.session.add(rec)
         db.session.flush()
         sync_management_feed_movement(rec, feed_product, feed_offered_kg)
+        sync_management_supply_usages(rec, supply_entries)
         db.session.commit()
-        flash('Manejo diário lançado com baixa automática da ração.', 'success')
+        flash('Manejo diário lançado com baixa automática da ração e dos insumos.', 'success')
         return redirect(url_for('management_page', unit_id=unit_id))
 
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
@@ -3050,7 +3386,18 @@ def management_page():
     feed_snapshot = build_feed_stock_snapshot()
     stock_by_product = {row['product'].id: row['stock_kg'] for row in feed_snapshot['rows']}
     feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
+    supply_snapshot = build_supply_stock_snapshot()
+    supply_products = SupplyProduct.query.order_by(SupplyProduct.active.desc(), SupplyProduct.name.asc()).all()
+    supply_stock_by_product = {row['product'].id: row['stock_qty'] for row in supply_snapshot['rows']}
     cost_summary = management_cost_summary(selected_unit_id)
+    record_ids = [record.id for record in records]
+    supply_cost_by_record = {record_id: 0 for record_id in record_ids}
+    usages_by_record = defaultdict(list)
+    if record_ids:
+        usages = ManagementSupplyUsage.query.options(joinedload(ManagementSupplyUsage.supply_product)).filter(ManagementSupplyUsage.management_id.in_(record_ids)).order_by(ManagementSupplyUsage.id.asc()).all()
+        for usage in usages:
+            supply_cost_by_record[usage.management_id] = round((supply_cost_by_record.get(usage.management_id, 0) + (usage.total_cost or 0)), 2)
+            usages_by_record[usage.management_id].append(usage)
     return render_template(
         'management.html',
         units=units,
@@ -3060,7 +3407,13 @@ def management_page():
         selected_unit_id=selected_unit_id,
         feed_products=feed_products,
         stock_by_product=stock_by_product,
+        supply_products=supply_products,
+        supply_stock_by_product=supply_stock_by_product,
+        supply_form_rows=management_supply_rows_for_form(),
+        edit_supply_form_rows=management_supply_rows_for_form(edit_record) if edit_record else [],
         cost_summary=cost_summary,
+        supply_cost_by_record=supply_cost_by_record,
+        usages_by_record=usages_by_record,
     )
 
 
@@ -3092,6 +3445,14 @@ def previous_management_data():
             'average_weight_g': previous_record.average_weight_g,
             'estimated_biomass_kg': previous_record.estimated_biomass_kg,
             'notes': previous_record.notes or '',
+            'supply_rows': [
+                {
+                    'product_id': usage.supply_product_id,
+                    'quantity': usage.quantity,
+                    'notes': usage.notes or '',
+                }
+                for usage in ManagementSupplyUsage.query.filter_by(management_id=previous_record.id).order_by(ManagementSupplyUsage.id.asc()).all()
+            ],
         },
         'message': f"Dados de {previous_record.manage_date.strftime('%d/%m/%Y')} carregados para conferência."
     })
@@ -3153,6 +3514,11 @@ def edit_management_record(record_id):
     if validation_error:
         flash(validation_error, 'danger')
         return redirect(request.referrer or url_for('management_page'))
+    supply_entries = management_supply_entries_from_form()
+    supply_validation_error = validate_supply_usage(supply_entries, management_record=rec)
+    if supply_validation_error:
+        flash(supply_validation_error, 'danger')
+        return redirect(request.referrer or url_for('management_page'))
 
     rec.manage_date = new_manage_date
     rec.unit_id = unit_id
@@ -3166,6 +3532,7 @@ def edit_management_record(record_id):
     rec.notes = request.form.get('notes')
     rec.updated_at = datetime.utcnow()
     sync_management_feed_movement(rec, feed_product, feed_offered_kg, existing_movement=existing_movement)
+    sync_management_supply_usages(rec, supply_entries)
     db.session.commit()
     flash('Registro de manejo atualizado com estoque recalculado.', 'success')
     return redirect(request.referrer or url_for('management_page'))
@@ -3196,6 +3563,10 @@ def delete_management_record(record_id):
     linked_movement = get_management_feed_movement(record_id)
     if linked_movement:
         db.session.delete(linked_movement)
+    usage_ids = [usage.id for usage in ManagementSupplyUsage.query.filter_by(management_id=record_id).all()]
+    if usage_ids:
+        SupplyInventory.query.filter(SupplyInventory.source_type == 'manejo_insumo', SupplyInventory.source_ref_id.in_(usage_ids)).delete(synchronize_session=False)
+        ManagementSupplyUsage.query.filter(ManagementSupplyUsage.id.in_(usage_ids)).delete(synchronize_session=False)
     db.session.delete(rec)
     db.session.commit()
     flash('Registro de manejo excluído e estoque recalculado.', 'success')
@@ -3310,8 +3681,11 @@ def charts_page():
     days = request.args.get('days', default=30, type=int)
     parameter_options = chart_parameter_options()
     selected_parameter_key = request.args.get('parameter', 'od')
+    chart_style = request.args.get('chart_style', 'bar')
     if selected_parameter_key not in parameter_options:
         selected_parameter_key = 'od'
+    if chart_style not in {'bar', 'line', 'pie', 'doughnut', 'radar'}:
+        chart_style = 'bar'
     if days not in {7, 15, 30, 60, 90}:
         days = 30
     start_date = date.today() - timedelta(days=days - 1)
@@ -3343,6 +3717,7 @@ def charts_page():
             'group': selected_parameter['group'],
         },
         'point_count': len(points),
+        'chart_style': chart_style,
     }
 
     return render_template(
@@ -3354,6 +3729,7 @@ def charts_page():
         chart_data=chart_payload,
         parameter_options=parameter_options,
         selected_parameter_key=selected_parameter_key,
+        chart_style=chart_style,
     )
 
 
@@ -3745,6 +4121,208 @@ def delete_feed_product(product_id):
     return redirect(url_for('feed_page'))
 
 
+
+@app.route('/supplies', methods=['GET', 'POST'])
+@login_required
+@requires_permission('feed_manage')
+def supplies_page():
+    edit_product_id = parse_int(request.args.get('edit_product_id'))
+    edit_movement_id = parse_int(request.args.get('edit_movement_id'))
+    edit_product = db.session.get(SupplyProduct, edit_product_id) if edit_product_id else None
+    edit_movement = db.session.get(SupplyInventory, edit_movement_id) if edit_movement_id else None
+    if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'movement')
+        if form_mode in {'product', 'edit_product'}:
+            product = db.session.get(SupplyProduct, parse_int(request.form.get('product_id'))) if form_mode == 'edit_product' else SupplyProduct(active=True)
+            if form_mode == 'edit_product' and not product:
+                flash('Produto/insumo não encontrado.', 'warning')
+                return redirect(url_for('supplies_page'))
+            name = (request.form.get('name') or '').strip()
+            if not name:
+                flash('Informe o nome do insumo ou material.', 'danger')
+                return redirect(url_for('supplies_page'))
+            product.name = name
+            product.category = (request.form.get('category') or 'Insumo geral').strip() or 'Insumo geral'
+            product.measure_unit = (request.form.get('measure_unit') or 'kg').strip() or 'kg'
+            product.minimum_stock_qty = parse_float(request.form.get('minimum_stock_qty'), 0) or 0
+            product.notes = request.form.get('product_notes')
+            if form_mode != 'edit_product':
+                db.session.add(product)
+            db.session.commit()
+            flash('Insumo/material salvo com sucesso.', 'success')
+            return redirect(url_for('supplies_page'))
+
+        product_id = parse_int(request.form.get('supply_product_id'))
+        product = db.session.get(SupplyProduct, product_id) if product_id else None
+        if not product:
+            flash('Selecione o insumo que será movimentado.', 'danger')
+            return redirect(url_for('supplies_page'))
+        quantity = parse_float(request.form.get('quantity'))
+        if quantity is None or quantity <= 0:
+            flash(f'Informe uma quantidade válida em {product.measure_unit}.', 'danger')
+            return redirect(url_for('supplies_page'))
+        movement_type = request.form.get('movement_type') or 'entrada'
+        row = db.session.get(SupplyInventory, parse_int(request.form.get('movement_id'))) if form_mode == 'edit_movement' else SupplyInventory(source_type='manual', created_by_id=getattr(current_user, 'id', None))
+        if form_mode == 'edit_movement' and not row:
+            flash('Movimentação não encontrada.', 'warning')
+            return redirect(url_for('supplies_page'))
+        if movement_type == 'saida' and quantity > available_stock_for_supply(product.id) + ((row.quantity or 0) if row and row.id and row.supply_product_id == product.id and row.movement_type == 'saida' else 0):
+            flash(f'Estoque insuficiente para {product.full_name}.', 'danger')
+            return redirect(url_for('supplies_page'))
+        row.movement_date = parse_date(request.form.get('movement_date'), date.today())
+        row.supply_product_id = product.id
+        row.movement_type = movement_type
+        row.quantity = quantity
+        row.unit_cost = parse_float(request.form.get('unit_cost'))
+        row.notes = request.form.get('notes')
+        if form_mode != 'edit_movement':
+            db.session.add(row)
+        db.session.commit()
+        flash('Movimentação de insumo/material salva.', 'success')
+        return redirect(url_for('supplies_page'))
+
+    snapshot = build_supply_stock_snapshot()
+    rows = SupplyInventory.query.options(joinedload(SupplyInventory.supply_product), joinedload(SupplyInventory.unit), joinedload(SupplyInventory.lot)).order_by(SupplyInventory.movement_date.desc(), SupplyInventory.id.desc()).limit(80).all()
+    supply_products = SupplyProduct.query.order_by(SupplyProduct.active.desc(), SupplyProduct.name.asc()).all()
+    return render_template(
+        'supplies.html',
+        rows=rows,
+        today=date.today(),
+        total_stock=snapshot['total_stock_qty'],
+        snapshot_rows=snapshot['rows'],
+        low_stock_count=snapshot['low_stock_count'],
+        active_product_count=snapshot['active_product_count'],
+        supply_products=supply_products,
+        movement_supply_origin_label=movement_supply_origin_label,
+        edit_product=edit_product,
+        edit_movement=edit_movement,
+    )
+
+
+@app.post('/supplies/products/<int:product_id>/toggle')
+@login_required
+@requires_permission('feed_manage')
+def toggle_supply_product(product_id):
+    product = db.session.get(SupplyProduct, product_id)
+    if not product:
+        flash('Insumo/material não encontrado.', 'warning')
+        return redirect(url_for('supplies_page'))
+    product.active = not product.active
+    db.session.commit()
+    flash('Status do insumo/material atualizado.', 'success')
+    return redirect(url_for('supplies_page'))
+
+
+@app.post('/supplies/products/<int:product_id>/delete')
+@login_required
+@requires_permission('feed_manage')
+def delete_supply_product(product_id):
+    product = db.session.get(SupplyProduct, product_id)
+    if not product:
+        flash('Insumo/material não encontrado.', 'warning')
+        return redirect(url_for('supplies_page'))
+    has_movements = SupplyInventory.query.filter_by(supply_product_id=product.id).count() > 0
+    has_management = ManagementSupplyUsage.query.filter_by(supply_product_id=product.id).count() > 0
+    if has_movements or has_management:
+        product.active = False
+        db.session.commit()
+        flash('Esse item possui histórico. Ele foi inativado para preservar relatórios e custo dos lotes.', 'warning')
+        return redirect(url_for('supplies_page'))
+    db.session.delete(product)
+    db.session.commit()
+    flash('Insumo/material excluído.', 'success')
+    return redirect(url_for('supplies_page'))
+
+
+@app.get('/managerial-reports')
+@login_required
+@requires_permission('dashboard')
+def managerial_reports_page():
+    period_days = request.args.get('days', default=30, type=int)
+    if period_days not in {7, 30, 90, 180, 365}:
+        period_days = 30
+    start_date = date.today() - timedelta(days=period_days - 1)
+
+    feed_snapshot = build_feed_stock_snapshot()
+    supply_snapshot = build_supply_stock_snapshot()
+    active_lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
+    lot_summaries = [lot_financial_summary(lot) for lot in active_lots]
+    sales_rows = Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).filter(Sale.sale_date >= start_date).order_by(Sale.sale_date.desc()).all()
+    sales_summaries = [summary for sale in sales_rows if (summary := sale_financial_summary(sale))]
+    water_rows = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit)).filter(WaterMonitoring.monitor_date >= start_date).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.id.desc()).all()
+    config = get_water_reference_config()
+    water_alert_rows = []
+    for record in water_rows:
+        alerts = water_alerts_for_record(record, config)
+        if alerts:
+            water_alert_rows.append({'record': record, 'alerts': alerts})
+    management_rows = DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.lot)).filter(DailyManagement.manage_date >= start_date).order_by(DailyManagement.manage_date.desc()).all()
+    financial_totals = {
+        'feed_cost': round(sum(summary['feed_cost'] for summary in lot_summaries), 2),
+        'supply_cost': round(sum(summary.get('supply_cost', 0) for summary in lot_summaries), 2),
+        'fixed_cost': round(sum(summary['fixed_cost'] for summary in lot_summaries), 2),
+        'total_cost': round(sum(summary['total_cost'] for summary in lot_summaries), 2),
+        'revenue_period': round(sum(summary['revenue'] for summary in sales_summaries), 2),
+        'profit_period': round(sum(summary['profit'] for summary in sales_summaries), 2),
+    }
+    return render_template(
+        'managerial_reports.html',
+        period_days=period_days,
+        start_date=start_date,
+        feed_snapshot=feed_snapshot,
+        supply_snapshot=supply_snapshot,
+        lot_summaries=lot_summaries[:12],
+        sales_summaries=sales_summaries[:12],
+        water_alert_rows=water_alert_rows[:20],
+        management_rows=management_rows[:20],
+        financial_totals=financial_totals,
+    )
+
+
+@app.get('/managerial-reports/export/<report_key>.xlsx')
+@login_required
+@requires_permission('dashboard')
+def export_managerial_report(report_key):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Relatorio'
+    today = date.today()
+    if report_key == 'stock':
+        ws.title = 'Estoque'
+        ws.append(['Categoria', 'Item', 'Grupo', 'Saldo', 'Unidade', 'Estoque mínimo', 'Custo médio'])
+        for row in build_feed_stock_snapshot()['rows']:
+            ws.append(['Ração', row['name'] if 'name' in row else row['feed_name'], row.get('feed_type') or row.get('category'), row.get('stock_kg', row.get('stock_qty')), 'kg', row.get('minimum_stock_kg', row.get('minimum_stock_qty')), row.get('avg_unit_cost')])
+        for row in build_supply_stock_snapshot()['rows']:
+            ws.append(['Insumo/material', row['name'], row['category'], row['stock_qty'], row['measure_unit'], row['minimum_stock_qty'], row.get('avg_unit_cost')])
+    elif report_key == 'production':
+        ws.title = 'Producao'
+        ws.append(['Lote', 'Status', 'Fornecedora', 'Unidades atuais', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'FCR real', 'Sobrevivência %'])
+        for summary in [lot_financial_summary(lot) for lot in Lot.query.order_by(Lot.start_date.desc()).all()]:
+            ws.append([summary['lot'].lot_code, summary['lot'].status, summary['lot'].larva_supplier, ', '.join(item['unit_name'] for item in summary['allocations']), summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
+    elif report_key == 'financial':
+        ws.title = 'Financeiro'
+        ws.append(['Data', 'Lote', 'Viveiro', 'Receita', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'Resultado'])
+        for sale in Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc()).all():
+            summary = sale_financial_summary(sale)
+            if not summary:
+                continue
+            ws.append([sale.sale_date.strftime('%d/%m/%Y'), sale.lot.lot_code if sale.lot else '', sale.unit.name if sale.unit else '', summary['revenue'], summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['profit']])
+    elif report_key == 'water_quality':
+        ws.title = 'Qualidade agua'
+        ws.append(['Data', 'Hora', 'Unidade', 'OD', 'Temperatura', 'pH', 'Salinidade', 'Alertas'])
+        config = get_water_reference_config()
+        rows = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit)).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.id.desc()).all()
+        for record in rows:
+            alerts = '; '.join(alert['message'] for alert in water_alerts_for_record(record, config))
+            ws.append([record.monitor_date.strftime('%d/%m/%Y') if record.monitor_date else '', record.monitor_time.strftime('%H:%M') if record.monitor_time else '', record.unit.name if record.unit else '', record.dissolved_oxygen, record.temperature_c, record.ph, record.salinity, alerts])
+    else:
+        abort(404)
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name=f'relatorio_{report_key}_{today.strftime("%Y%m%d")}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 @app.route('/nursery-feed', methods=['GET', 'POST'])
 @login_required
 @requires_permission('management_manage')
@@ -3903,7 +4481,7 @@ def export_sales_history():
     ws.title = 'Historico despesca'
     headers = [
         'Data', 'Lote', 'Viveiro', 'Cliente', 'Canal', 'Qtd kg', 'Preco kg', 'Faturamento',
-        'Peso medio g', 'Unidades despescadas', 'Custo racao viveiro', 'Custo fixo viveiro',
+        'Peso medio g', 'Unidades despescadas', 'Custo racao viveiro', 'Custo insumos viveiro', 'Custo fixo viveiro',
         'Custo total viveiro', 'Resultado', 'Status', 'FCR real lote', 'Sobrevivencia lote %'
     ]
     ws.append(headers)
@@ -3923,6 +4501,7 @@ def export_sales_history():
             sale.average_weight_g,
             summary['harvested_units'],
             summary['feed_cost'],
+            summary.get('supply_cost', 0),
             summary['fixed_cost'],
             summary['total_cost'],
             summary['profit'],
