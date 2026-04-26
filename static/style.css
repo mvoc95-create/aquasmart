@@ -401,9 +401,15 @@ button:hover{transform:translateY(-1px)}
   .supply-usage-row{grid-template-columns:1fr}
 }
 
-.report-option-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
-.report-option-card{border:1px solid var(--line);border-radius:18px;background:#fff;padding:16px;box-shadow:0 10px 24px rgba(15,23,42,.05)}
-.report-option-card h3{margin:0 0 8px;font-size:17px;color:var(--text)}
-.report-option-card p{margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.45}
-.report-download-actions{display:flex;gap:8px;flex-wrap:wrap}.reports-hero{background:linear-gradient(135deg,#ffffff,#f0fdfa)}
-.water-observation-cell{min-width:140px;color:var(--muted);font-size:12px}
+
+.report-cards-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:16px; }
+.report-card, .kpi-card { border:1px solid rgba(13,57,79,.12); border-radius:18px; padding:18px; background:#fff; box-shadow:0 10px 30px rgba(13,57,79,.06); }
+.report-card h3, .kpi-card strong { margin:0 0 6px; color:#12364a; }
+.kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; }
+.kpi-card span { display:block; color:#5f7380; font-size:.92rem; margin-bottom:8px; }
+.inline-filter { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.compact-between { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
+.horizontal-stack { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+.warning-badge { background:#fff6df; color:#9a6700; border:1px solid #f5d37a; }
+.assistant-answer { margin-top:18px; border-radius:16px; background:#f4fbff; border:1px solid #c7e5f4; padding:18px; }
+.page-assistant_page textarea, .page-finance_page textarea, .page-biometrics_page textarea { min-height:92px; }
