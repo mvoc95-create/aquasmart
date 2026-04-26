@@ -245,6 +245,13 @@
     <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'ph') }}">pH <span>{{ sort_indicator('ph', sort_by, sort_dir) }}</span></a></th>
     <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'temperature') }}">Temp. (°C) <span>{{ sort_indicator('temperature', sort_by, sort_dir) }}</span></a></th>
     <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'salinity') }}">Sal. (‰) <span>{{ sort_indicator('salinity', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'transparency') }}">Transp. <span>{{ sort_indicator('transparency', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'ammonia') }}">Amônia <span>{{ sort_indicator('ammonia', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'nitrite') }}">Nitrito <span>{{ sort_indicator('nitrite', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'nitrate') }}">Nitrato <span>{{ sort_indicator('nitrate', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'alkalinity') }}">Alcalin. <span>{{ sort_indicator('alkalinity', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'hardness') }}">Dureza <span>{{ sort_indicator('hardness', sort_by, sort_dir) }}</span></a></th>
+    <th>Obs.</th>
     <th></th>
   </tr>
 </thead>
@@ -258,7 +265,14 @@
   <td>{{ r.dissolved_oxygen or '' }}</td>
   <td>{{ r.ph or '' }}</td>
   <td>{{ r.temperature_c or '' }}</td>
-  <td>{{ r.salinity or '' }}</td>
+  <td>{{ r.salinity if r.salinity is not none else '' }}</td>
+  <td>{{ r.transparency_cm if r.transparency_cm is not none else '' }}</td>
+  <td>{{ r.ammonia if r.ammonia is not none else '' }}</td>
+  <td>{{ r.nitrite if r.nitrite is not none else '' }}</td>
+  <td>{{ r.nitrate if r.nitrate is not none else '' }}</td>
+  <td>{{ r.alkalinity if r.alkalinity is not none else '' }}</td>
+  <td>{{ r.hardness if r.hardness is not none else '' }}</td>
+  <td class="water-observation-cell">{{ r.observation or '' }}</td>
   <td class="actions-cell">
     <div class="action-stack">
       <a class="link-button small-button" href="{{ url_for('water_page', unit_id=selected_unit_id, sort_by=sort_by, sort_dir=sort_dir, edit_id=r.id) }}">Editar</a>
@@ -269,7 +283,7 @@
   </td>
 </tr>
 {% else %}
-<tr><td colspan="9" class="empty-cell">Nenhum registro encontrado para esse filtro.</td></tr>
+<tr><td colspan="17" class="empty-cell">Nenhum registro encontrado para esse filtro.</td></tr>
 {% endfor %}
 </tbody>
 </table>
