@@ -63,6 +63,35 @@ TARGET_NITRITE_MAX = float(os.getenv('TARGET_NITRITE_MAX', '1.0'))
 TARGET_HARVEST_WEIGHT_G = float(os.getenv('TARGET_HARVEST_WEIGHT_G', '15'))
 
 
+# Curva zootécnica padrão usada como base inicial do modelo adaptativo.
+# Fonte operacional: tabela padrão enviada pelo usuário (engorda 1,5 g -> 16 g em 70 dias,
+# sobrevivência de 100% -> 80% e arraçoamento decrescente de 5,0% -> 2,4% da biomassa).
+STANDARD_GROWOUT_START_WEIGHT_G = 1.5
+STANDARD_GROWOUT_FINAL_WEIGHT_G = 16.0
+STANDARD_GROWOUT_DAYS = 70
+STANDARD_GROWOUT_INITIAL_SURVIVAL_PCT = 100.0
+STANDARD_GROWOUT_FINAL_SURVIVAL_PCT = 80.0
+STANDARD_GROWOUT_FINAL_FCR = 1.42
+STANDARD_GROWOUT_FEED_RATE_PCTS = [
+    5.0, 5.0, 5.0,
+    4.8, 4.8, 4.8, 4.8, 4.8,
+    4.7, 4.7, 4.7, 4.7, 4.7,
+    4.5, 4.5, 4.5, 4.5,
+    4.3, 4.3, 4.3, 4.3, 4.3,
+    4.1, 4.1, 4.1, 4.1, 4.1,
+    3.9, 3.9, 3.9, 3.9, 3.9,
+    3.7, 3.7, 3.7, 3.7, 3.7,
+    3.5, 3.5, 3.5, 3.5, 3.5,
+    3.4, 3.4, 3.4, 3.4,
+    3.2, 3.2, 3.2, 3.2, 3.2,
+    3.1, 3.1, 3.1, 3.1, 3.1,
+    3.0, 3.0, 3.0, 3.0, 3.0,
+    2.8, 2.8, 2.8, 2.8, 2.8,
+    2.6, 2.6, 2.6,
+    2.4,
+]
+
+
 def optional_env_float(name: str, default=None):
     value = os.getenv(name)
     if value in (None, ''):
@@ -2478,8 +2507,11 @@ def predict_lot_metrics(lot: Lot, records_by_lot: dict[int, list[DailyManagement
     current_weight = projection_7.get('current_weight_g') or latest_weight_for_lot(lot, records_by_lot) or 0
     current_biomass = latest_biomass_for_lot(lot, records_by_lot, allocations_by_lot)
     if not current_biomass and current_weight:
-        current_biomass = round((current_live_count_for_lot(lot) * current_weight) / 1000, 2)
+        current_biomass = round((modeled_live_count_for_lot(lot) * current_weight) / 1000, 2)
     survival_now = survival_estimate_for_lot(lot, records_by_lot)
+    standard_survival = standard_survival_pct_for_lot(lot, on_date=today)
+    if standard_survival is not None and survival_now is not None:
+        survival_now = min(survival_now, standard_survival)
     recent_mortality = sum((record.mortality_qty or 0) for record in records if (today - record.manage_date).days <= 7)
     predicted_survival = survival_now
     if survival_now is not None and lot.initial_count:
@@ -4742,6 +4774,148 @@ def lot_environment_snapshot(lot: Lot, ref_date=None, days=5):
     }
 
 
+
+def is_growout_lot(lot: Lot):
+    phase = normalize_text(getattr(lot, 'phase', '') or '')
+    unit_phase = normalize_text(getattr(getattr(lot, 'unit', None), 'phase', '') or '')
+    return phase in {'engorda', 'grow out', 'growout'} or unit_phase in {'engorda', 'grow out', 'growout'}
+
+
+def _interpolate_points(points, x):
+    """Interpolação linear simples para curvas internas do sistema."""
+    if not points:
+        return None
+    if x <= points[0][0]:
+        return points[0][1]
+    if x >= points[-1][0]:
+        return points[-1][1]
+    for idx in range(1, len(points)):
+        x0, y0 = points[idx - 1]
+        x1, y1 = points[idx]
+        if x <= x1:
+            span = (x1 - x0) or 1
+            return y0 + ((y1 - y0) * ((x - x0) / span))
+    return points[-1][1]
+
+
+def standard_growout_curve_point(age_days: int | float):
+    """Curva-base da tabela padrão para a fase de engorda.
+
+    Dia 0 = entrada na engorda com ~1,5 g. A curva vai até o dia 69/70 com ~16 g,
+    sobrevivência acumulada de 80% e FCR acumulado aproximado de 1,42.
+    """
+    age = max(float(age_days or 0), 0.0)
+    max_index = STANDARD_GROWOUT_DAYS - 1
+    clamped_index = min(age, max_index)
+    weight_gain = STANDARD_GROWOUT_FINAL_WEIGHT_G - STANDARD_GROWOUT_START_WEIGHT_G
+    expected_weight = STANDARD_GROWOUT_START_WEIGHT_G + (weight_gain * (clamped_index / max_index))
+    if age > max_index:
+        # Depois da faixa da tabela, mantém avanço conservador para não travar projeções tardias.
+        expected_weight += (age - max_index) * 0.08
+    survival_drop = STANDARD_GROWOUT_INITIAL_SURVIVAL_PCT - STANDARD_GROWOUT_FINAL_SURVIVAL_PCT
+    survival_pct = STANDARD_GROWOUT_INITIAL_SURVIVAL_PCT - (survival_drop * (min(age, max_index) / max_index))
+    fcr = 0.05 + ((STANDARD_GROWOUT_FINAL_FCR - 0.05) * (min(age, max_index) / max_index))
+    rate_index = int(round(min(age, len(STANDARD_GROWOUT_FEED_RATE_PCTS) - 1)))
+    feed_rate_pct = STANDARD_GROWOUT_FEED_RATE_PCTS[rate_index]
+    return {
+        'age_days': int(round(age)),
+        'expected_weight_g': round(expected_weight, 2),
+        'daily_gain_g': round(weight_gain / max_index, 3),
+        'survival_pct': round(max(survival_pct, STANDARD_GROWOUT_FINAL_SURVIVAL_PCT), 2),
+        'feed_rate_pct': round(feed_rate_pct, 2),
+        'estimated_fcr': round(fcr, 2),
+        'source': 'Tabela padrão 1,5 g → 16 g / 70 dias',
+    }
+
+
+def standard_growout_curve_by_weight(weight_g: float | int | None):
+    weight = max(parse_float(weight_g, 0) or 0, 0)
+    max_index = STANDARD_GROWOUT_DAYS - 1
+    if weight <= 0:
+        return standard_growout_curve_point(0)
+    if weight <= STANDARD_GROWOUT_START_WEIGHT_G:
+        return standard_growout_curve_point(0)
+    if weight >= STANDARD_GROWOUT_FINAL_WEIGHT_G:
+        return standard_growout_curve_point(max_index)
+    age = ((weight - STANDARD_GROWOUT_START_WEIGHT_G) / (STANDARD_GROWOUT_FINAL_WEIGHT_G - STANDARD_GROWOUT_START_WEIGHT_G)) * max_index
+    return standard_growout_curve_point(age)
+
+
+def standard_expected_weight_at_age(lot: Lot, age_days: int):
+    """Peso esperado inicial, com a tabela como base e deslocamento pelo primeiro dado real do lote."""
+    if is_growout_lot(lot):
+        base = standard_growout_curve_point(age_days)
+        expected = base['expected_weight_g']
+        observations = merged_weight_observations(lot.id)
+        if observations:
+            first = observations[0]
+            first_age = max((first['date'] - lot.start_date).days, 0)
+            first_base = standard_growout_curve_point(first_age)['expected_weight_g']
+            offset = (first['weight_g'] or first_base) - first_base
+            expected = max(0.03, expected + offset)
+        return {
+            'expected_weight_g': round(expected, 2),
+            'confidence': 45,
+            'similar_cases': 0,
+            'source': base['source'],
+            'standard_feed_rate_pct': base['feed_rate_pct'],
+            'standard_survival_pct': base['survival_pct'],
+            'standard_fcr': base['estimated_fcr'],
+        }
+
+    # Mantém berçário/raçeway no comportamento anterior, sem alterar a alimentação de berçário.
+    expected = round(max((lot.estimated_weight_g or 0) + max(historical_growth_rate(lot), 0.08) * max(age_days, 0), 0.03), 2)
+    return {
+        'expected_weight_g': expected,
+        'confidence': 35,
+        'similar_cases': 0,
+        'source': 'Histórico simples do lote',
+        'standard_feed_rate_pct': None,
+        'standard_survival_pct': None,
+        'standard_fcr': None,
+    }
+
+
+def standard_survival_pct_for_lot(lot: Lot, on_date=None):
+    if not lot or not is_growout_lot(lot):
+        return None
+    on_date = on_date or date.today()
+    age_days = max((on_date - lot.start_date).days, 0)
+    return standard_growout_curve_point(age_days)['survival_pct']
+
+
+def modeled_live_count_for_lot(lot: Lot, on_date=None):
+    """Contagem viva usada em projeções/sugestão quando ainda não há despesca real.
+
+    Usa mortalidade lançada, mas evita superestimar biomassa quando há pouca mortalidade visível,
+    aplicando a sobrevivência padrão da curva como teto inicial. Biomassa real lançada em biometria
+    continua tendo prioridade nas sugestões de ração.
+    """
+    on_date = on_date or date.today()
+    allocations = LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+    ).all()
+    base_count = sum((allocation.quantity_allocated or 0) for allocation in allocations) or (parse_int(getattr(lot, 'initial_count', 0), 0) or 0)
+    mortality = total_mortality_for_lot(lot.id, up_to_date=on_date)
+    harvested = lot_total_harvested_units(lot.id)
+    mortality_adjusted = max(base_count - mortality - harvested, 0)
+    standard_survival = standard_survival_pct_for_lot(lot, on_date=on_date)
+    if standard_survival is None or harvested > 0 or not base_count:
+        return mortality_adjusted
+    standard_adjusted = int(round(base_count * (standard_survival / 100)))
+    return max(min(mortality_adjusted, standard_adjusted), 0)
+
+
+def pellet_hint_for_weight(weight_g):
+    weight = parse_float(weight_g, 0) or 0
+    if weight <= 1.5:
+        return 'Wean 0,8 / 1,3 mm'
+    if weight <= 6.5:
+        return 'Engorda J 2,0 mm'
+    return 'Engorda 2,4 mm'
+
 def build_historical_curve_dataset(phase=None):
     dataset = []
     lots = Lot.query.options(joinedload(Lot.unit)).all()
@@ -4767,7 +4941,8 @@ def build_historical_curve_dataset(phase=None):
 
 
 def adaptive_expected_weight_at_age(lot: Lot, age_days: int):
-    fallback = round(max((lot.estimated_weight_g or 0) + max(historical_growth_rate(lot), 0.08) * max(age_days, 0), 0.03), 2)
+    baseline = standard_expected_weight_at_age(lot, age_days)
+    fallback = baseline['expected_weight_g']
     dataset = build_historical_curve_dataset(lot.phase)
     target_density = lot_density_snapshot(lot) or 0
     target_supplier = normalize_text(lot.larva_supplier or '')
@@ -4778,19 +4953,38 @@ def adaptive_expected_weight_at_age(lot: Lot, age_days: int):
         age_distance = abs((row['age_days'] or 0) - age_days)
         density_distance = abs((row['density'] or target_density or 0) - target_density)
         supplier_penalty = 0 if row['supplier_key'] == target_supplier else 2.0
-        same_lot_penalty = 0.3 if row['lot_id'] == lot.id else 0
+        same_lot_penalty = 0.15 if row['lot_id'] == lot.id else 0
         distance = (age_distance / 6.0) + (density_distance / 20.0) + supplier_penalty + same_lot_penalty
         weight_score = 1 / (1 + distance)
         scored.append((distance, weight_score, row))
     if not scored:
-        return {'expected_weight_g': fallback, 'confidence': 35, 'similar_cases': 0}
+        return {
+            'expected_weight_g': fallback,
+            'confidence': baseline['confidence'],
+            'similar_cases': 0,
+            'source': baseline.get('source'),
+            'standard_feed_rate_pct': baseline.get('standard_feed_rate_pct'),
+            'standard_survival_pct': baseline.get('standard_survival_pct'),
+            'standard_fcr': baseline.get('standard_fcr'),
+        }
     top = [item for item in sorted(scored, key=lambda item: item[0])[:45] if item[1] > 0]
     weighted_sum = sum(item[2]['weight_g'] * item[1] for item in top)
     weight_total = sum(item[1] for item in top)
-    expected = round(weighted_sum / weight_total, 2) if weight_total else fallback
-    expected = round((expected * 0.82) + (fallback * 0.18), 2)
-    confidence = min(96, 38 + len(top) * 2)
-    return {'expected_weight_g': expected, 'confidence': int(confidence), 'similar_cases': len(top)}
+    historical_expected = round(weighted_sum / weight_total, 2) if weight_total else fallback
+    # Quanto mais casos reais existem, menor o peso da tabela-base. A tabela nunca some totalmente:
+    # ela continua como trilho inicial/segurança para lotes novos ou dados escassos.
+    baseline_weight = max(0.15, 0.62 - (len(top) * 0.018))
+    expected = round((fallback * baseline_weight) + (historical_expected * (1 - baseline_weight)), 2)
+    confidence = min(97, max(baseline['confidence'], 40 + len(top) * 2))
+    return {
+        'expected_weight_g': expected,
+        'confidence': int(confidence),
+        'similar_cases': len(top),
+        'source': 'Tabela padrão + histórico real da fazenda',
+        'standard_feed_rate_pct': baseline.get('standard_feed_rate_pct'),
+        'standard_survival_pct': baseline.get('standard_survival_pct'),
+        'standard_fcr': baseline.get('standard_fcr'),
+    }
 
 
 def current_weight_for_lot(lot):
@@ -4878,15 +5072,35 @@ def current_live_count_for_lot(lot):
 
 
 def feed_profile_for_weight(weight):
-    if weight <= 1:
-        return {'base_pct': 0.12, 'min_pct': 0.10, 'max_pct': 0.14, 'pellet': '0,8 a 1,2 mm'}
-    if weight <= 3:
-        return {'base_pct': 0.08, 'min_pct': 0.065, 'max_pct': 0.095, 'pellet': '1,2 a 1,5 mm'}
-    if weight <= 8:
-        return {'base_pct': 0.05, 'min_pct': 0.04, 'max_pct': 0.06, 'pellet': '1,5 a 2,0 mm'}
-    if weight <= 15:
-        return {'base_pct': 0.035, 'min_pct': 0.028, 'max_pct': 0.042, 'pellet': '2,0 a 2,5 mm'}
-    return {'base_pct': 0.028, 'min_pct': 0.022, 'max_pct': 0.034, 'pellet': '2,5 a 3,0 mm'}
+    curve = standard_growout_curve_by_weight(weight)
+    base_pct = (curve['feed_rate_pct'] or 3.0) / 100
+    return {
+        'base_pct': base_pct,
+        'min_pct': max(base_pct * 0.84, 0.018),
+        'max_pct': min(base_pct * 1.16, 0.14),
+        'pellet': pellet_hint_for_weight(weight),
+        'curve_source': curve['source'],
+        'standard_survival_pct': curve['survival_pct'],
+        'standard_fcr': curve['estimated_fcr'],
+    }
+
+
+def feed_profile_for_lot(lot, weight):
+    profile = feed_profile_for_weight(weight)
+    if lot and is_growout_lot(lot):
+        age_days = max((date.today() - lot.start_date).days, 0)
+        age_curve = standard_growout_curve_point(age_days)
+        age_pct = (age_curve['feed_rate_pct'] or (profile['base_pct'] * 100)) / 100
+        # Mescla peso real e idade do ciclo para evitar saltos quando a biometria atrasa.
+        base_pct = (profile['base_pct'] * 0.7) + (age_pct * 0.3)
+        profile.update({
+            'base_pct': base_pct,
+            'min_pct': max(base_pct * 0.84, 0.018),
+            'max_pct': min(base_pct * 1.16, 0.14),
+            'standard_survival_pct': age_curve['survival_pct'],
+            'standard_fcr': age_curve['estimated_fcr'],
+        })
+    return profile
 
 
 def learned_feed_profile(lot, weight_g):
@@ -4927,15 +5141,35 @@ def learned_feed_profile(lot, weight_g):
 
 def feeding_recommendation_for_lot(lot):
     weight = parse_float(current_weight_for_lot(lot), 0) or 0
-    live_count = current_live_count_for_lot(lot)
-    biomass_kg = (live_count * weight) / 1000 if weight > 0 and live_count > 0 else 0
-    profile = feed_profile_for_weight(weight)
+    live_count = modeled_live_count_for_lot(lot)
+    records_by_lot = {lot.id: DailyManagement.query.filter(DailyManagement.lot_id == lot.id).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()}
+    allocations_by_lot = {lot.id: LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot.id,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= date.today()),
+    ).all()}
+    biomass_from_real_data = latest_biomass_for_lot(lot, records_by_lot, allocations_by_lot)
+    biomass_source = 'curva padrão + sobrevivência estimada'
+    if biomass_from_real_data and biomass_from_real_data > 0:
+        biomass_kg = biomass_from_real_data
+        if weight > 0:
+            live_count = int(round((biomass_kg * 1000) / weight))
+        biomass_source = 'biometria/manejo lançado'
+    else:
+        biomass_kg = (live_count * weight) / 1000 if weight > 0 and live_count > 0 else 0
+    profile = feed_profile_for_lot(lot, weight)
     growth_projection = smart_growth_projection(lot, 7)
     learned = learned_feed_profile(lot, weight)
     learned_pct = learned['feed_pct'] if learned['feed_pct'] is not None else profile['base_pct']
-    blended_pct = (profile['base_pct'] * 0.62) + (learned_pct * 0.38)
+    historical_weight = min(0.52, 0.22 + (learned['cases'] * 0.012)) if learned['feed_pct'] is not None else 0.0
+    blended_pct = (profile['base_pct'] * (1 - historical_weight)) + (learned_pct * historical_weight)
     growth_factor = 1.0
     drivers = []
+    if profile.get('curve_source'):
+        drivers.append('Curva-base: tabela padrão de engorda')
+    if biomass_source == 'biometria/manejo lançado':
+        drivers.append('Biomassa real lançada priorizada')
+    elif profile.get('standard_survival_pct') is not None:
+        drivers.append(f"Sobrevivência inicial estimada: {profile['standard_survival_pct']}%")
     if growth_projection.get('gap_pct') is not None:
         if growth_projection['gap_pct'] <= -5:
             growth_factor *= 1.06
@@ -4958,9 +5192,12 @@ def feeding_recommendation_for_lot(lot):
     final_pct = min(max(final_pct, profile['min_pct']), profile['max_pct'])
     suggested = biomass_kg * final_pct
     return {
-        'model_name': 'Modelo adaptativo da fazenda',
+        'model_name': 'Tabela padrão + modelo adaptativo da fazenda',
         'biomass_kg': round(biomass_kg, 2),
+        'biomass_source': biomass_source,
         'live_count': live_count,
+        'standard_survival_pct': profile.get('standard_survival_pct'),
+        'standard_fcr': profile.get('standard_fcr'),
         'base_pct_biomass': round(profile['base_pct'] * 100, 2),
         'learned_pct_biomass': round((learned_pct or profile['base_pct']) * 100, 2),
         'feed_pct_biomass': round(final_pct * 100, 2),
@@ -5057,22 +5294,66 @@ def shrimp_price_from_weight(weight_g, base_price_10g=22.0):
     return round(base_price_10g + (round(weight_g) - 10), 2)
 
 
-def recent_feed_cost_per_kg(lot):
+def lot_feed_cost_info(lot):
     rows = DailyManagement.query.filter(
         DailyManagement.lot_id == lot.id,
         DailyManagement.feed_unit_cost.isnot(None),
         DailyManagement.feed_unit_cost > 0,
-    ).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).limit(10).all()
-    values = [row.feed_unit_cost for row in rows if row.feed_unit_cost]
-    if values:
-        return round(sum(values) / len(values), 2)
-    return 6.0
+        DailyManagement.feed_offered_kg.isnot(None),
+        DailyManagement.feed_offered_kg > 0,
+    ).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).limit(15).all()
+    if rows:
+        total_qty = sum(row.feed_offered_kg or 0 for row in rows)
+        if total_qty > 0:
+            total_value = sum((row.feed_unit_cost or 0) * (row.feed_offered_kg or 0) for row in rows)
+            return {
+                'cost': round(total_value / total_qty, 2),
+                'source': 'média ponderada das últimas rações lançadas neste lote',
+                'rows': len(rows),
+            }
+
+    lot_movements = FeedInventory.query.filter(
+        FeedInventory.lot_id == lot.id,
+        FeedInventory.unit_cost.isnot(None),
+        FeedInventory.unit_cost > 0,
+    ).order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).limit(20).all()
+    if lot_movements:
+        total_qty = sum(abs(movement.quantity_kg or 0) for movement in lot_movements)
+        if total_qty > 0:
+            total_value = sum(abs(movement.quantity_kg or 0) * (movement.unit_cost or 0) for movement in lot_movements)
+            return {
+                'cost': round(total_value / total_qty, 2),
+                'source': 'movimentações de ração vinculadas ao lote',
+                'rows': len(lot_movements),
+            }
+
+    global_entries = FeedInventory.query.filter(
+        FeedInventory.movement_type == 'entrada',
+        FeedInventory.unit_cost.isnot(None),
+        FeedInventory.unit_cost > 0,
+    ).order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).limit(40).all()
+    if global_entries:
+        total_qty = sum(entry.quantity_kg or 0 for entry in global_entries)
+        if total_qty > 0:
+            total_value = sum((entry.quantity_kg or 0) * (entry.unit_cost or 0) for entry in global_entries)
+            return {
+                'cost': round(total_value / total_qty, 2),
+                'source': 'média das entradas recentes de estoque, pois o lote ainda não tem consumo com custo',
+                'rows': len(global_entries),
+            }
+    return {'cost': 6.0, 'source': 'valor padrão provisório, sem custo de ração lançado', 'rows': 0}
+
+
+def recent_feed_cost_per_kg(lot):
+    return lot_feed_cost_info(lot)['cost']
 
 
 def harvest_decision_analysis(lot, base_price_10g=22.0, feed_cost_kg=None):
     if not lot:
         return None
-    feed_cost_kg = feed_cost_kg or recent_feed_cost_per_kg(lot)
+    feed_cost_info = lot_feed_cost_info(lot)
+    feed_cost_override = feed_cost_kg is not None
+    feed_cost_kg = feed_cost_kg if feed_cost_override else feed_cost_info['cost']
     current_rec = feeding_recommendation_for_lot(lot)
     live_count = current_rec['live_count']
     fixed_cost_total = calculate_fixed_cost_for_lot(lot)
@@ -5104,10 +5385,12 @@ def harvest_decision_analysis(lot, base_price_10g=22.0, feed_cost_kg=None):
     for scenario in scenarios:
         scenario['incremental_gain'] = round(scenario['net_value'] - base['net_value'], 2)
     best = max(scenarios, key=lambda row: row['net_value']) if scenarios else None
-    decision = 'DespescAR agora' if best and best['days_wait'] == 0 else f'Esperar {best["days_wait"]} dias' if best else None
+    decision = 'Despescar agora' if best and best['days_wait'] == 0 else f'Esperar {best["days_wait"]} dias' if best else None
     return {
         'base_price_10g': base_price_10g,
         'feed_cost_kg': feed_cost_kg,
+        'feed_cost_source': 'informado manualmente' if feed_cost_override else feed_cost_info['source'],
+        'feed_cost_rows': feed_cost_info.get('rows', 0),
         'scenarios': scenarios,
         'best': best,
         'decision': decision,
