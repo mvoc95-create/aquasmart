@@ -1,100 +1,76 @@
 {% extends 'base.html' %}
 {% block page_title %}Relatórios gerenciais{% endblock %}
-{% block page_subtitle %}Central de relatórios mais direta: escolha o relatório, baixe em Excel ou PDF e acompanhe os principais indicadores da fazenda.{% endblock %}
+{% block page_subtitle %}Uma central mais limpa para estoque, produção, financeiro, água e exportações em Excel ou PDF.{% endblock %}
 {% block content %}
-<section class="panel reports-hero">
-  <div class="panel-head">
-    <div><p class="panel-kicker">Central gerencial</p><h2>Relatórios prontos para reunião, impressão e fechamento</h2></div>
-  </div>
-  <form method="get" class="form-grid compact-form">
-    <label>Janela de análise do painel
+<section class="panel">
+  <div class="panel-head compact-between">
+    <div><p class="panel-kicker">Resumo executivo</p><h2>Visão consolidada da fazenda</h2></div>
+    <form method="get" class="inline-filter">
       <select name="days">
-        {% for option in [7, 30, 90, 180, 365] %}
-        <option value="{{ option }}" {% if period_days == option %}selected{% endif %}>Últimos {{ option }} dias</option>
-        {% endfor %}
+        {% for option in [7, 30, 90, 180, 365] %}<option value="{{ option }}" {% if period_days == option %}selected{% endif %}>Últimos {{ option }} dias</option>{% endfor %}
       </select>
-    </label>
-    <div class="form-actions"><button type="submit">Atualizar painel</button></div>
-  </form>
-  <p class="empty-state compact-state">Painel analisando dados desde <strong>{{ start_date|brdate }}</strong>. Os arquivos baixados trazem o histórico completo do relatório escolhido.</p>
+      <button type="submit">Atualizar</button>
+    </form>
+  </div>
+  <div class="kpi-grid">
+    <article class="kpi-card"><span>Receita do período</span><strong>{{ financial_totals.revenue_period|money }}</strong></article>
+    <article class="kpi-card"><span>Resultado do período</span><strong>{{ financial_totals.profit_period|money }}</strong></article>
+    <article class="kpi-card"><span>Custo total lotes ativos</span><strong>{{ financial_totals.total_cost|money }}</strong></article>
+    <article class="kpi-card"><span>Alertas de água</span><strong>{{ water_alert_rows|length }}</strong></article>
+  </div>
 </section>
 
-<div class="cards compact-cards">
-  <div class="metric-card"><span class="metric-label">Estoque de ração</span><strong>{{ feed_snapshot.total_stock_kg }} kg</strong><small>{{ feed_snapshot.low_stock_count }} item(ns) em alerta.</small></div>
-  <div class="metric-card"><span class="metric-label">Outros insumos</span><strong>{{ supply_snapshot.total_stock_qty }}</strong><small>{{ supply_snapshot.low_stock_count }} item(ns) em alerta.</small></div>
-  <div class="metric-card"><span class="metric-label">Receita no período</span><strong>{{ financial_totals.revenue_period|money }}</strong><small>Despescas registradas no período.</small></div>
-  <div class="metric-card"><span class="metric-label">Resultado no período</span><strong>{{ financial_totals.profit_period|money }}</strong><small>Receita menos custos vinculados.</small></div>
-</div>
-
-<section class="panel full-width-panel">
-  <div class="panel-head"><div><p class="panel-kicker">Downloads</p><h2>Escolha o relatório</h2></div></div>
-  <div class="report-option-grid">
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Exportações</p><h2>Relatórios prontos</h2></div></div>
+  <div class="report-cards-grid">
     {% set reports = [
-      ('stock', 'Estoque completo', 'Ração, insumos, saldo, mínimo e custo médio.'),
-      ('production', 'Produção e lotes', 'Custos por lote, unidades, FCR real e sobrevivência.'),
-      ('financial', 'Financeiro de vendas', 'Receita, custos e resultado por despesca.'),
-      ('water_quality', 'Qualidade da água completa', 'OD, pH, temperatura, salinidade, transparência, amônia, nitrito, nitrato, alcalinidade e dureza.'),
-      ('water_alerts', 'Alertas da água', 'Somente parâmetros fora da faixa de referência.'),
-      ('management', 'Manejo diário', 'Ração ofertada/consumida, mortalidade, peso médio e biomassa.'),
-      ('sales', 'Despescas e vendas', 'Cliente, canal, preço por kg, receita e resultado por venda.')
+      ('stock', 'Estoque completo', 'Rações e insumos com saldo, mínimo e custo médio.'),
+      ('production', 'Produção e lotes', 'Custos, FCR, sobrevivência e fornecedor de PL.'),
+      ('financial', 'Financeiro', 'Receitas, custos e resultado operacional.'),
+      ('water_quality', 'Qualidade da água', 'Leituras com alertas e parâmetros críticos.')
     ] %}
     {% for key, title, desc in reports %}
-    <div class="report-option-card">
-      <h3>{{ title }}</h3>
-      <p>{{ desc }}</p>
-      <div class="report-download-actions">
-        <a class="link-button small-button" href="{{ url_for('export_managerial_report', report_key=key) }}">Excel</a>
-        <a class="secondary-link-button small-button" href="{{ url_for('export_managerial_report_pdf', report_key=key) }}">PDF</a>
+    <article class="report-card">
+      <div>
+        <h3>{{ title }}</h3>
+        <p>{{ desc }}</p>
       </div>
-    </div>
+      <div class="action-stack horizontal-stack">
+        <a class="link-button" href="{{ url_for('export_managerial_report', report_key=key) }}">Excel</a>
+        <a class="secondary-link-button" href="{{ url_for('export_managerial_report_pdf', report_key=key) }}">PDF</a>
+      </div>
+    </article>
     {% endfor %}
   </div>
 </section>
 
 <div class="grid-2">
-  <section class="panel">
-    <div class="panel-head"><div><p class="panel-kicker">Financeiro</p><h2>Resumo dos lotes ativos</h2></div></div>
-    <div class="table-wrap"><table><tbody>
-      <tr><th>Custo com ração</th><td>{{ financial_totals.feed_cost|money }}</td></tr>
-      <tr><th>Custo com insumos e materiais</th><td>{{ financial_totals.supply_cost|money }}</td></tr>
-      <tr><th>Custo fixo rateado</th><td>{{ financial_totals.fixed_cost|money }}</td></tr>
-      <tr><th>Custo total</th><td>{{ financial_totals.total_cost|money }}</td></tr>
-      <tr><th>Receita no período</th><td>{{ financial_totals.revenue_period|money }}</td></tr>
-      <tr><th>Resultado no período</th><td>{{ financial_totals.profit_period|money }}</td></tr>
-    </tbody></table></div>
-  </section>
-  <section class="panel">
-    <div class="panel-head"><div><p class="panel-kicker">Água</p><h2>Alertas recentes</h2></div></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Data</th><th>Unidade</th><th>Alertas</th></tr></thead>
-      <tbody>{% for row in water_alert_rows %}<tr><td>{{ row.record.monitor_date|brdate }}</td><td>{{ row.record.unit.name if row.record.unit else '—' }}</td><td>{% for alert in row.alerts %}<div>{{ alert.message }}</div>{% endfor %}</td></tr>{% else %}<tr><td colspan="3" class="empty-cell">Nenhum alerta no período.</td></tr>{% endfor %}</tbody>
-    </table></div>
-  </section>
-</div>
-
-<section class="panel full-width-panel">
+<section class="panel">
   <div class="panel-head"><div><p class="panel-kicker">Produção</p><h2>Lotes ativos</h2></div></div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Lote</th><th>Ração</th><th>Insumos</th><th>Custo fixo</th><th>Custo total</th><th>FCR real</th><th>Sobrevivência</th></tr></thead>
-    <tbody>{% for row in lot_summaries %}<tr><td>{{ row.lot.lot_code }}</td><td>{{ row.feed_cost|money }}</td><td>{{ row.supply_cost|money }}</td><td>{{ row.fixed_cost|money }}</td><td>{{ row.total_cost|money }}</td><td>{{ row.fcr_real if row.fcr_real is not none else '—' }}</td><td>{% if row.survival_pct is not none %}{{ row.survival_pct }}%{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="7" class="empty-cell">Nenhum lote ativo encontrado.</td></tr>{% endfor %}</tbody>
-  </table></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Lote</th><th>Fornecedor PL</th><th>FCR</th><th>Sobrevivência</th><th>Custo total</th></tr></thead>
+      <tbody>
+        {% for row in lot_summaries %}
+        <tr><td>{{ row.lot.lot_code }}</td><td>{{ row.lot.larva_supplier or '—' }}</td><td>{{ row.fcr_real or '—' }}</td><td>{{ row.survival_pct or '—' }}{% if row.survival_pct %}%{% endif %}</td><td>{{ row.total_cost|money }}</td></tr>
+        {% else %}<tr><td colspan="5" class="empty-cell">Sem lotes ativos.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 
-<div class="grid-2">
-  <section class="panel">
-    <div class="panel-head"><div><p class="panel-kicker">Manejo</p><h2>Lançamentos recentes</h2></div></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Data</th><th>Unidade</th><th>Lote</th><th>Ração</th><th>Mortalidade</th></tr></thead>
-      <tbody>{% for row in management_rows %}<tr><td>{{ row.manage_date|brdate }}</td><td>{{ row.unit.name if row.unit else '—' }}</td><td>{{ row.lot.lot_code if row.lot else '—' }}</td><td>{{ row.feed_offered_kg }} kg</td><td>{{ row.mortality_qty }}</td></tr>{% else %}<tr><td colspan="5" class="empty-cell">Sem lançamentos no período.</td></tr>{% endfor %}</tbody>
-    </table></div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><div><p class="panel-kicker">Despescas</p><h2>Vendas recentes</h2></div></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Data</th><th>Cliente</th><th>Lote</th><th>Kg</th><th>Receita</th></tr></thead>
-      <tbody>{% for summary in sales_summaries %}<tr><td>{{ summary.sale.sale_date|brdate }}</td><td>{{ summary.sale.client_name }}</td><td>{{ summary.sale.lot.lot_code if summary.sale.lot else '—' }}</td><td>{{ summary.sale.quantity_kg }}</td><td>{{ summary.revenue|money }}</td></tr>{% else %}<tr><td colspan="5" class="empty-cell">Sem vendas registradas no período.</td></tr>{% endfor %}</tbody>
-    </table></div>
-  </section>
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Qualidade da água</p><h2>Últimos alertas</h2></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Viveiro</th><th>Alertas</th></tr></thead>
+      <tbody>
+        {% for item in water_alert_rows %}
+        <tr><td>{{ item.record.monitor_date|brdate }} {{ item.record.monitor_time|brtime }}</td><td>{{ item.record.unit.name if item.record.unit else '—' }}</td><td>{% for alert in item.alerts %}<span class="status-badge warning-badge">{{ alert.message }}</span>{% endfor %}</td></tr>
+        {% else %}<tr><td colspan="3" class="empty-cell">Nenhum alerta recente.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 </div>
 {% endblock %}

@@ -105,6 +105,24 @@
           </div>
         </details>
 
+        <details class="nav-group" {% if current_endpoint in ['feeding_planner_page', 'biometrics_page', 'growth_analysis_page', 'pl_suppliers_page', 'harvest_decision_page', 'finance_page', 'assistant_page'] %}open{% endif %}>
+          <summary class="nav-group-summary">
+            <span class="nav-group-label"><i class="fa-solid fa-brain"></i><span>Inteligência</span></span>
+            <i class="fa-solid fa-chevron-right nav-group-chevron"></i>
+          </summary>
+          <div class="nav-submenu">
+            {% if current_user.is_authenticated and current_user.has_permission('dashboard') %}
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'feeding_planner_page' else '' }}" href="{{ url_for('feeding_planner_page') }}">Arraçoamento sugerido</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'biometrics_page' else '' }}" href="{{ url_for('biometrics_page') }}">Biometrias</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'growth_analysis_page' else '' }}" href="{{ url_for('growth_analysis_page') }}">Crescimento real x esperado</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'pl_suppliers_page' else '' }}" href="{{ url_for('pl_suppliers_page') }}">Fornecedores de PL</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'harvest_decision_page' else '' }}" href="{{ url_for('harvest_decision_page') }}">Ponto de despesca</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'finance_page' else '' }}" href="{{ url_for('finance_page') }}">Financeiro</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'assistant_page' else '' }}" href="{{ url_for('assistant_page') }}">Assistente IA</a>
+            {% endif %}
+          </div>
+        </details>
+
         <details class="nav-group" {% if current_endpoint in ['charts_page', 'managerial_reports_page'] %}open{% endif %}>
           <summary class="nav-group-summary">
             <span class="nav-group-label"><i class="fa-solid fa-file-chart-column"></i><span>Relatórios</span></span>
