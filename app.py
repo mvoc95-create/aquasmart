@@ -883,10 +883,10 @@ def parse_float(value, default=None):
 def parse_int(value, default=None):
     if value is None:
         return default
-    value = str(value).strip()
+    value = str(value).strip().replace(',', '.')
     if value == '':
         return default
-    return int(value)
+    return int(float(value))
 
 
 NURSERY_PROTOCOL_BASE_POPULATION = 265000
@@ -2473,12 +2473,12 @@ def phase_fcr_baselines():
 
 def predict_lot_metrics(lot: Lot, records_by_lot: dict[int, list[DailyManagement]], allocations_by_lot: dict[int, list[LotUnitAllocation]], phase_growth_map: dict, phase_fcr_map: dict, today: date):
     records = records_by_lot.get(lot.id, [])
-    current_weight = latest_weight_for_lot(lot, records_by_lot) or 0
+    projection_7 = smart_growth_projection(lot, 7)
+    projection_14 = smart_growth_projection(lot, 14)
+    current_weight = projection_7.get('current_weight_g') or latest_weight_for_lot(lot, records_by_lot) or 0
     current_biomass = latest_biomass_for_lot(lot, records_by_lot, allocations_by_lot)
-    lot_growth = average_daily_growth(records)
-    growth_used = lot_growth if lot_growth is not None else (phase_growth_map.get(lot.phase) or 0.08)
-    predicted_7 = round(current_weight + growth_used * 7, 1) if current_weight else None
-    predicted_14 = round(current_weight + growth_used * 14, 1) if current_weight else None
+    if not current_biomass and current_weight:
+        current_biomass = round((current_live_count_for_lot(lot) * current_weight) / 1000, 2)
     survival_now = survival_estimate_for_lot(lot, records_by_lot)
     recent_mortality = sum((record.mortality_qty or 0) for record in records if (today - record.manage_date).days <= 7)
     predicted_survival = survival_now
@@ -2489,26 +2489,28 @@ def predict_lot_metrics(lot: Lot, records_by_lot: dict[int, list[DailyManagement
     predicted_fcr = partial_fcr if partial_fcr is not None else phase_fcr_map.get(lot.phase)
     if predicted_fcr is not None:
         predicted_fcr = round(predicted_fcr, 2)
+
+    daily_growth = projection_7.get('daily_gain_g') or (phase_growth_map.get(lot.phase) or 0.08)
     harvest_date = None
-    if current_weight and growth_used > 0:
+    if current_weight and daily_growth > 0:
         if current_weight >= TARGET_HARVEST_WEIGHT_G:
             harvest_date = today
         else:
-            days_left = int(round((TARGET_HARVEST_WEIGHT_G - current_weight) / growth_used))
+            days_left = int(round((TARGET_HARVEST_WEIGHT_G - current_weight) / daily_growth))
             days_left = max(days_left, 1)
             harvest_date = today + timedelta(days=days_left)
-    measurements = len([record for record in records if record.average_weight_g is not None])
-    confidence = min(95, 48 + (measurements * 9) + min((today - lot.start_date).days, 30))
+
+    confidence = int(min(97, max(projection_7.get('model_confidence') or 45, 40)))
     return {
         'lot': lot,
         'current_weight': round(current_weight, 1) if current_weight else None,
-        'predicted_7d': predicted_7,
-        'predicted_14d': predicted_14,
+        'predicted_7d': projection_7.get('projected_weight_g'),
+        'predicted_14d': projection_14.get('projected_weight_g'),
         'predicted_survival': predicted_survival,
         'predicted_fcr': predicted_fcr,
         'harvest_date': harvest_date,
-        'confidence': int(confidence),
-        'daily_growth': round(growth_used, 3),
+        'confidence': confidence,
+        'daily_growth': round(daily_growth, 3),
         'current_biomass': current_biomass,
         'partial_fcr': partial_fcr,
     }
@@ -4662,59 +4664,206 @@ def latest_biometric_for_lot(lot_id):
     return BiometricsSample.query.filter(BiometricsSample.lot_id == lot_id).order_by(BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()).first()
 
 
+def merged_weight_observations(lot_id):
+    observations_by_date = {}
+    for row in DailyManagement.query.filter(DailyManagement.lot_id == lot_id, DailyManagement.average_weight_g.isnot(None)).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all():
+        if not row.manage_date or row.average_weight_g is None:
+            continue
+        payload = {
+            'date': row.manage_date,
+            'weight_g': round(row.average_weight_g or 0, 3),
+            'source': 'manejo',
+            'source_label': 'Manejo diário',
+            'source_priority': 1,
+            'id': row.id,
+        }
+        existing = observations_by_date.get(row.manage_date)
+        if not existing or (payload['source_priority'], payload['id']) >= (existing['source_priority'], existing['id']):
+            observations_by_date[row.manage_date] = payload
+    for row in BiometricsSample.query.filter(BiometricsSample.lot_id == lot_id, BiometricsSample.average_weight_g.isnot(None)).order_by(BiometricsSample.sample_date.asc(), BiometricsSample.id.asc()).all():
+        if not row.sample_date or row.average_weight_g is None:
+            continue
+        payload = {
+            'date': row.sample_date,
+            'weight_g': round(row.average_weight_g or 0, 3),
+            'source': 'biometria',
+            'source_label': 'Biometria',
+            'source_priority': 2,
+            'id': row.id,
+        }
+        existing = observations_by_date.get(row.sample_date)
+        if not existing or (payload['source_priority'], payload['id']) >= (existing['source_priority'], existing['id']):
+            observations_by_date[row.sample_date] = payload
+    return [item for _day, item in sorted(observations_by_date.items(), key=lambda pair: pair[0])]
+
+
+def lot_density_snapshot(lot: Lot, on_date=None):
+    on_date = on_date or date.today()
+    allocation = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+    ).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
+    qty = allocation.quantity_allocated if allocation and allocation.quantity_allocated else lot.initial_count
+    unit = allocation.unit if allocation and allocation.unit else lot.unit
+    if not unit or not unit.area_m2 or not qty:
+        return None
+    return round(qty / unit.area_m2, 2)
+
+
+def lot_environment_snapshot(lot: Lot, ref_date=None, days=5):
+    ref_date = ref_date or date.today()
+    unit_id = lot.unit_id
+    allocation = LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= ref_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= ref_date),
+    ).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
+    if allocation and allocation.unit_id:
+        unit_id = allocation.unit_id
+    rows = WaterMonitoring.query.filter(
+        WaterMonitoring.unit_id == unit_id,
+        WaterMonitoring.monitor_date >= ref_date - timedelta(days=max(days - 1, 0)),
+        WaterMonitoring.monitor_date <= ref_date,
+    ).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.monitor_time.desc(), WaterMonitoring.id.desc()).all()
+
+    def avg(field):
+        values = [getattr(row, field) for row in rows if getattr(row, field) is not None]
+        return round(sum(values) / len(values), 3) if values else None
+
+    return {
+        'temperature_c': avg('temperature_c'),
+        'dissolved_oxygen': avg('dissolved_oxygen'),
+        'ph': avg('ph'),
+        'salinity': avg('salinity'),
+        'ammonia': avg('ammonia'),
+        'nitrite': avg('nitrite'),
+        'rows': len(rows),
+    }
+
+
+def build_historical_curve_dataset(phase=None):
+    dataset = []
+    lots = Lot.query.options(joinedload(Lot.unit)).all()
+    for hist_lot in lots:
+        if phase and hist_lot.phase != phase:
+            continue
+        density = lot_density_snapshot(hist_lot)
+        supplier_key = normalize_text(hist_lot.larva_supplier or '')
+        for obs in merged_weight_observations(hist_lot.id):
+            age_days = max((obs['date'] - hist_lot.start_date).days, 0)
+            if not obs['weight_g'] or obs['weight_g'] <= 0:
+                continue
+            dataset.append({
+                'lot_id': hist_lot.id,
+                'phase': hist_lot.phase,
+                'age_days': age_days,
+                'weight_g': obs['weight_g'],
+                'density': density,
+                'supplier_key': supplier_key,
+                'source': obs['source'],
+            })
+    return dataset
+
+
+def adaptive_expected_weight_at_age(lot: Lot, age_days: int):
+    fallback = round(max((lot.estimated_weight_g or 0) + max(historical_growth_rate(lot), 0.08) * max(age_days, 0), 0.03), 2)
+    dataset = build_historical_curve_dataset(lot.phase)
+    target_density = lot_density_snapshot(lot) or 0
+    target_supplier = normalize_text(lot.larva_supplier or '')
+    scored = []
+    for row in dataset:
+        if row['phase'] != lot.phase:
+            continue
+        age_distance = abs((row['age_days'] or 0) - age_days)
+        density_distance = abs((row['density'] or target_density or 0) - target_density)
+        supplier_penalty = 0 if row['supplier_key'] == target_supplier else 2.0
+        same_lot_penalty = 0.3 if row['lot_id'] == lot.id else 0
+        distance = (age_distance / 6.0) + (density_distance / 20.0) + supplier_penalty + same_lot_penalty
+        weight_score = 1 / (1 + distance)
+        scored.append((distance, weight_score, row))
+    if not scored:
+        return {'expected_weight_g': fallback, 'confidence': 35, 'similar_cases': 0}
+    top = [item for item in sorted(scored, key=lambda item: item[0])[:45] if item[1] > 0]
+    weighted_sum = sum(item[2]['weight_g'] * item[1] for item in top)
+    weight_total = sum(item[1] for item in top)
+    expected = round(weighted_sum / weight_total, 2) if weight_total else fallback
+    expected = round((expected * 0.82) + (fallback * 0.18), 2)
+    confidence = min(96, 38 + len(top) * 2)
+    return {'expected_weight_g': expected, 'confidence': int(confidence), 'similar_cases': len(top)}
+
+
 def current_weight_for_lot(lot):
-    bio = latest_biometric_for_lot(lot.id)
-    if bio and bio.average_weight_g is not None:
-        return bio.average_weight_g
-    mgmt = latest_management_for_lot(lot.id)
-    if mgmt and mgmt.average_weight_g is not None:
-        return mgmt.average_weight_g
+    observations = merged_weight_observations(lot.id)
+    if observations:
+        return observations[-1]['weight_g']
     return lot.estimated_weight_g or 0
 
 
 def historical_growth_rate(lot):
-    mgmts = DailyManagement.query.filter(DailyManagement.lot_id == lot.id, DailyManagement.average_weight_g.isnot(None)).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()
-    if len(mgmts) >= 2:
-        first = mgmts[0]
-        last = mgmts[-1]
-        days = max((last.manage_date - first.manage_date).days, 1)
-        rate = ((last.average_weight_g or 0) - (first.average_weight_g or 0)) / days
+    observations = merged_weight_observations(lot.id)
+    if len(observations) >= 2:
+        first = observations[0]
+        last = observations[-1]
+        days = max((last['date'] - first['date']).days, 1)
+        rate = ((last['weight_g'] or 0) - (first['weight_g'] or 0)) / days
         if rate > 0:
             return round(rate, 3)
-    bios = BiometricsSample.query.filter(BiometricsSample.lot_id == lot.id).order_by(BiometricsSample.sample_date.asc(), BiometricsSample.id.asc()).all()
-    if len(bios) >= 2:
-        first = bios[0]
-        last = bios[-1]
-        days = max((last.sample_date - first.sample_date).days, 1)
-        rate = ((last.average_weight_g or 0) - (first.average_weight_g or 0)) / days
-        if rate > 0:
-            return round(rate, 3)
-    # fallback by phase
     return 0.18 if lot.phase == 'bercario' else 0.24
 
 
 def smart_growth_projection(lot, days_ahead=7):
-    current_weight = current_weight_for_lot(lot)
-    base_rate = historical_growth_rate(lot)
-    recent_water = None
-    alloc = find_active_allocation(lot.id, lot.unit_id, date.today())
-    unit_id = alloc.unit_id if alloc else lot.unit_id
-    if unit_id:
-        recent_water = WaterMonitoring.query.filter(WaterMonitoring.unit_id == unit_id).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.monitor_time.desc(), WaterMonitoring.id.desc()).first()
-    temp_factor = 1.0
-    if recent_water and recent_water.temperature_c:
-        if recent_water.temperature_c < 27:
-            temp_factor = 0.9
-        elif recent_water.temperature_c > 32:
-            temp_factor = 0.92
+    current_age = max((date.today() - lot.start_date).days, 0)
+    current_weight = parse_float(current_weight_for_lot(lot), 0) or 0
+    curve_now = adaptive_expected_weight_at_age(lot, current_age)
+    curve_future = adaptive_expected_weight_at_age(lot, current_age + days_ahead)
+    expected_gain = max((curve_future['expected_weight_g'] - curve_now['expected_weight_g']) / max(days_ahead, 1), 0)
+    lot_gain = max(historical_growth_rate(lot), 0)
+    env = lot_environment_snapshot(lot)
+    environment_factor = 1.0
+    drivers = []
+    if env.get('dissolved_oxygen') is not None and env['dissolved_oxygen'] < TARGET_OD_MIN:
+        environment_factor *= 0.88
+        drivers.append('OD baixo freando crescimento')
+    if env.get('ammonia') is not None and env['ammonia'] > TARGET_AMMONIA_MAX:
+        environment_factor *= 0.9
+        drivers.append('Amônia alta segurando ganho')
+    if env.get('temperature_c') is not None:
+        if env['temperature_c'] < TARGET_TEMP_MIN:
+            environment_factor *= 0.94
+            drivers.append('Temperatura abaixo da faixa ideal')
+        elif env['temperature_c'] > TARGET_TEMP_MAX:
+            environment_factor *= 0.95
+            drivers.append('Temperatura acima da faixa ideal')
         else:
-            temp_factor = 1.05
-    projected = current_weight + (base_rate * temp_factor * days_ahead)
+            environment_factor *= 1.03
+            drivers.append('Temperatura favorável ao apetite')
+    blended_gain = max(((expected_gain * 0.65) + (lot_gain * 0.35)) * environment_factor, 0.02 if current_weight else 0)
+    projected_weight = round(current_weight + blended_gain * days_ahead, 2) if current_weight else curve_future['expected_weight_g']
+    gap_pct = None
+    if current_weight and curve_now['expected_weight_g']:
+        gap_pct = round(((current_weight - curve_now['expected_weight_g']) / curve_now['expected_weight_g']) * 100, 2)
     return {
         'current_weight_g': round(current_weight or 0, 2),
-        'daily_gain_g': round(base_rate * temp_factor, 3),
-        'projected_weight_g': round(max(projected, current_weight), 2),
+        'expected_weight_g': curve_now['expected_weight_g'],
+        'daily_gain_g': round(blended_gain, 3),
+        'expected_daily_gain_g': round(expected_gain, 3),
+        'lot_daily_gain_g': round(lot_gain, 3),
+        'projected_weight_g': round(max(projected_weight, current_weight or 0), 2),
+        'gap_pct': gap_pct,
+        'environment_factor': round(environment_factor, 3),
+        'environment': env,
+        'drivers': drivers,
+        'model_confidence': min(97, max(curve_future['confidence'], curve_now['confidence'])),
+        'similar_cases': max(curve_future['similar_cases'], curve_now['similar_cases']),
     }
+
+
+def total_mortality_for_lot(lot_id: int, up_to_date=None):
+    query = db.session.query(func.coalesce(func.sum(DailyManagement.mortality_qty), 0)).filter(DailyManagement.lot_id == lot_id)
+    if up_to_date:
+        query = query.filter(DailyManagement.manage_date <= up_to_date)
+    return int(query.scalar() or 0)
 
 
 def current_live_count_for_lot(lot):
@@ -4722,53 +4871,155 @@ def current_live_count_for_lot(lot):
         LotUnitAllocation.lot_id == lot.id,
         or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= date.today()),
     ).all()
-    qty = sum((allocation.quantity_allocated or 0) for allocation in allocations)
-    if qty:
-        return qty
-    return parse_int(getattr(lot, 'initial_count', 0), 0) or 0
+    base_count = sum((allocation.quantity_allocated or 0) for allocation in allocations) or (parse_int(getattr(lot, 'initial_count', 0), 0) or 0)
+    mortality = total_mortality_for_lot(lot.id)
+    harvested = lot_total_harvested_units(lot.id)
+    return max(base_count - mortality - harvested, 0)
+
+
+def feed_profile_for_weight(weight):
+    if weight <= 1:
+        return {'base_pct': 0.12, 'min_pct': 0.10, 'max_pct': 0.14, 'pellet': '0,8 a 1,2 mm'}
+    if weight <= 3:
+        return {'base_pct': 0.08, 'min_pct': 0.065, 'max_pct': 0.095, 'pellet': '1,2 a 1,5 mm'}
+    if weight <= 8:
+        return {'base_pct': 0.05, 'min_pct': 0.04, 'max_pct': 0.06, 'pellet': '1,5 a 2,0 mm'}
+    if weight <= 15:
+        return {'base_pct': 0.035, 'min_pct': 0.028, 'max_pct': 0.042, 'pellet': '2,0 a 2,5 mm'}
+    return {'base_pct': 0.028, 'min_pct': 0.022, 'max_pct': 0.034, 'pellet': '2,5 a 3,0 mm'}
+
+
+def learned_feed_profile(lot, weight_g):
+    target_density = lot_density_snapshot(lot) or 0
+    target_supplier = normalize_text(lot.larva_supplier or '')
+    rows = DailyManagement.query.options(joinedload(DailyManagement.lot)).filter(
+        DailyManagement.average_weight_g.isnot(None),
+        DailyManagement.feed_offered_kg.isnot(None),
+        DailyManagement.feed_offered_kg > 0,
+    ).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).all()
+    scored = []
+    for row in rows:
+        if not row.lot or row.lot.phase != lot.phase or row.average_weight_g is None:
+            continue
+        biomass_kg = row.estimated_biomass_kg
+        if not biomass_kg:
+            seed_count = parse_int(row.lot.initial_count, 0) or 0
+            biomass_kg = (seed_count * (row.average_weight_g or 0)) / 1000 if seed_count and row.average_weight_g else 0
+        if not biomass_kg:
+            continue
+        feed_pct = (row.feed_offered_kg or 0) / biomass_kg
+        if feed_pct <= 0:
+            continue
+        row_density = lot_density_snapshot(row.lot) or target_density
+        distance = abs((row.average_weight_g or 0) - weight_g) / 2.2
+        distance += abs((row_density or 0) - target_density) / 25.0
+        if normalize_text(row.lot.larva_supplier or '') != target_supplier:
+            distance += 1.2
+        scored.append((distance, 1 / (1 + distance), feed_pct))
+    if not scored:
+        return {'feed_pct': None, 'confidence': 0, 'cases': 0}
+    top = sorted(scored, key=lambda item: item[0])[:40]
+    total_weight = sum(item[1] for item in top)
+    learned_pct = sum(item[2] * item[1] for item in top) / total_weight if total_weight else None
+    confidence = min(94, 32 + len(top) * 2)
+    return {'feed_pct': learned_pct, 'confidence': int(confidence), 'cases': len(top)}
 
 
 def feeding_recommendation_for_lot(lot):
     weight = parse_float(current_weight_for_lot(lot), 0) or 0
     live_count = current_live_count_for_lot(lot)
     biomass_kg = (live_count * weight) / 1000 if weight > 0 and live_count > 0 else 0
-    if weight <= 1:
-        pct = 0.12
-        pellet = '0,8 a 1,2 mm'
-    elif weight <= 3:
-        pct = 0.08
-        pellet = '1,2 a 1,5 mm'
-    elif weight <= 8:
-        pct = 0.05
-        pellet = '1,5 a 2,0 mm'
-    elif weight <= 15:
-        pct = 0.035
-        pellet = '2,0 a 2,5 mm'
-    else:
-        pct = 0.028
-        pellet = '2,5 a 3,0 mm'
-    suggested = biomass_kg * pct
+    profile = feed_profile_for_weight(weight)
+    growth_projection = smart_growth_projection(lot, 7)
+    learned = learned_feed_profile(lot, weight)
+    learned_pct = learned['feed_pct'] if learned['feed_pct'] is not None else profile['base_pct']
+    blended_pct = (profile['base_pct'] * 0.62) + (learned_pct * 0.38)
+    growth_factor = 1.0
+    drivers = []
+    if growth_projection.get('gap_pct') is not None:
+        if growth_projection['gap_pct'] <= -5:
+            growth_factor *= 1.06
+            drivers.append('Lote atrasado puxando oferta para cima')
+        elif growth_projection['gap_pct'] >= 8:
+            growth_factor *= 0.96
+            drivers.append('Lote acima da curva permitindo ajuste fino')
+    water_factor = 1.0
+    env = growth_projection.get('environment') or {}
+    if env.get('dissolved_oxygen') is not None and env['dissolved_oxygen'] < TARGET_OD_MIN:
+        water_factor *= 0.92
+        drivers.append('OD baixo segurando consumo')
+    if env.get('ammonia') is not None and env['ammonia'] > TARGET_AMMONIA_MAX:
+        water_factor *= 0.9
+        drivers.append('Amônia alta pedindo cautela')
+    if env.get('temperature_c') is not None and TARGET_TEMP_MIN <= env['temperature_c'] <= TARGET_TEMP_MAX:
+        water_factor *= 1.03
+        drivers.append('Temperatura boa sustentando apetite')
+    final_pct = blended_pct * growth_factor * water_factor
+    final_pct = min(max(final_pct, profile['min_pct']), profile['max_pct'])
+    suggested = biomass_kg * final_pct
     return {
+        'model_name': 'Modelo adaptativo da fazenda',
         'biomass_kg': round(biomass_kg, 2),
-        'feed_pct_biomass': round(pct * 100, 2),
+        'live_count': live_count,
+        'base_pct_biomass': round(profile['base_pct'] * 100, 2),
+        'learned_pct_biomass': round((learned_pct or profile['base_pct']) * 100, 2),
+        'feed_pct_biomass': round(final_pct * 100, 2),
         'suggested_feed_kg': round(suggested, 2),
-        'pellet_hint': pellet,
+        'min_feed_kg': round(biomass_kg * max(profile['min_pct'], final_pct * 0.92), 2),
+        'max_feed_kg': round(biomass_kg * min(profile['max_pct'], final_pct * 1.08), 2),
+        'pellet_hint': profile['pellet'],
         'current_weight_g': round(weight or 0, 2),
+        'expected_weight_g': growth_projection.get('expected_weight_g'),
+        'growth_gap_pct': growth_projection.get('gap_pct'),
+        'historical_confidence': learned['confidence'],
+        'historical_cases': learned['cases'],
+        'growth_factor_pct': round((growth_factor - 1) * 100, 1),
+        'water_factor_pct': round((water_factor - 1) * 100, 1),
+        'drivers': drivers + growth_projection.get('drivers', []),
+        'daily_gain_g': growth_projection.get('daily_gain_g'),
+        'projected_weight_7d_g': growth_projection.get('projected_weight_g'),
+        'model_confidence': growth_projection.get('model_confidence'),
+        'similar_cases': growth_projection.get('similar_cases'),
     }
 
 
 def build_growth_analysis(lot):
-    mgmts = DailyManagement.query.filter(DailyManagement.lot_id == lot.id, DailyManagement.average_weight_g.isnot(None)).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()
-    bios = BiometricsSample.query.filter(BiometricsSample.lot_id == lot.id).order_by(BiometricsSample.sample_date.asc(), BiometricsSample.id.asc()).all()
+    if not lot:
+        return {'points': [], 'summary': None}
     points = []
-    for row in mgmts:
-        days = max((row.manage_date - lot.start_date).days, 0)
-        points.append({'date': row.manage_date.strftime('%d/%m/%Y'), 'days': days, 'real': round(row.average_weight_g or 0, 2), 'expected': round((lot.estimated_weight_g or 0) + historical_growth_rate(lot) * days, 2)})
-    for row in bios:
-        days = max((row.sample_date - lot.start_date).days, 0)
-        points.append({'date': row.sample_date.strftime('%d/%m/%Y'), 'days': days, 'real': round(row.average_weight_g or 0, 2), 'expected': round((lot.estimated_weight_g or 0) + historical_growth_rate(lot) * days, 2), 'source': 'biometria'})
-    points.sort(key=lambda item: item['days'])
-    return points
+    for obs in merged_weight_observations(lot.id):
+        days = max((obs['date'] - lot.start_date).days, 0)
+        curve = adaptive_expected_weight_at_age(lot, days)
+        real_weight = round(obs['weight_g'] or 0, 2)
+        expected_weight = round(curve['expected_weight_g'] or 0, 2)
+        points.append({
+            'date': obs['date'].strftime('%d/%m/%Y'),
+            'days': days,
+            'real': real_weight,
+            'expected': expected_weight,
+            'deviation': round(real_weight - expected_weight, 2),
+            'deviation_pct': round(((real_weight - expected_weight) / expected_weight) * 100, 2) if expected_weight else None,
+            'source': obs['source_label'],
+            'confidence': curve['confidence'],
+        })
+    projection_7 = smart_growth_projection(lot, 7)
+    projection_14 = smart_growth_projection(lot, 14)
+    summary = None
+    if points:
+        last = points[-1]
+        summary = {
+            'current_weight_g': last['real'],
+            'expected_weight_g': last['expected'],
+            'deviation_g': last['deviation'],
+            'deviation_pct': last['deviation_pct'],
+            'projection_7d_g': projection_7['projected_weight_g'],
+            'projection_14d_g': projection_14['projected_weight_g'],
+            'daily_gain_g': projection_7['daily_gain_g'],
+            'model_confidence': projection_7['model_confidence'],
+            'similar_cases': projection_7['similar_cases'],
+            'drivers': projection_7['drivers'],
+        }
+    return {'points': points, 'summary': summary}
 
 
 def supplier_performance_rows():
@@ -4781,18 +5032,122 @@ def supplier_performance_rows():
         summaries = [lot_financial_summary(lot) for lot in lots]
         survival_values = [row['survival_pct'] for row in summaries if row['survival_pct'] is not None]
         fcr_values = [row['fcr_real'] for row in summaries if row['fcr_real'] is not None]
+        sale_weights = [sale.average_weight_g for sale in Sale.query.join(Lot, Lot.id == Sale.lot_id).filter(Lot.larva_supplier == supplier, Sale.average_weight_g.isnot(None)).all() if sale.average_weight_g is not None]
+        score = None
+        if survival_values or fcr_values:
+            survival_component = (sum(survival_values) / len(survival_values)) if survival_values else 0
+            fcr_component = (sum(fcr_values) / len(fcr_values)) if fcr_values else 2.2
+            score = round((survival_component * 0.6) + ((3 - min(fcr_component, 3)) * 20), 1)
         supplier_rows.append({
             'supplier': supplier,
             'lot_count': len(lots),
             'survival_avg': round(sum(survival_values) / len(survival_values), 2) if survival_values else None,
             'fcr_avg': round(sum(fcr_values) / len(fcr_values), 2) if fcr_values else None,
+            'avg_sale_weight_g': round(sum(sale_weights) / len(sale_weights), 2) if sale_weights else None,
             'active_lots': sum(1 for lot in lots if lot.status == 'ativo'),
+            'score': score,
         })
-    supplier_rows.sort(key=lambda item: ((item['survival_avg'] is None), -(item['survival_avg'] or 0)))
+    supplier_rows.sort(key=lambda item: ((item['score'] is None), -(item['score'] or 0), (item['fcr_avg'] or 9)))
     return supplier_rows
 
 
-def finance_summary(days=90):
+def shrimp_price_from_weight(weight_g, base_price_10g=22.0):
+    if weight_g is None:
+        return round(base_price_10g, 2)
+    return round(base_price_10g + (round(weight_g) - 10), 2)
+
+
+def recent_feed_cost_per_kg(lot):
+    rows = DailyManagement.query.filter(
+        DailyManagement.lot_id == lot.id,
+        DailyManagement.feed_unit_cost.isnot(None),
+        DailyManagement.feed_unit_cost > 0,
+    ).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).limit(10).all()
+    values = [row.feed_unit_cost for row in rows if row.feed_unit_cost]
+    if values:
+        return round(sum(values) / len(values), 2)
+    return 6.0
+
+
+def harvest_decision_analysis(lot, base_price_10g=22.0, feed_cost_kg=None):
+    if not lot:
+        return None
+    feed_cost_kg = feed_cost_kg or recent_feed_cost_per_kg(lot)
+    current_rec = feeding_recommendation_for_lot(lot)
+    live_count = current_rec['live_count']
+    fixed_cost_total = calculate_fixed_cost_for_lot(lot)
+    cycle_days = max((date.today() - lot.start_date).days, 1)
+    fixed_cost_day = fixed_cost_total / cycle_days if cycle_days else 0
+    scenarios = []
+    for days_wait in (0, 7, 14, 21):
+        projection = smart_growth_projection(lot, days_wait)
+        weight_g = projection['current_weight_g'] if days_wait == 0 else projection['projected_weight_g']
+        biomass_kg = round((live_count * (weight_g or 0)) / 1000, 2) if live_count and weight_g else 0
+        price_kg = shrimp_price_from_weight(weight_g, base_price_10g)
+        revenue = round(biomass_kg * price_kg, 2)
+        extra_feed_cost = round((current_rec['suggested_feed_kg'] or 0) * days_wait * feed_cost_kg, 2)
+        extra_fixed_cost = round(fixed_cost_day * days_wait, 2)
+        scenarios.append({
+            'days_wait': days_wait,
+            'projected_date': date.today() + timedelta(days=days_wait),
+            'weight_g': round(weight_g or 0, 2),
+            'price_kg': price_kg,
+            'biomass_kg': biomass_kg,
+            'revenue': revenue,
+            'extra_feed_cost': extra_feed_cost,
+            'extra_fixed_cost': extra_fixed_cost,
+            'net_value': round(revenue - extra_feed_cost - extra_fixed_cost, 2),
+            'daily_gain_g': projection['daily_gain_g'],
+            'confidence': projection['model_confidence'],
+        })
+    base = scenarios[0]
+    for scenario in scenarios:
+        scenario['incremental_gain'] = round(scenario['net_value'] - base['net_value'], 2)
+    best = max(scenarios, key=lambda row: row['net_value']) if scenarios else None
+    decision = 'DespescAR agora' if best and best['days_wait'] == 0 else f'Esperar {best["days_wait"]} dias' if best else None
+    return {
+        'base_price_10g': base_price_10g,
+        'feed_cost_kg': feed_cost_kg,
+        'scenarios': scenarios,
+        'best': best,
+        'decision': decision,
+        'current_recommendation': current_rec,
+    }
+
+
+def projected_cashflow_rows(days=90, base_price_10g=22.0):
+    rows = []
+    horizon = date.today() + timedelta(days=days)
+    for lot in Lot.query.filter_by(status='ativo').order_by(Lot.start_date.asc()).all():
+        current_weight = current_weight_for_lot(lot)
+        projection = smart_growth_projection(lot, 7)
+        growth = projection.get('daily_gain_g') or 0
+        if not current_weight or growth <= 0:
+            continue
+        if current_weight >= TARGET_HARVEST_WEIGHT_G:
+            harvest_date = date.today()
+            projected_weight = current_weight
+        else:
+            days_to_target = max(int(round((TARGET_HARVEST_WEIGHT_G - current_weight) / growth)), 1)
+            harvest_date = date.today() + timedelta(days=days_to_target)
+            projected_weight = smart_growth_projection(lot, days_to_target).get('projected_weight_g')
+        if harvest_date > horizon:
+            continue
+        live_count = current_live_count_for_lot(lot)
+        biomass_kg = round((live_count * (projected_weight or 0)) / 1000, 2) if live_count and projected_weight else 0
+        rows.append({
+            'date': harvest_date,
+            'lot': lot,
+            'weight_g': round(projected_weight or 0, 2),
+            'price_kg': shrimp_price_from_weight(projected_weight, base_price_10g),
+            'amount': round(biomass_kg * shrimp_price_from_weight(projected_weight, base_price_10g), 2),
+            'biomass_kg': biomass_kg,
+        })
+    rows.sort(key=lambda item: (item['date'], item['lot'].lot_code))
+    return rows
+
+
+def finance_summary(days=90, base_price_10g=22.0):
     start = date.today()
     end = start + timedelta(days=days)
     entries = FinanceEntry.query.order_by(FinanceEntry.due_date.asc().nullslast(), FinanceEntry.entry_date.desc()).all()
@@ -4800,25 +5155,53 @@ def finance_summary(days=90):
     receivable_open = sum((entry.amount or 0) for entry in entries if entry.entry_type == 'receber' and entry.status == 'aberto')
     projected_entries = [entry for entry in entries if (entry.due_date or entry.entry_date) and start <= (entry.due_date or entry.entry_date) <= end]
     projected_balance = sum((entry.amount or 0) * (1 if entry.entry_type == 'receber' else -1) for entry in projected_entries)
+    projected_harvests = projected_cashflow_rows(days=days, base_price_10g=base_price_10g)
+    projected_harvest_receipts = sum(row['amount'] for row in projected_harvests)
     return {
         'entries': entries,
         'payable_open': round(payable_open, 2),
         'receivable_open': round(receivable_open, 2),
         'projected_balance': round(projected_balance, 2),
         'projected_entries': projected_entries,
+        'projected_harvests': projected_harvests,
+        'projected_harvest_receipts': round(projected_harvest_receipts, 2),
+        'projected_balance_with_harvests': round(projected_balance + projected_harvest_receipts, 2),
+        'period_days': days,
+        'base_price_10g': base_price_10g,
     }
 
 
 def assistant_answer(question: str):
     q = normalize_text(question or '')
     if not q:
-        return 'Pergunte sobre viveiros, lotes, FCR, fornecedor de PL, crescimento, financeiro ou despesca.'
+        return 'Pergunte sobre arraçoamento, fornecedor de PL, crescimento, despesca ideal ou caixa projetado.'
+    if 'arraço' in q or 'racao' in q or 'ração' in q:
+        rows = []
+        for lot in Lot.query.filter_by(status='ativo').all():
+            rec = feeding_recommendation_for_lot(lot)
+            rows.append((rec['suggested_feed_kg'], lot.lot_code, rec))
+        if not rows:
+            return 'Ainda não há lotes ativos para recomendar arraçoamento.'
+        top = sorted(rows, reverse=True)[0]
+        rec = top[2]
+        return f"Maior oferta sugerida hoje: lote {top[1]} com {rec['suggested_feed_kg']:.2f} kg/dia. O modelo está em {rec['feed_pct_biomass']:.2f}% da biomassa, baseado no histórico da fazenda e na curva atual do lote."
     if 'fornecedor' in q or 'pl' in q:
         rows = supplier_performance_rows()
         if not rows:
             return 'Ainda não há dados suficientes de fornecedores de PL para comparar.'
         top = rows[0]
-        return f"Melhor fornecedor até agora: {top['supplier']} com sobrevivência média de {top['survival_avg'] or 0}% e FCR médio de {top['fcr_avg'] or 0}."
+        return f"Melhor fornecedor até agora: {top['supplier']}, score {top['score'] or 0}, sobrevivência média de {top['survival_avg'] or 0}% e FCR médio de {top['fcr_avg'] or 0}."
+    if 'despesca' in q or 'vender' in q or 'colher' in q:
+        analyses = []
+        for lot in Lot.query.filter_by(status='ativo').all():
+            analysis = harvest_decision_analysis(lot)
+            if analysis and analysis['best']:
+                analyses.append((analysis['best']['incremental_gain'], lot.lot_code, analysis))
+        if not analyses:
+            return 'Ainda não há dados suficientes para sugerir despesca.'
+        best = sorted(analyses, reverse=True)[0]
+        decision = best[2]['decision']
+        return f"Melhor oportunidade agora: lote {best[1]}. Recomendação: {decision}. Ganho incremental estimado: {money_filter(best[0])}."
     if 'fcr' in q or 'pior lote' in q or 'viveiro pior' in q:
         rows = []
         for lot in Lot.query.order_by(Lot.start_date.desc()).all():
@@ -4829,21 +5212,21 @@ def assistant_answer(question: str):
             return 'Ainda não há FCR real calculado para responder isso.'
         worst = sorted(rows, reverse=True)[0]
         return f'O lote com pior FCR real hoje é {worst[1]} com FCR {worst[0]:.2f}.'
-    if 'atrasad' in q or 'crescimento' in q:
+    if 'atrasad' in q or 'crescimento' in q or 'curva' in q:
         scored = []
         for lot in Lot.query.filter_by(status='ativo').all():
-            pts = build_growth_analysis(lot)
-            if pts:
-                last = pts[-1]
-                scored.append((last['real'] - last['expected'], lot.lot_code, last['real'], last['expected']))
+            analysis = build_growth_analysis(lot)
+            if analysis['summary']:
+                summary = analysis['summary']
+                scored.append((summary['deviation_g'], lot.lot_code, summary))
         if not scored:
             return 'Ainda não há dados de crescimento suficientes para comparar lotes.'
         lag = sorted(scored)[0]
-        return f'O lote mais atrasado é {lag[1]}: peso real {lag[2]:.2f} g contra esperado {lag[3]:.2f} g.'
+        return f"O lote mais atrasado é {lag[1]}: peso real {lag[2]['current_weight_g']:.2f} g contra esperado {lag[2]['expected_weight_g']:.2f} g, desvio de {lag[2]['deviation_g']:.2f} g."
     if 'caixa' in q or 'financeiro' in q or 'receber' in q or 'pagar' in q:
         fin = finance_summary()
-        return f"Em aberto hoje: contas a receber {money_filter(fin['receivable_open'])} e contas a pagar {money_filter(fin['payable_open'])}. Saldo projetado dos próximos 90 dias: {money_filter(fin['projected_balance'])}."
-    return 'Consigo responder melhor perguntas como: qual lote está mais atrasado, qual fornecedor de PL foi melhor, qual o pior FCR ou como está o financeiro projetado.'
+        return f"Em aberto hoje: contas a receber {money_filter(fin['receivable_open'])} e contas a pagar {money_filter(fin['payable_open'])}. Saldo projetado dos próximos {fin['period_days']} dias: {money_filter(fin['projected_balance'])}. Com despescas projetadas, o saldo vai para {money_filter(fin['projected_balance_with_harvests'])}."
+    return 'Consigo responder melhor perguntas como: qual lote está mais atrasado, quanto ofertar hoje, qual fornecedor de PL foi melhor, qual lote compensa despescAR primeiro ou como está o caixa projetado.'
 
 
 def build_pdf_response(title, headers, rows, filename):
@@ -4893,7 +5276,40 @@ def feeding_planner_page():
         rec = feeding_recommendation_for_lot(lot)
         projection = smart_growth_projection(lot, 7)
         rows.append({'lot': lot, 'rec': rec, 'projection': projection})
-    return render_template('feeding_planner.html', rows=rows)
+    rows.sort(key=lambda item: (item['rec'].get('growth_gap_pct') is None, item['rec'].get('growth_gap_pct', 999)))
+    model_summary = {
+        'active_lots': len(rows),
+        'avg_confidence': round(sum((row['rec'].get('model_confidence') or 0) for row in rows) / len(rows), 1) if rows else 0,
+        'historical_cases': sum((row['rec'].get('historical_cases') or 0) for row in rows),
+    }
+    return render_template('feeding_planner.html', rows=rows, model_summary=model_summary)
+
+
+def sync_biometrics_to_management(lot, unit_id, sample_date, average_weight_g, estimated_biomass_kg, notes=None):
+    target_unit_id = unit_id or lot.unit_id
+    row = DailyManagement.query.filter(
+        DailyManagement.lot_id == lot.id,
+        DailyManagement.manage_date == sample_date,
+        DailyManagement.unit_id == target_unit_id,
+    ).order_by(DailyManagement.id.desc()).first()
+    if not row:
+        row = DailyManagement(
+            manage_date=sample_date,
+            lot_id=lot.id,
+            unit_id=target_unit_id,
+            average_weight_g=average_weight_g,
+            estimated_biomass_kg=estimated_biomass_kg,
+            notes=None,
+        )
+        db.session.add(row)
+    row.average_weight_g = average_weight_g
+    row.estimated_biomass_kg = estimated_biomass_kg
+    sync_note = f'Biometria sincronizada em {sample_date.strftime("%d/%m/%Y")}'
+    note_text = ' | '.join(part for part in [notes, sync_note] if part)
+    row.notes = note_text or row.notes
+    row.updated_at = datetime.utcnow()
+    lot.estimated_weight_g = average_weight_g
+    return row
 
 
 @app.route('/biometrics', methods=['GET', 'POST'])
@@ -4903,18 +5319,21 @@ def biometrics_page():
     lots = Lot.query.order_by(Lot.start_date.desc()).all()
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     if request.method == 'POST':
-        lot_id = request.form.get('lot_id', type=int)
-        unit_id = request.form.get('unit_id', type=int)
+        lot_id = parse_int(request.form.get('lot_id'))
+        unit_id = parse_int(request.form.get('unit_id'))
         sample_date = parse_date(request.form.get('sample_date'), default=date.today())
-        average_weight_g = request.form.get('average_weight_g', type=float)
-        sample_size = request.form.get('sample_size', type=int) or 100
-        cv_pct = request.form.get('cv_pct', type=float)
-        estimated_biomass_kg = request.form.get('estimated_biomass_kg', type=float)
+        average_weight_g = parse_float(request.form.get('average_weight_g'))
+        sample_size = parse_int(request.form.get('sample_size'), 100) or 100
+        cv_pct = parse_float(request.form.get('cv_pct'))
+        estimated_biomass_kg = parse_float(request.form.get('estimated_biomass_kg'))
         notes = (request.form.get('notes') or '').strip()
         lot = db.session.get(Lot, lot_id)
         if not lot or average_weight_g is None:
             flash('Informe lote e peso médio para salvar a biometria.', 'warning')
             return redirect(url_for('biometrics_page'))
+        if not estimated_biomass_kg:
+            live_count = current_live_count_for_lot(lot)
+            estimated_biomass_kg = round((live_count * average_weight_g) / 1000, 2) if live_count and average_weight_g else None
         last = latest_biometric_for_lot(lot_id)
         weekly_gain = None
         if last and last.average_weight_g is not None:
@@ -4922,11 +5341,35 @@ def biometrics_page():
             weekly_gain = round(((average_weight_g - last.average_weight_g) / days) * 7, 2)
         row = BiometricsSample(sample_date=sample_date, lot_id=lot_id, unit_id=unit_id, sample_size=sample_size, average_weight_g=average_weight_g, cv_pct=cv_pct, estimated_biomass_kg=estimated_biomass_kg, weekly_gain_g=weekly_gain, notes=notes or None)
         db.session.add(row)
+        sync_biometrics_to_management(lot, unit_id, sample_date, average_weight_g, estimated_biomass_kg, notes)
         db.session.commit()
-        flash('Biometria registrada.', 'success')
+        flash('Biometria registrada e sincronizada com o manejo diário.', 'success')
         return redirect(url_for('biometrics_page'))
     rows = BiometricsSample.query.options(joinedload(BiometricsSample.lot), joinedload(BiometricsSample.unit)).order_by(BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()).all()
-    return render_template('biometrics.html', lots=lots, units=units, rows=rows)
+    enriched_rows = []
+    for row in rows:
+        if not row.lot:
+            continue
+        age_days = max((row.sample_date - row.lot.start_date).days, 0)
+        expected = adaptive_expected_weight_at_age(row.lot, age_days)
+        linked_management = DailyManagement.query.filter(DailyManagement.lot_id == row.lot_id, DailyManagement.manage_date == row.sample_date).first()
+        enriched_rows.append({
+            'row': row,
+            'expected_weight_g': expected['expected_weight_g'],
+            'deviation_g': round((row.average_weight_g or 0) - expected['expected_weight_g'], 2),
+            'deviation_pct': round((((row.average_weight_g or 0) - expected['expected_weight_g']) / expected['expected_weight_g']) * 100, 2) if expected['expected_weight_g'] else None,
+            'linked_management': bool(linked_management),
+        })
+    active_summaries = []
+    for lot in Lot.query.filter_by(status='ativo').all():
+        latest = latest_biometric_for_lot(lot.id)
+        analysis = build_growth_analysis(lot)
+        active_summaries.append({
+            'lot': lot,
+            'latest': latest,
+            'summary': analysis['summary'],
+        })
+    return render_template('biometrics.html', lots=lots, units=units, rows=enriched_rows, active_summaries=active_summaries, today=date.today())
 
 
 @app.route('/growth-analysis')
@@ -4936,9 +5379,9 @@ def growth_analysis_page():
     lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
     lot_id = request.args.get('lot_id', type=int)
     selected_lot = db.session.get(Lot, lot_id) if lot_id else (lots[0] if lots else None)
-    points = build_growth_analysis(selected_lot) if selected_lot else []
-    projection = smart_growth_projection(selected_lot, 7) if selected_lot else None
-    return render_template('growth_analysis.html', lots=lots, selected_lot=selected_lot, points=points, projection=projection)
+    analysis = build_growth_analysis(selected_lot) if selected_lot else {'points': [], 'summary': None}
+    projection_21 = smart_growth_projection(selected_lot, 21) if selected_lot else None
+    return render_template('growth_analysis.html', lots=lots, selected_lot=selected_lot, points=analysis['points'], summary=analysis['summary'], projection_21=projection_21)
 
 
 @app.route('/pl-suppliers')
@@ -4956,32 +5399,9 @@ def harvest_decision_page():
     lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
     lot_id = request.values.get('lot_id', type=int)
     selected_lot = db.session.get(Lot, lot_id) if lot_id else (lots[0] if lots else None)
-    analysis = None
-    if selected_lot:
-        projection_now = smart_growth_projection(selected_lot, 0)
-        projection_next = smart_growth_projection(selected_lot, 7)
-        price_now = request.values.get('price_now', type=float) or 22
-        price_next = request.values.get('price_next', type=float) or 24
-        live_count = current_live_count_for_lot(selected_lot)
-        harvest_kg_now = (live_count * parse_float(projection_now.get('current_weight_g'), 0)) / 1000 if live_count else 0
-        harvest_kg_next = (live_count * parse_float(projection_next.get('projected_weight_g'), 0)) / 1000 if live_count else 0
-        revenue_now = harvest_kg_now * price_now
-        revenue_next = harvest_kg_next * price_next
-        extra_feed_cost = feeding_recommendation_for_lot(selected_lot)['suggested_feed_kg'] * 7 * 6.0
-        margin_gain = revenue_next - revenue_now - extra_feed_cost
-        analysis = {
-            'projection_now': projection_now,
-            'projection_next': projection_next,
-            'price_now': price_now,
-            'price_next': price_next,
-            'harvest_kg_now': round(harvest_kg_now, 2),
-            'harvest_kg_next': round(harvest_kg_next, 2),
-            'revenue_now': round(revenue_now, 2),
-            'revenue_next': round(revenue_next, 2),
-            'extra_feed_cost': round(extra_feed_cost, 2),
-            'margin_gain': round(margin_gain, 2),
-            'decision': 'Esperar 7 dias' if margin_gain > 0 else 'DespescAR agora',
-        }
+    base_price_10g = parse_float(request.values.get('base_price_10g'), 22.0) or 22.0
+    feed_cost_kg = parse_float(request.values.get('feed_cost_kg'))
+    analysis = harvest_decision_analysis(selected_lot, base_price_10g=base_price_10g, feed_cost_kg=feed_cost_kg) if selected_lot else None
     return render_template('harvest_decision.html', lots=lots, selected_lot=selected_lot, analysis=analysis)
 
 
@@ -4998,18 +5418,20 @@ def finance_page():
             entry_type=(request.form.get('entry_type') or 'pagar').strip(),
             category=(request.form.get('category') or 'Geral').strip(),
             description=(request.form.get('description') or '').strip() or 'Lançamento',
-            amount=request.form.get('amount', type=float) or 0,
+            amount=parse_float(request.form.get('amount'), 0) or 0,
             status=(request.form.get('status') or 'aberto').strip(),
-            lot_id=request.form.get('lot_id', type=int),
-            unit_id=request.form.get('unit_id', type=int),
+            lot_id=parse_int(request.form.get('lot_id')),
+            unit_id=parse_int(request.form.get('unit_id')),
             notes=(request.form.get('notes') or '').strip() or None,
         )
         db.session.add(entry)
         db.session.commit()
         flash('Lançamento financeiro salvo.', 'success')
         return redirect(url_for('finance_page'))
-    summary = finance_summary()
-    return render_template('finance.html', lots=lots, units=units, summary=summary)
+    days = request.args.get('days', type=int) or 90
+    base_price_10g = parse_float(request.args.get('base_price_10g'), 22.0) or 22.0
+    summary = finance_summary(days=days, base_price_10g=base_price_10g)
+    return render_template('finance.html', lots=lots, units=units, summary=summary, days=days)
 
 
 @app.route('/assistant', methods=['GET', 'POST'])
@@ -5018,10 +5440,17 @@ def finance_page():
 def assistant_page():
     answer = None
     question = ''
+    suggested_questions = [
+        'Qual lote está mais atrasado?',
+        'Quanto ofertar hoje?',
+        'Qual fornecedor de PL está melhor?',
+        'Qual lote compensa despescAR primeiro?',
+        'Como está o caixa projetado?'
+    ]
     if request.method == 'POST':
         question = (request.form.get('question') or '').strip()
         answer = assistant_answer(question)
-    return render_template('assistant.html', question=question, answer=answer)
+    return render_template('assistant.html', question=question, answer=answer, suggested_questions=suggested_questions)
 
 
 @app.post('/api/v1/sensor-reading')
