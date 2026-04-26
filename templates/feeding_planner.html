@@ -1,61 +1,141 @@
 {% extends 'base.html' %}
 {% block page_title %}Arraçoamento sugerido{% endblock %}
-{% block page_subtitle %}Modelo adaptativo da fazenda: começa pela tabela padrão enviada, cruza com biometria/manejo real e ajusta pelo ambiente recente.{% endblock %}
+{% block page_subtitle %}Tela operacional: veja primeiro quanto ofertar hoje; abra os detalhes técnicos só quando precisar conferir a lógica do cálculo.{% endblock %}
 {% block content %}
-<section class="panel intelligence-hero">
-  <div class="panel-head compact-between">
+<section class="panel feeding-hero-panel">
+  <div class="panel-head compact-between feeding-hero-head">
     <div>
-      <p class="panel-kicker">Motor de decisão</p>
-      <h2>Oferta sugerida por lote</h2>
+      <p class="panel-kicker">Resumo do dia</p>
+      <h2>Plano de alimentação dos lotes ativos</h2>
+      <p class="muted-line">A sugestão parte da tabela padrão e vai sendo corrigida pela biometria, manejo e histórico real da fazenda.</p>
     </div>
-    <div class="hero-inline-note">Quanto mais biometria e manejo você lança, mais a curva aprende.</div>
   </div>
-  <div class="kpi-grid">
-    <article class="kpi-card"><span>Lotes ativos</span><strong>{{ model_summary.active_lots }}</strong></article>
-    <article class="kpi-card"><span>Confiança média do modelo</span><strong>{{ model_summary.avg_confidence }}%</strong></article>
-    <article class="kpi-card"><span>Casos históricos usados</span><strong>{{ model_summary.historical_cases }}</strong></article>
+  <div class="feeding-summary-grid">
+    <article class="feeding-summary-card">
+      <span>Lotes ativos</span>
+      <strong>{{ model_summary.active_lots }}</strong>
+      <small>lotes com status ativo</small>
+    </article>
+    <article class="feeding-summary-card primary">
+      <span>Ração sugerida hoje</span>
+      <strong>{{ model_summary.total_suggested_feed_kg }} kg</strong>
+      <small>soma dos lotes abaixo</small>
+    </article>
+    <article class="feeding-summary-card {{ 'attention' if model_summary.attention_lots else '' }}">
+      <span>Precisam de atenção</span>
+      <strong>{{ model_summary.attention_lots }}</strong>
+      <small>atraso de curva ou alerta de água</small>
+    </article>
+    <article class="feeding-summary-card">
+      <span>Confiança média</span>
+      <strong>{{ model_summary.avg_confidence }}%</strong>
+      <small>{{ model_summary.historical_cases }} dados históricos usados</small>
+    </article>
   </div>
 </section>
 
 <section class="panel">
-  <div class="panel-head"><div><p class="panel-kicker">Saída prática</p><h2>Plano diário de arraçoamento</h2></div></div>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Lote</th><th>Peso atual</th><th>Peso esperado</th><th>Desvio</th><th>Biomassa</th><th>Origem biomassa</th>
-          <th>% base</th><th>Sobrev. base</th><th>% histórico</th><th>% final</th><th>FCR base</th><th>Faixa segura</th>
-          <th>Sugerido hoje</th><th>Granulometria</th><th>Peso em 7 dias</th><th>Confiança</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in rows %}
-        <tr>
-          <td><strong>{{ row.lot.lot_code }}</strong><div class="table-subline">{{ row.rec.model_name }}</div></td>
-          <td>{{ row.rec.current_weight_g }} g</td>
-          <td>{{ row.rec.expected_weight_g or '—' }} g</td>
-          <td>{% if row.rec.growth_gap_pct is not none %}<span class="pill {{ 'pill-danger' if row.rec.growth_gap_pct < -5 else 'pill-success' if row.rec.growth_gap_pct > 5 else 'pill-neutral' }}">{{ row.rec.growth_gap_pct }}%</span>{% else %}—{% endif %}</td>
-          <td>{{ row.rec.biomass_kg }} kg</td>
-          <td>{{ row.rec.biomass_source or '—' }}</td>
-          <td>{{ row.rec.base_pct_biomass }}%</td>
-          <td>{{ row.rec.standard_survival_pct or '—' }}{% if row.rec.standard_survival_pct %}%{% endif %}</td>
-          <td>{{ row.rec.learned_pct_biomass }}%</td>
-          <td><strong>{{ row.rec.feed_pct_biomass }}%</strong></td>
-          <td>{{ row.rec.standard_fcr or '—' }}</td>
-          <td>{{ row.rec.min_feed_kg }} a {{ row.rec.max_feed_kg }} kg</td>
-          <td><strong>{{ row.rec.suggested_feed_kg }} kg/dia</strong></td>
-          <td>{{ row.rec.pellet_hint }}</td>
-          <td>{{ row.rec.projected_weight_7d_g }} g</td>
-          <td>{{ row.rec.model_confidence or '—' }}%</td>
-        </tr>
-        {% if row.rec.drivers %}
-        <tr class="subrow"><td colspan="16"><div class="driver-list">{% for driver in row.rec.drivers[:4] %}<span class="driver-chip">{{ driver }}</span>{% endfor %}</div></td></tr>
-        {% endif %}
-        {% else %}
-        <tr><td colspan="16" class="empty-cell">Nenhum lote ativo para sugerir arraçoamento.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="panel-head feeding-section-head">
+    <div>
+      <p class="panel-kicker">Ação prática</p>
+      <h2>Quanto jogar hoje</h2>
+      <p class="muted-line">Use o valor sugerido como partida. A faixa segura serve para ajuste fino pela bandeja de controle, oxigênio e comportamento do lote.</p>
+    </div>
   </div>
+
+  <div class="feeding-card-grid">
+    {% for row in rows %}
+    <article class="feed-action-card feed-status-{{ row.rec.attention_level }}">
+      <div class="feed-card-top">
+        <div>
+          <span class="feed-lot-label">{{ row.lot.phase|capitalize }}</span>
+          <h3>{{ row.lot.lot_code }}</h3>
+          <p>{{ row.lot.unit.name if row.lot.unit else 'Unidade não informada' }}</p>
+        </div>
+        <span class="feed-status-pill">{{ row.rec.attention_label }}</span>
+      </div>
+
+      <div class="feed-main-number">
+        <span>Total de hoje</span>
+        <strong>{{ row.rec.suggested_feed_kg }} kg</strong>
+        <small>≈ {{ row.rec.feed_per_feeding_kg }} kg por trato · {{ row.rec.feedings_per_day }} tratos/dia</small>
+      </div>
+
+      <div class="feed-mini-grid">
+        <div><span>Peso atual</span><strong>{{ row.rec.current_weight_g }} g</strong></div>
+        <div><span>Biomassa</span><strong>{{ row.rec.biomass_kg }} kg</strong></div>
+        <div><span>% biomassa</span><strong>{{ row.rec.feed_pct_biomass }}%</strong></div>
+        <div><span>Ração</span><strong>{{ row.rec.pellet_hint }}</strong></div>
+      </div>
+
+      <div class="feed-range-box">
+        <span>Faixa segura para ajuste</span>
+        <strong>{{ row.rec.min_feed_kg }} a {{ row.rec.max_feed_kg }} kg/dia</strong>
+      </div>
+
+      <p class="feed-action-hint">{{ row.rec.action_hint }}</p>
+
+      <details class="feed-details">
+        <summary>Ver por que o sistema sugeriu isso</summary>
+        <div class="feed-details-grid">
+          <div><span>Peso esperado</span><strong>{{ row.rec.expected_weight_g or '—' }} g</strong></div>
+          <div><span>Desvio da curva</span><strong>{{ row.rec.growth_gap_pct if row.rec.growth_gap_pct is not none else '—' }}{% if row.rec.growth_gap_pct is not none %}%{% endif %}</strong></div>
+          <div><span>Sobrevivência base</span><strong>{{ row.rec.standard_survival_pct or '—' }}{% if row.rec.standard_survival_pct %}%{% endif %}</strong></div>
+          <div><span>FCR base</span><strong>{{ row.rec.standard_fcr or '—' }}</strong></div>
+          <div><span>Peso em 7 dias</span><strong>{{ row.rec.projected_weight_7d_g }} g</strong></div>
+          <div><span>Origem biomassa</span><strong>{{ row.rec.biomass_source or '—' }}</strong></div>
+        </div>
+        {% if row.rec.drivers %}
+        <div class="driver-list feed-driver-list">
+          {% for driver in row.rec.drivers[:5] %}<span class="driver-chip">{{ driver }}</span>{% endfor %}
+        </div>
+        {% endif %}
+      </details>
+    </article>
+    {% else %}
+    <div class="empty-state full-width-panel">Nenhum lote ativo para sugerir arraçoamento.</div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel panel-soft">
+  <details class="technical-feeding-table">
+    <summary>
+      <div>
+        <p class="panel-kicker">Conferência técnica</p>
+        <h2>Tabela completa do cálculo</h2>
+      </div>
+      <span>Abrir detalhes</span>
+    </summary>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Lote</th><th>Peso atual</th><th>Peso esperado</th><th>Desvio</th><th>Biomassa</th><th>% base</th><th>% histórico</th><th>% final</th><th>Faixa segura</th><th>Sugerido</th><th>7 dias</th><th>Confiança</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td><strong>{{ row.lot.lot_code }}</strong><div class="table-subline">{{ row.rec.model_name }}</div></td>
+            <td>{{ row.rec.current_weight_g }} g</td>
+            <td>{{ row.rec.expected_weight_g or '—' }} g</td>
+            <td>{% if row.rec.growth_gap_pct is not none %}<span class="pill {{ 'pill-danger' if row.rec.growth_gap_pct < -5 else 'pill-success' if row.rec.growth_gap_pct > 5 else 'pill-neutral' }}">{{ row.rec.growth_gap_pct }}%</span>{% else %}—{% endif %}</td>
+            <td>{{ row.rec.biomass_kg }} kg<br><small>{{ row.rec.biomass_source or '—' }}</small></td>
+            <td>{{ row.rec.base_pct_biomass }}%</td>
+            <td>{{ row.rec.learned_pct_biomass }}%</td>
+            <td><strong>{{ row.rec.feed_pct_biomass }}%</strong></td>
+            <td>{{ row.rec.min_feed_kg }} a {{ row.rec.max_feed_kg }} kg</td>
+            <td><strong>{{ row.rec.suggested_feed_kg }} kg/dia</strong></td>
+            <td>{{ row.rec.projected_weight_7d_g }} g</td>
+            <td>{{ row.rec.model_confidence or '—' }}%</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="12" class="empty-cell">Nenhum lote ativo para sugerir arraçoamento.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
 </section>
 {% endblock %}
