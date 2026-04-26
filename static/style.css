@@ -400,3 +400,10 @@ button:hover{transform:translateY(-1px)}
 @media (max-width:960px){
   .supply-usage-row{grid-template-columns:1fr}
 }
+
+.report-option-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.report-option-card{border:1px solid var(--line);border-radius:18px;background:#fff;padding:16px;box-shadow:0 10px 24px rgba(15,23,42,.05)}
+.report-option-card h3{margin:0 0 8px;font-size:17px;color:var(--text)}
+.report-option-card p{margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.45}
+.report-download-actions{display:flex;gap:8px;flex-wrap:wrap}.reports-hero{background:linear-gradient(135deg,#ffffff,#f0fdfa)}
+.water-observation-cell{min-width:140px;color:var(--muted);font-size:12px}
