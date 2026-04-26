@@ -24,12 +24,11 @@ from werkzeug.utils import secure_filename
 import io
 from openpyxl import Workbook
 try:
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
 except Exception:
-    colors = A4 = landscape = getSampleStyleSheet = SimpleDocTemplate = Table = TableStyle = Paragraph = Spacer = None
+    A4 = None
+    canvas = None
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
@@ -1626,6 +1625,7 @@ def init_db():
         seed_units()
         seed_admin_user()
         get_water_reference_config()
+        ensure_alert_rules()
 
 
 def active_lot_allocation_for_unit(unit_id, on_date=None):
@@ -3310,12 +3310,6 @@ def water_page():
         'ph': [WaterMonitoring.ph, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
         'temperature': [WaterMonitoring.temperature_c, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
         'salinity': [WaterMonitoring.salinity, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'transparency': [WaterMonitoring.transparency_cm, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'ammonia': [WaterMonitoring.ammonia, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'nitrite': [WaterMonitoring.nitrite, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'nitrate': [WaterMonitoring.nitrate, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'alkalinity': [WaterMonitoring.alkalinity, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'hardness': [WaterMonitoring.hardness, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
     }
     order_columns = sort_map.get(sort_by, sort_map['monitor_date'])
     ordered = [col.asc().nullslast() if sort_dir == 'asc' else col.desc().nullslast() for col in order_columns]
@@ -4292,124 +4286,48 @@ def managerial_reports_page():
     )
 
 
-def managerial_report_dataset(report_key):
-    if report_key == 'stock':
-        headers = ['Categoria', 'Item', 'Grupo', 'Saldo', 'Unidade', 'Estoque mínimo', 'Custo médio']
-        rows = []
-        for row in build_feed_stock_snapshot()['rows']:
-            rows.append(['Ração', row.get('name') or row.get('feed_name'), row.get('feed_type') or row.get('category'), row.get('stock_kg', row.get('stock_qty')), 'kg', row.get('minimum_stock_kg', row.get('minimum_stock_qty')), row.get('avg_unit_cost')])
-        for row in build_supply_stock_snapshot()['rows']:
-            rows.append(['Insumo/material', row['name'], row['category'], row['stock_qty'], row['measure_unit'], row['minimum_stock_qty'], row.get('avg_unit_cost')])
-        return 'Relatório de estoque', headers, rows
-    if report_key == 'production':
-        headers = ['Lote', 'Status', 'Fornecedora', 'Unidades atuais', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'FCR real', 'Sobrevivência %']
-        rows = []
-        for summary in [lot_financial_summary(lot) for lot in Lot.query.order_by(Lot.start_date.desc()).all()]:
-            rows.append([summary['lot'].lot_code, summary['lot'].status, summary['lot'].larva_supplier, ', '.join(item['unit_name'] for item in summary['allocations']), summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
-        return 'Relatório de produção e lotes', headers, rows
-    if report_key == 'financial':
-        headers = ['Data', 'Lote', 'Viveiro', 'Receita', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'Resultado']
-        rows = []
-        for sale in Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc()).all():
-            summary = sale_financial_summary(sale)
-            if summary:
-                rows.append([sale.sale_date.strftime('%d/%m/%Y'), sale.lot.lot_code if sale.lot else '', sale.unit.name if sale.unit else '', summary['revenue'], summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['profit']])
-        return 'Relatório financeiro', headers, rows
-    if report_key == 'water_quality':
-        headers = ['Data', 'Hora', 'Unidade', 'OD', 'Temp.', 'pH', 'Salin.', 'Transp.', 'Amônia', 'Nitrito', 'Nitrato', 'Alcalin.', 'Dureza', 'Alertas']
-        config = get_water_reference_config()
-        rows = []
-        records = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit)).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.monitor_time.desc(), WaterMonitoring.id.desc()).all()
-        for record in records:
-            alerts = '; '.join(alert['message'] for alert in water_alerts_for_record(record, config))
-            rows.append([record.monitor_date.strftime('%d/%m/%Y') if record.monitor_date else '', record.monitor_time.strftime('%H:%M') if record.monitor_time else '', record.unit.name if record.unit else '', record.dissolved_oxygen, record.temperature_c, record.ph, record.salinity, record.transparency_cm, record.ammonia, record.nitrite, record.nitrate, record.alkalinity, record.hardness, alerts])
-        return 'Relatório completo de qualidade da água', headers, rows
-    if report_key == 'water_alerts':
-        headers = ['Data', 'Hora', 'Unidade', 'Parâmetro', 'Valor', 'Alerta']
-        config = get_water_reference_config()
-        rows = []
-        records = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit)).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.monitor_time.desc(), WaterMonitoring.id.desc()).all()
-        for record in records:
-            for alert in water_alerts_for_record(record, config):
-                rows.append([record.monitor_date.strftime('%d/%m/%Y') if record.monitor_date else '', record.monitor_time.strftime('%H:%M') if record.monitor_time else '', record.unit.name if record.unit else '', alert.get('label'), alert.get('value'), alert.get('message')])
-        return 'Relatório de alertas da água', headers, rows
-    if report_key == 'management':
-        headers = ['Data', 'Unidade', 'Lote', 'Ração ofertada kg', 'Ração consumida kg', 'Mortalidade', 'Peso médio g', 'Biomassa estimada kg', 'Observação']
-        rows = []
-        records = DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.lot)).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).all()
-        for record in records:
-            rows.append([record.manage_date.strftime('%d/%m/%Y') if record.manage_date else '', record.unit.name if record.unit else '', record.lot.lot_code if record.lot else '', record.feed_offered_kg, record.feed_consumed_kg, record.mortality_qty, record.average_weight_g, record.estimated_biomass_kg, record.notes])
-        return 'Relatório de manejo diário', headers, rows
-    if report_key == 'sales':
-        headers = ['Data', 'Cliente', 'Canal', 'Lote', 'Viveiro', 'Kg vendidos', 'Peso médio g', 'Unidades despescadas', 'Preço/kg', 'Receita', 'Resultado', 'Observação']
-        rows = []
-        records = Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc(), Sale.id.desc()).all()
-        for record in records:
-            summary = sale_financial_summary(record)
-            rows.append([
-                record.sale_date.strftime('%d/%m/%Y') if record.sale_date else '',
-                record.client_name,
-                record.channel,
-                record.lot.lot_code if record.lot else '',
-                record.unit.name if record.unit else '',
-                record.quantity_kg,
-                record.average_weight_g,
-                summary['harvested_units'] if summary else record.harvested_units,
-                record.unit_price,
-                summary['revenue'] if summary else round((record.quantity_kg or 0) * (record.unit_price or 0), 2),
-                summary['profit'] if summary else None,
-                record.notes,
-            ])
-        return 'Relatório de despescas e vendas', headers, rows
-    abort(404)
-
-
 @app.get('/managerial-reports/export/<report_key>.xlsx')
 @login_required
 @requires_permission('dashboard')
 def export_managerial_report(report_key):
-    title, headers, rows = managerial_report_dataset(report_key)
     wb = Workbook()
     ws = wb.active
-    ws.title = re.sub(r'[^A-Za-z0-9 ]+', '', title)[:31] or 'Relatorio'
-    ws.append(headers)
-    for row in rows:
-        ws.append(row)
+    ws.title = 'Relatorio'
+    today = date.today()
+    if report_key == 'stock':
+        ws.title = 'Estoque'
+        ws.append(['Categoria', 'Item', 'Grupo', 'Saldo', 'Unidade', 'Estoque mínimo', 'Custo médio'])
+        for row in build_feed_stock_snapshot()['rows']:
+            ws.append(['Ração', row['name'] if 'name' in row else row['feed_name'], row.get('feed_type') or row.get('category'), row.get('stock_kg', row.get('stock_qty')), 'kg', row.get('minimum_stock_kg', row.get('minimum_stock_qty')), row.get('avg_unit_cost')])
+        for row in build_supply_stock_snapshot()['rows']:
+            ws.append(['Insumo/material', row['name'], row['category'], row['stock_qty'], row['measure_unit'], row['minimum_stock_qty'], row.get('avg_unit_cost')])
+    elif report_key == 'production':
+        ws.title = 'Producao'
+        ws.append(['Lote', 'Status', 'Fornecedora', 'Unidades atuais', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'FCR real', 'Sobrevivência %'])
+        for summary in [lot_financial_summary(lot) for lot in Lot.query.order_by(Lot.start_date.desc()).all()]:
+            ws.append([summary['lot'].lot_code, summary['lot'].status, summary['lot'].larva_supplier, ', '.join(item['unit_name'] for item in summary['allocations']), summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
+    elif report_key == 'financial':
+        ws.title = 'Financeiro'
+        ws.append(['Data', 'Lote', 'Viveiro', 'Receita', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'Resultado'])
+        for sale in Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc()).all():
+            summary = sale_financial_summary(sale)
+            if not summary:
+                continue
+            ws.append([sale.sale_date.strftime('%d/%m/%Y'), sale.lot.lot_code if sale.lot else '', sale.unit.name if sale.unit else '', summary['revenue'], summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['profit']])
+    elif report_key == 'water_quality':
+        ws.title = 'Qualidade agua'
+        ws.append(['Data', 'Hora', 'Unidade', 'OD', 'Temperatura', 'pH', 'Salinidade', 'Alertas'])
+        config = get_water_reference_config()
+        rows = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit)).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.id.desc()).all()
+        for record in rows:
+            alerts = '; '.join(alert['message'] for alert in water_alerts_for_record(record, config))
+            ws.append([record.monitor_date.strftime('%d/%m/%Y') if record.monitor_date else '', record.monitor_time.strftime('%H:%M') if record.monitor_time else '', record.unit.name if record.unit else '', record.dissolved_oxygen, record.temperature_c, record.ph, record.salinity, alerts])
+    else:
+        abort(404)
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
-    return send_file(output, as_attachment=True, download_name=f'relatorio_{report_key}_{date.today().strftime("%Y%m%d")}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
-
-@app.get('/managerial-reports/export/<report_key>.pdf')
-@login_required
-@requires_permission('dashboard')
-def export_managerial_report_pdf(report_key):
-    if SimpleDocTemplate is None:
-        flash('Exportação em PDF indisponível. Verifique se reportlab está instalado.', 'danger')
-        return redirect(url_for('managerial_reports_page'))
-    title, headers, rows = managerial_report_dataset(report_key)
-    output = io.BytesIO()
-    doc = SimpleDocTemplate(output, pagesize=landscape(A4), rightMargin=18, leftMargin=18, topMargin=24, bottomMargin=18)
-    styles = getSampleStyleSheet()
-    story = [Paragraph(title, styles['Title']), Paragraph(f'Gerado em {date.today().strftime("%d/%m/%Y")}', styles['Normal']), Spacer(1, 10)]
-    data = [headers] + [[('' if cell is None else str(cell)) for cell in row] for row in rows[:500]]
-    if len(data) == 1:
-        data.append(['Sem dados'] + [''] * (len(headers) - 1))
-    table = Table(data, repeatRows=1)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0f766e')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 7),
-        ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#cbd5e1')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-    ]))
-    story.append(table)
-    doc.build(story)
-    output.seek(0)
-    return send_file(output, as_attachment=True, download_name=f'relatorio_{report_key}_{date.today().strftime("%Y%m%d")}.pdf', mimetype='application/pdf')
+    return send_file(output, as_attachment=True, download_name=f'relatorio_{report_key}_{today.strftime("%Y%m%d")}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @app.route('/nursery-feed', methods=['GET', 'POST'])
@@ -4669,6 +4587,506 @@ def toggle_user(user_id):
     db.session.commit()
     flash('Status do usuário alterado.', 'success')
     return redirect(url_for('users_page'))
+
+
+
+class BiometricsSample(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    sample_date = db.Column(db.Date, nullable=False)
+    lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'), nullable=False)
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'))
+    sample_size = db.Column(db.Integer, nullable=False, default=100)
+    average_weight_g = db.Column(db.Float, nullable=False)
+    cv_pct = db.Column(db.Float)
+    estimated_biomass_kg = db.Column(db.Float)
+    weekly_gain_g = db.Column(db.Float)
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    lot = db.relationship('Lot')
+    unit = db.relationship('Unit')
+
+
+class FinanceEntry(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    entry_date = db.Column(db.Date, nullable=False)
+    due_date = db.Column(db.Date)
+    entry_type = db.Column(db.String(20), nullable=False)  # pagar/receber
+    category = db.Column(db.String(80), nullable=False, default='Geral')
+    description = db.Column(db.String(180), nullable=False)
+    amount = db.Column(db.Float, nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default='aberto')
+    lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    lot = db.relationship('Lot')
+    unit = db.relationship('Unit')
+
+
+class AlertRule(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    parameter_key = db.Column(db.String(40), nullable=False)
+    min_value = db.Column(db.Float)
+    max_value = db.Column(db.Float)
+    channel = db.Column(db.String(30), nullable=False, default='whatsapp')
+    recipient = db.Column(db.String(120))
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+def ensure_alert_rules():
+    defaults = [
+        ('OD crítico', 'dissolved_oxygen', TARGET_OD_MIN, None),
+        ('pH alto', 'ph', None, TARGET_PH_MAX),
+        ('pH baixo', 'ph', TARGET_PH_MIN, None),
+        ('Amônia alta', 'ammonia', None, TARGET_AMMONIA_MAX),
+        ('Nitrito alto', 'nitrite', None, TARGET_NITRITE_MAX),
+    ]
+    existing = {(row.name, row.parameter_key) for row in AlertRule.query.all()}
+    created = False
+    for name, parameter_key, min_value, max_value in defaults:
+        if (name, parameter_key) in existing:
+            continue
+        db.session.add(AlertRule(name=name, parameter_key=parameter_key, min_value=min_value, max_value=max_value, recipient='Plantão'))
+        created = True
+    if created:
+        db.session.commit()
+
+
+def latest_management_for_lot(lot_id):
+    return DailyManagement.query.filter(DailyManagement.lot_id == lot_id).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).first()
+
+
+def latest_biometric_for_lot(lot_id):
+    return BiometricsSample.query.filter(BiometricsSample.lot_id == lot_id).order_by(BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()).first()
+
+
+def current_weight_for_lot(lot):
+    bio = latest_biometric_for_lot(lot.id)
+    if bio and bio.average_weight_g is not None:
+        return bio.average_weight_g
+    mgmt = latest_management_for_lot(lot.id)
+    if mgmt and mgmt.average_weight_g is not None:
+        return mgmt.average_weight_g
+    return lot.estimated_weight_g or 0
+
+
+def historical_growth_rate(lot):
+    mgmts = DailyManagement.query.filter(DailyManagement.lot_id == lot.id, DailyManagement.average_weight_g.isnot(None)).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()
+    if len(mgmts) >= 2:
+        first = mgmts[0]
+        last = mgmts[-1]
+        days = max((last.manage_date - first.manage_date).days, 1)
+        rate = ((last.average_weight_g or 0) - (first.average_weight_g or 0)) / days
+        if rate > 0:
+            return round(rate, 3)
+    bios = BiometricsSample.query.filter(BiometricsSample.lot_id == lot.id).order_by(BiometricsSample.sample_date.asc(), BiometricsSample.id.asc()).all()
+    if len(bios) >= 2:
+        first = bios[0]
+        last = bios[-1]
+        days = max((last.sample_date - first.sample_date).days, 1)
+        rate = ((last.average_weight_g or 0) - (first.average_weight_g or 0)) / days
+        if rate > 0:
+            return round(rate, 3)
+    # fallback by phase
+    return 0.18 if lot.phase == 'bercario' else 0.24
+
+
+def smart_growth_projection(lot, days_ahead=7):
+    current_weight = current_weight_for_lot(lot)
+    base_rate = historical_growth_rate(lot)
+    recent_water = None
+    alloc = find_active_allocation(lot.id, lot.unit_id, date.today())
+    unit_id = alloc.unit_id if alloc else lot.unit_id
+    if unit_id:
+        recent_water = WaterMonitoring.query.filter(WaterMonitoring.unit_id == unit_id).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.monitor_time.desc(), WaterMonitoring.id.desc()).first()
+    temp_factor = 1.0
+    if recent_water and recent_water.temperature_c:
+        if recent_water.temperature_c < 27:
+            temp_factor = 0.9
+        elif recent_water.temperature_c > 32:
+            temp_factor = 0.92
+        else:
+            temp_factor = 1.05
+    projected = current_weight + (base_rate * temp_factor * days_ahead)
+    return {
+        'current_weight_g': round(current_weight or 0, 2),
+        'daily_gain_g': round(base_rate * temp_factor, 3),
+        'projected_weight_g': round(max(projected, current_weight), 2),
+    }
+
+
+def feeding_recommendation_for_lot(lot):
+    weight = current_weight_for_lot(lot)
+    live_count = lot_current_units(lot) or lot.initial_count or 0
+    biomass_kg = (live_count * weight) / 1000 if weight and live_count else 0
+    if weight <= 1:
+        pct = 0.12
+        pellet = '0,8 a 1,2 mm'
+    elif weight <= 3:
+        pct = 0.08
+        pellet = '1,2 a 1,5 mm'
+    elif weight <= 8:
+        pct = 0.05
+        pellet = '1,5 a 2,0 mm'
+    elif weight <= 15:
+        pct = 0.035
+        pellet = '2,0 a 2,5 mm'
+    else:
+        pct = 0.028
+        pellet = '2,5 a 3,0 mm'
+    suggested = biomass_kg * pct
+    return {
+        'biomass_kg': round(biomass_kg, 2),
+        'feed_pct_biomass': round(pct * 100, 2),
+        'suggested_feed_kg': round(suggested, 2),
+        'pellet_hint': pellet,
+        'current_weight_g': round(weight or 0, 2),
+    }
+
+
+def build_growth_analysis(lot):
+    mgmts = DailyManagement.query.filter(DailyManagement.lot_id == lot.id, DailyManagement.average_weight_g.isnot(None)).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()
+    bios = BiometricsSample.query.filter(BiometricsSample.lot_id == lot.id).order_by(BiometricsSample.sample_date.asc(), BiometricsSample.id.asc()).all()
+    points = []
+    for row in mgmts:
+        days = max((row.manage_date - lot.start_date).days, 0)
+        points.append({'date': row.manage_date.strftime('%d/%m/%Y'), 'days': days, 'real': round(row.average_weight_g or 0, 2), 'expected': round((lot.estimated_weight_g or 0) + historical_growth_rate(lot) * days, 2)})
+    for row in bios:
+        days = max((row.sample_date - lot.start_date).days, 0)
+        points.append({'date': row.sample_date.strftime('%d/%m/%Y'), 'days': days, 'real': round(row.average_weight_g or 0, 2), 'expected': round((lot.estimated_weight_g or 0) + historical_growth_rate(lot) * days, 2), 'source': 'biometria'})
+    points.sort(key=lambda item: item['days'])
+    return points
+
+
+def supplier_performance_rows():
+    supplier_rows = []
+    suppliers = [name for (name,) in db.session.query(Lot.larva_supplier).filter(Lot.larva_supplier.isnot(None), Lot.larva_supplier != '').distinct().all()]
+    for supplier in suppliers:
+        lots = Lot.query.filter(Lot.larva_supplier == supplier).all()
+        if not lots:
+            continue
+        summaries = [lot_financial_summary(lot) for lot in lots]
+        survival_values = [row['survival_pct'] for row in summaries if row['survival_pct'] is not None]
+        fcr_values = [row['fcr_real'] for row in summaries if row['fcr_real'] is not None]
+        supplier_rows.append({
+            'supplier': supplier,
+            'lot_count': len(lots),
+            'survival_avg': round(sum(survival_values) / len(survival_values), 2) if survival_values else None,
+            'fcr_avg': round(sum(fcr_values) / len(fcr_values), 2) if fcr_values else None,
+            'active_lots': sum(1 for lot in lots if lot.status == 'ativo'),
+        })
+    supplier_rows.sort(key=lambda item: ((item['survival_avg'] is None), -(item['survival_avg'] or 0)))
+    return supplier_rows
+
+
+def finance_summary(days=90):
+    start = date.today()
+    end = start + timedelta(days=days)
+    entries = FinanceEntry.query.order_by(FinanceEntry.due_date.asc().nullslast(), FinanceEntry.entry_date.desc()).all()
+    payable_open = sum((entry.amount or 0) for entry in entries if entry.entry_type == 'pagar' and entry.status == 'aberto')
+    receivable_open = sum((entry.amount or 0) for entry in entries if entry.entry_type == 'receber' and entry.status == 'aberto')
+    projected_entries = [entry for entry in entries if (entry.due_date or entry.entry_date) and start <= (entry.due_date or entry.entry_date) <= end]
+    projected_balance = sum((entry.amount or 0) * (1 if entry.entry_type == 'receber' else -1) for entry in projected_entries)
+    return {
+        'entries': entries,
+        'payable_open': round(payable_open, 2),
+        'receivable_open': round(receivable_open, 2),
+        'projected_balance': round(projected_balance, 2),
+        'projected_entries': projected_entries,
+    }
+
+
+def assistant_answer(question: str):
+    q = normalize_text(question or '')
+    if not q:
+        return 'Pergunte sobre viveiros, lotes, FCR, fornecedor de PL, crescimento, financeiro ou despesca.'
+    if 'fornecedor' in q or 'pl' in q:
+        rows = supplier_performance_rows()
+        if not rows:
+            return 'Ainda não há dados suficientes de fornecedores de PL para comparar.'
+        top = rows[0]
+        return f"Melhor fornecedor até agora: {top['supplier']} com sobrevivência média de {top['survival_avg'] or 0}% e FCR médio de {top['fcr_avg'] or 0}."
+    if 'fcr' in q or 'pior lote' in q or 'viveiro pior' in q:
+        rows = []
+        for lot in Lot.query.order_by(Lot.start_date.desc()).all():
+            summary = lot_financial_summary(lot)
+            if summary['fcr_real'] is not None:
+                rows.append((summary['fcr_real'], lot.lot_code))
+        if not rows:
+            return 'Ainda não há FCR real calculado para responder isso.'
+        worst = sorted(rows, reverse=True)[0]
+        return f'O lote com pior FCR real hoje é {worst[1]} com FCR {worst[0]:.2f}.'
+    if 'atrasad' in q or 'crescimento' in q:
+        scored = []
+        for lot in Lot.query.filter_by(status='ativo').all():
+            pts = build_growth_analysis(lot)
+            if pts:
+                last = pts[-1]
+                scored.append((last['real'] - last['expected'], lot.lot_code, last['real'], last['expected']))
+        if not scored:
+            return 'Ainda não há dados de crescimento suficientes para comparar lotes.'
+        lag = sorted(scored)[0]
+        return f'O lote mais atrasado é {lag[1]}: peso real {lag[2]:.2f} g contra esperado {lag[3]:.2f} g.'
+    if 'caixa' in q or 'financeiro' in q or 'receber' in q or 'pagar' in q:
+        fin = finance_summary()
+        return f"Em aberto hoje: contas a receber {money_filter(fin['receivable_open'])} e contas a pagar {money_filter(fin['payable_open'])}. Saldo projetado dos próximos 90 dias: {money_filter(fin['projected_balance'])}."
+    return 'Consigo responder melhor perguntas como: qual lote está mais atrasado, qual fornecedor de PL foi melhor, qual o pior FCR ou como está o financeiro projetado.'
+
+
+def build_pdf_response(title, headers, rows, filename):
+    if canvas is None or A4 is None:
+        flash('PDF indisponível porque a dependência reportlab não está instalada.', 'warning')
+        return redirect(url_for('managerial_reports_page'))
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    y = height - 40
+    pdf.setFont('Helvetica-Bold', 14)
+    pdf.drawString(40, y, title)
+    y -= 24
+    pdf.setFont('Helvetica', 8)
+    pdf.drawString(40, y, f'Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}')
+    y -= 22
+    col_width = max((width - 80) / max(len(headers), 1), 60)
+    pdf.setFont('Helvetica-Bold', 8)
+    x = 40
+    for header in headers:
+        pdf.drawString(x, y, str(header)[:22])
+        x += col_width
+    y -= 14
+    pdf.setFont('Helvetica', 8)
+    for row in rows:
+        if y < 40:
+            pdf.showPage()
+            y = height - 40
+            pdf.setFont('Helvetica', 8)
+        x = 40
+        for cell in row:
+            pdf.drawString(x, y, str(cell if cell is not None else '')[:22])
+            x += col_width
+        y -= 12
+    pdf.save()
+    buffer.seek(0)
+    return send_file(buffer, as_attachment=True, download_name=filename, mimetype='application/pdf')
+
+
+@app.route('/feeding-planner')
+@login_required
+@requires_permission('dashboard')
+def feeding_planner_page():
+    lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
+    rows = []
+    for lot in lots:
+        rec = feeding_recommendation_for_lot(lot)
+        projection = smart_growth_projection(lot, 7)
+        rows.append({'lot': lot, 'rec': rec, 'projection': projection})
+    return render_template('feeding_planner.html', rows=rows)
+
+
+@app.route('/biometrics', methods=['GET', 'POST'])
+@login_required
+@requires_permission('dashboard')
+def biometrics_page():
+    lots = Lot.query.order_by(Lot.start_date.desc()).all()
+    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+    if request.method == 'POST':
+        lot_id = request.form.get('lot_id', type=int)
+        unit_id = request.form.get('unit_id', type=int)
+        sample_date = parse_date(request.form.get('sample_date'), default=date.today())
+        average_weight_g = request.form.get('average_weight_g', type=float)
+        sample_size = request.form.get('sample_size', type=int) or 100
+        cv_pct = request.form.get('cv_pct', type=float)
+        estimated_biomass_kg = request.form.get('estimated_biomass_kg', type=float)
+        notes = (request.form.get('notes') or '').strip()
+        lot = db.session.get(Lot, lot_id)
+        if not lot or average_weight_g is None:
+            flash('Informe lote e peso médio para salvar a biometria.', 'warning')
+            return redirect(url_for('biometrics_page'))
+        last = latest_biometric_for_lot(lot_id)
+        weekly_gain = None
+        if last and last.average_weight_g is not None:
+            days = max((sample_date - last.sample_date).days, 1)
+            weekly_gain = round(((average_weight_g - last.average_weight_g) / days) * 7, 2)
+        row = BiometricsSample(sample_date=sample_date, lot_id=lot_id, unit_id=unit_id, sample_size=sample_size, average_weight_g=average_weight_g, cv_pct=cv_pct, estimated_biomass_kg=estimated_biomass_kg, weekly_gain_g=weekly_gain, notes=notes or None)
+        db.session.add(row)
+        db.session.commit()
+        flash('Biometria registrada.', 'success')
+        return redirect(url_for('biometrics_page'))
+    rows = BiometricsSample.query.options(joinedload(BiometricsSample.lot), joinedload(BiometricsSample.unit)).order_by(BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()).all()
+    return render_template('biometrics.html', lots=lots, units=units, rows=rows)
+
+
+@app.route('/growth-analysis')
+@login_required
+@requires_permission('dashboard')
+def growth_analysis_page():
+    lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
+    lot_id = request.args.get('lot_id', type=int)
+    selected_lot = db.session.get(Lot, lot_id) if lot_id else (lots[0] if lots else None)
+    points = build_growth_analysis(selected_lot) if selected_lot else []
+    projection = smart_growth_projection(selected_lot, 7) if selected_lot else None
+    return render_template('growth_analysis.html', lots=lots, selected_lot=selected_lot, points=points, projection=projection)
+
+
+@app.route('/pl-suppliers')
+@login_required
+@requires_permission('dashboard')
+def pl_suppliers_page():
+    rows = supplier_performance_rows()
+    return render_template('pl_suppliers.html', rows=rows)
+
+
+@app.route('/harvest-decision', methods=['GET', 'POST'])
+@login_required
+@requires_permission('dashboard')
+def harvest_decision_page():
+    lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
+    lot_id = request.values.get('lot_id', type=int)
+    selected_lot = db.session.get(Lot, lot_id) if lot_id else (lots[0] if lots else None)
+    analysis = None
+    if selected_lot:
+        projection_now = smart_growth_projection(selected_lot, 0)
+        projection_next = smart_growth_projection(selected_lot, 7)
+        price_now = request.values.get('price_now', type=float) or 22
+        price_next = request.values.get('price_next', type=float) or 24
+        live_count = lot_current_units(selected_lot) or selected_lot.initial_count or 0
+        harvest_kg_now = (live_count * projection_now['current_weight_g']) / 1000 if live_count else 0
+        harvest_kg_next = (live_count * projection_next['projected_weight_g']) / 1000 if live_count else 0
+        revenue_now = harvest_kg_now * price_now
+        revenue_next = harvest_kg_next * price_next
+        extra_feed_cost = feeding_recommendation_for_lot(selected_lot)['suggested_feed_kg'] * 7 * 6.0
+        margin_gain = revenue_next - revenue_now - extra_feed_cost
+        analysis = {
+            'projection_now': projection_now,
+            'projection_next': projection_next,
+            'price_now': price_now,
+            'price_next': price_next,
+            'harvest_kg_now': round(harvest_kg_now, 2),
+            'harvest_kg_next': round(harvest_kg_next, 2),
+            'revenue_now': round(revenue_now, 2),
+            'revenue_next': round(revenue_next, 2),
+            'extra_feed_cost': round(extra_feed_cost, 2),
+            'margin_gain': round(margin_gain, 2),
+            'decision': 'Esperar 7 dias' if margin_gain > 0 else 'DespescAR agora',
+        }
+    return render_template('harvest_decision.html', lots=lots, selected_lot=selected_lot, analysis=analysis)
+
+
+@app.route('/finance', methods=['GET', 'POST'])
+@login_required
+@requires_permission('dashboard')
+def finance_page():
+    lots = Lot.query.order_by(Lot.start_date.desc()).all()
+    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+    if request.method == 'POST':
+        entry = FinanceEntry(
+            entry_date=parse_date(request.form.get('entry_date'), default=date.today()),
+            due_date=parse_date(request.form.get('due_date')),
+            entry_type=(request.form.get('entry_type') or 'pagar').strip(),
+            category=(request.form.get('category') or 'Geral').strip(),
+            description=(request.form.get('description') or '').strip() or 'Lançamento',
+            amount=request.form.get('amount', type=float) or 0,
+            status=(request.form.get('status') or 'aberto').strip(),
+            lot_id=request.form.get('lot_id', type=int),
+            unit_id=request.form.get('unit_id', type=int),
+            notes=(request.form.get('notes') or '').strip() or None,
+        )
+        db.session.add(entry)
+        db.session.commit()
+        flash('Lançamento financeiro salvo.', 'success')
+        return redirect(url_for('finance_page'))
+    summary = finance_summary()
+    return render_template('finance.html', lots=lots, units=units, summary=summary)
+
+
+@app.route('/assistant', methods=['GET', 'POST'])
+@login_required
+@requires_permission('dashboard')
+def assistant_page():
+    answer = None
+    question = ''
+    if request.method == 'POST':
+        question = (request.form.get('question') or '').strip()
+        answer = assistant_answer(question)
+    return render_template('assistant.html', question=question, answer=answer)
+
+
+@app.post('/api/v1/sensor-reading')
+@login_required
+@requires_permission('water_manage')
+def api_sensor_reading():
+    payload = request.get_json(silent=True) or {}
+    unit_id = payload.get('unit_id')
+    if not unit_id:
+        return jsonify({'ok': False, 'error': 'unit_id é obrigatório'}), 400
+    reading_time = parse_time(payload.get('monitor_time')) if payload.get('monitor_time') else datetime.now().time().replace(second=0, microsecond=0)
+    reading_date = parse_date(payload.get('monitor_date')) if payload.get('monitor_date') else date.today()
+    rec = WaterMonitoring(
+        monitor_date=reading_date,
+        monitor_time=reading_time,
+        shift=infer_shift_from_time(reading_time),
+        unit_id=unit_id,
+        temperature_c=payload.get('temperature_c'),
+        dissolved_oxygen=payload.get('dissolved_oxygen'),
+        ph=payload.get('ph'),
+        salinity=payload.get('salinity'),
+        transparency_cm=payload.get('transparency_cm'),
+        ammonia=payload.get('ammonia'),
+        nitrite=payload.get('nitrite'),
+        nitrate=payload.get('nitrate'),
+        alkalinity=payload.get('alkalinity'),
+        hardness=payload.get('hardness'),
+        observation=payload.get('observation'),
+    )
+    db.session.add(rec)
+    db.session.commit()
+    config = get_water_reference_config()
+    alerts = water_alerts_for_record(rec, config)
+    rule_alerts = []
+    for rule in AlertRule.query.filter_by(active=True).all():
+        value = getattr(rec, rule.parameter_key, None)
+        if value is None:
+            continue
+        if rule.min_value is not None and value < rule.min_value:
+            rule_alerts.append({'rule': rule.name, 'message': f'{rule.parameter_key} abaixo do mínimo ({value})'})
+        if rule.max_value is not None and value > rule.max_value:
+            rule_alerts.append({'rule': rule.name, 'message': f'{rule.parameter_key} acima do máximo ({value})'})
+    return jsonify({'ok': True, 'record_id': rec.id, 'alerts': alerts, 'rule_alerts': rule_alerts})
+
+
+@app.get('/managerial-reports/export/<report_key>.pdf')
+@login_required
+@requires_permission('dashboard')
+def export_managerial_report_pdf(report_key):
+    today = date.today()
+    if report_key == 'stock':
+        headers = ['Categoria', 'Item', 'Saldo', 'Unidade', 'Minimo']
+        rows = []
+        for row in build_feed_stock_snapshot()['rows']:
+            rows.append(['Ração', row.get('name') or row.get('feed_name'), row.get('stock_kg'), 'kg', row.get('minimum_stock_kg')])
+        for row in build_supply_stock_snapshot()['rows']:
+            rows.append(['Insumo', row['name'], row.get('stock_qty'), row.get('measure_unit'), row.get('minimum_stock_qty')])
+        return build_pdf_response('Relatório de estoque', headers, rows, f'relatorio_estoque_{today.strftime("%Y%m%d")}.pdf')
+    elif report_key == 'production':
+        headers = ['Lote', 'Fornecedor', 'Custo total', 'FCR', 'Sobrevivencia']
+        rows = []
+        for summary in [lot_financial_summary(lot) for lot in Lot.query.order_by(Lot.start_date.desc()).all()]:
+            rows.append([summary['lot'].lot_code, summary['lot'].larva_supplier or '-', summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
+        return build_pdf_response('Relatório de produção', headers, rows, f'relatorio_producao_{today.strftime("%Y%m%d")}.pdf')
+    elif report_key == 'financial':
+        headers = ['Data', 'Tipo', 'Categoria', 'Descrição', 'Valor', 'Status']
+        rows = [[(row.due_date or row.entry_date).strftime('%d/%m/%Y') if (row.due_date or row.entry_date) else '', row.entry_type, row.category, row.description, row.amount, row.status] for row in FinanceEntry.query.order_by(FinanceEntry.entry_date.desc()).all()]
+        return build_pdf_response('Relatório financeiro', headers, rows, f'relatorio_financeiro_{today.strftime("%Y%m%d")}.pdf')
+    elif report_key == 'water_quality':
+        config = get_water_reference_config()
+        headers = ['Data', 'Unidade', 'OD', 'pH', 'Temp', 'Amônia', 'Alertas']
+        rows = []
+        for record in WaterMonitoring.query.options(joinedload(WaterMonitoring.unit)).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.id.desc()).limit(150).all():
+            rows.append([record.monitor_date.strftime('%d/%m/%Y') if record.monitor_date else '', record.unit.name if record.unit else '', record.dissolved_oxygen, record.ph, record.temperature_c, record.ammonia, '; '.join(alert['message'] for alert in water_alerts_for_record(record, config))])
+        return build_pdf_response('Relatório de água', headers, rows, f'relatorio_agua_{today.strftime("%Y%m%d")}.pdf')
+    abort(404)
 
 
 @app.errorhandler(403)
