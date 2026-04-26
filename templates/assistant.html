@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block page_title %}Assistente IA{% endblock %}
+{% block page_subtitle %}Consulta rápida em linguagem natural sobre arraçoamento, crescimento, fornecedores, despesca e caixa projetado.{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Pergunte em português</p><h2>Use a base histórica da fazenda a seu favor</h2></div></div>
+  <form method="post" class="form-grid">
+    <label class="full">Pergunta<textarea id="assistant-question" name="question" rows="4" placeholder="Ex.: qual lote compensa despescAR primeiro? quanto ofertar hoje? qual fornecedor de PL está melhor?">{{ question }}</textarea></label>
+    <div class="suggested-question-list full">{% for item in suggested_questions %}<button type="button" class="question-chip" onclick="document.getElementById('assistant-question').value='{{ item }}';">{{ item }}</button>{% endfor %}</div>
+    <div class="form-actions"><button type="submit">Perguntar</button></div>
+  </form>
+  {% if answer %}<div class="assistant-answer"><strong>Resposta:</strong><p>{{ answer }}</p></div>{% endif %}
+</section>
+{% endblock %}

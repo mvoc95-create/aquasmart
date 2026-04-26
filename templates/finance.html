@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% block page_title %}Financeiro{% endblock %}
+{% block page_subtitle %}Contas a pagar e a receber somadas ao caixa projetado pelas próximas despescas previstas pelo modelo.{% endblock %}
+{% block content %}
+<div class="grid-2 intelligence-layout">
+  <section class="panel">
+    <div class="panel-head"><div><p class="panel-kicker">Novo lançamento</p><h2>Contas a pagar / receber</h2></div></div>
+    <form method="post" class="form-grid">
+      <label>Data<input type="date" name="entry_date" required></label>
+      <label>Vencimento<input type="date" name="due_date"></label>
+      <label>Tipo<select name="entry_type"><option value="pagar">Pagar</option><option value="receber">Receber</option></select></label>
+      <label>Status<select name="status"><option value="aberto">Aberto</option><option value="pago">Pago</option><option value="recebido">Recebido</option></select></label>
+      <label>Categoria<input type="text" name="category" placeholder="Ração, venda, energia..."></label>
+      <label>Descrição<input type="text" name="description" required></label>
+      <label>Valor<input type="number" step="0.01" name="amount" required></label>
+      <label>Lote<select name="lot_id"><option value="">Selecione</option>{% for lot in lots %}<option value="{{ lot.id }}">{{ lot.lot_code }}</option>{% endfor %}</select></label>
+      <label>Viveiro<select name="unit_id"><option value="">Selecione</option>{% for unit in units %}<option value="{{ unit.id }}">{{ unit.name }}</option>{% endfor %}</select></label>
+      <label class="full">Notas<textarea name="notes"></textarea></label>
+      <div class="form-actions"><button type="submit">Salvar lançamento</button></div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head compact-between">
+      <div><p class="panel-kicker">Projeção</p><h2>Caixa dos próximos {{ summary.period_days }} dias</h2></div>
+      <form method="get" class="inline-filter"><select name="days">{% for option in [30, 60, 90, 120] %}<option value="{{ option }}" {% if summary.period_days == option %}selected{% endif %}>{{ option }} dias</option>{% endfor %}</select><input type="number" step="0.01" name="base_price_10g" value="{{ summary.base_price_10g }}" placeholder="Preço 10g"><button type="submit">Atualizar</button></form>
+    </div>
+    <div class="kpi-grid">
+      <article class="kpi-card"><span>Receber em aberto</span><strong>{{ summary.receivable_open|money }}</strong></article>
+      <article class="kpi-card"><span>Pagar em aberto</span><strong>{{ summary.payable_open|money }}</strong></article>
+      <article class="kpi-card"><span>Saldo projetado</span><strong>{{ summary.projected_balance|money }}</strong></article>
+      <article class="kpi-card"><span>Despescas previstas</span><strong>{{ summary.projected_harvest_receipts|money }}</strong></article>
+      <article class="kpi-card"><span>Saldo + despescas</span><strong>{{ summary.projected_balance_with_harvests|money }}</strong></article>
+    </div>
+    <div class="table-wrap top-space">
+      <table>
+        <thead><tr><th>Data prevista</th><th>Lote</th><th>Peso</th><th>Preço/kg</th><th>Biomassa</th><th>Entrada projetada</th></tr></thead>
+        <tbody>
+          {% for row in summary.projected_harvests %}
+          <tr><td>{{ row.date|brdate }}</td><td>{{ row.lot.lot_code }}</td><td>{{ row.weight_g }} g</td><td>{{ row.price_kg|money }}</td><td>{{ row.biomass_kg }} kg</td><td>{{ row.amount|money }}</td></tr>
+          {% else %}<tr><td colspan="6" class="empty-cell">Nenhuma despesca prevista dentro do horizonte selecionado.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Lançamentos</p><h2>Histórico financeiro</h2></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Lote</th><th>Valor</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for row in summary.entries %}
+        <tr><td>{{ (row.due_date or row.entry_date)|brdate }}</td><td>{{ row.entry_type }}</td><td>{{ row.category }}</td><td>{{ row.description }}</td><td>{{ row.lot.lot_code if row.lot else '—' }}</td><td>{{ row.amount|money }}</td><td>{{ row.status }}</td></tr>
+        {% else %}<tr><td colspan="7" class="empty-cell">Nenhum lançamento financeiro ainda.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

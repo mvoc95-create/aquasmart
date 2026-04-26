@@ -1,6 +1,37 @@
 {% extends 'base.html' %}
 {% block page_title %}Crescimento real x esperado{% endblock %}
-{% block page_subtitle %}Comparação simples para ver rápido quais lotes estão andando abaixo do plano.{% endblock %}
+{% block page_subtitle %}A curva esperada vem do histórico real da fazenda e vai ganhando confiança conforme seus ciclos avançam.{% endblock %}
 {% block content %}
-<section class="panel"><div class="panel-head compact-between"><div><p class="panel-kicker">Análise</p><h2>Curva por lote</h2></div><form method="get" class="inline-filter"><select name="lot_id">{% for lot in lots %}<option value="{{ lot.id }}" {% if selected_lot and selected_lot.id == lot.id %}selected{% endif %}>{{ lot.lot_code }}</option>{% endfor %}</select><button type="submit">Ver</button></form></div>{% if selected_lot and projection %}<div class="kpi-grid"><article class="kpi-card"><span>Peso atual</span><strong>{{ projection.current_weight_g }} g</strong></article><article class="kpi-card"><span>Ganho diário projetado</span><strong>{{ projection.daily_gain_g }} g/dia</strong></article><article class="kpi-card"><span>Peso em 7 dias</span><strong>{{ projection.projected_weight_g }} g</strong></article></div>{% endif %}<div class="table-wrap"><table><thead><tr><th>Data</th><th>Dias de ciclo</th><th>Peso real</th><th>Peso esperado</th><th>Desvio</th></tr></thead><tbody>{% for p in points %}<tr><td>{{ p.date }}</td><td>{{ p.days }}</td><td>{{ p.real }} g</td><td>{{ p.expected }} g</td><td>{{ '%.2f'|format((p.real or 0) - (p.expected or 0)) }} g</td></tr>{% else %}<tr><td colspan="5" class="empty-cell">Sem dados de crescimento para esse lote.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel">
+  <div class="panel-head compact-between">
+    <div><p class="panel-kicker">Análise adaptativa</p><h2>Curva por lote</h2></div>
+    <form method="get" class="inline-filter"><select name="lot_id">{% for lot in lots %}<option value="{{ lot.id }}" {% if selected_lot and selected_lot.id == lot.id %}selected{% endif %}>{{ lot.lot_code }}</option>{% endfor %}</select><button type="submit">Atualizar</button></form>
+  </div>
+
+  {% if selected_lot and summary %}
+  <div class="kpi-grid">
+    <article class="kpi-card"><span>Peso real atual</span><strong>{{ summary.current_weight_g }} g</strong></article>
+    <article class="kpi-card"><span>Peso esperado</span><strong>{{ summary.expected_weight_g }} g</strong></article>
+    <article class="kpi-card"><span>Desvio</span><strong>{{ summary.deviation_g }} g{% if summary.deviation_pct is not none %} ({{ summary.deviation_pct }}%){% endif %}</strong></article>
+    <article class="kpi-card"><span>Projeção em 7 dias</span><strong>{{ summary.projection_7d_g }} g</strong></article>
+    <article class="kpi-card"><span>Projeção em 14 dias</span><strong>{{ summary.projection_14d_g }} g</strong></article>
+    <article class="kpi-card"><span>Confiança do modelo</span><strong>{{ summary.model_confidence }}%</strong></article>
+  </div>
+  {% endif %}
+
+  {% if projection_21 %}<div class="hero-inline-note">Peso estimado em 21 dias: <strong>{{ projection_21.projected_weight_g }} g</strong> · ganho diário combinado: <strong>{{ projection_21.daily_gain_g }} g/dia</strong> · casos parecidos usados: <strong>{{ projection_21.similar_cases }}</strong>.</div>{% endif %}
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Dias de ciclo</th><th>Fonte</th><th>Peso real</th><th>Peso esperado</th><th>Desvio</th><th>Confiança</th></tr></thead>
+      <tbody>
+        {% for p in points %}
+        <tr><td>{{ p.date }}</td><td>{{ p.days }}</td><td>{{ p.source }}</td><td>{{ p.real }} g</td><td>{{ p.expected }} g</td><td>{{ p.deviation }} g{% if p.deviation_pct is not none %} ({{ p.deviation_pct }}%){% endif %}</td><td>{{ p.confidence }}%</td></tr>
+        {% else %}<tr><td colspan="7" class="empty-cell">Sem dados de crescimento para esse lote.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if summary and summary.drivers %}<div class="driver-list top-space">{% for driver in summary.drivers %}<span class="driver-chip">{{ driver }}</span>{% endfor %}</div>{% endif %}
+</section>
 {% endblock %}

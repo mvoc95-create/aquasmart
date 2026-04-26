@@ -1,19 +1,68 @@
 {% extends 'base.html' %}
 {% block page_title %}Biometrias{% endblock %}
-{% block page_subtitle %}Amostragem estruturada para acompanhar peso médio, CV, ganho semanal e biomassa estimada.{% endblock %}
+{% block page_subtitle %}Biometria intertravada com o manejo diário: ao salvar, o peso e a biomassa atualizam a inteligência do lote.{% endblock %}
 {% block content %}
-<div class="grid-2">
-<section class="panel"><div class="panel-head"><div><p class="panel-kicker">Novo lançamento</p><h2>Registrar biometria</h2></div></div>
-<form method="post" class="form-grid">
-<label>Data<input type="date" name="sample_date" value="{{ today_label[6:10] }}-{{ today_label[3:5] }}-{{ today_label[0:2] }}"></label>
-<label>Lote<select name="lot_id" required><option value="">Selecione</option>{% for lot in lots %}<option value="{{ lot.id }}">{{ lot.lot_code }}</option>{% endfor %}</select></label>
-<label>Viveiro<select name="unit_id"><option value="">Selecione</option>{% for unit in units %}<option value="{{ unit.id }}">{{ unit.name }}</option>{% endfor %}</select></label>
-<label>Amostra (un.)<input type="number" name="sample_size" value="100"></label>
-<label>Peso médio (g)<input type="number" step="0.01" name="average_weight_g" required></label>
-<label>CV (%)<input type="number" step="0.01" name="cv_pct"></label>
-<label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg"></label>
-<label class="full">Observações<textarea name="notes"></textarea></label>
-<div class="form-actions"><button type="submit">Salvar biometria</button></div></form></section>
-<section class="panel"><div class="panel-head"><div><p class="panel-kicker">Últimos registros</p><h2>Histórico de amostragens</h2></div></div>
-<div class="table-wrap"><table><thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Amostra</th><th>Peso médio</th><th>CV</th><th>Biomassa</th><th>Ganho semanal</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.sample_date|brdate }}</td><td>{{ row.lot.lot_code if row.lot else '—' }}</td><td>{{ row.unit.name if row.unit else '—' }}</td><td>{{ row.sample_size }}</td><td>{{ row.average_weight_g }} g</td><td>{{ row.cv_pct or '—' }}</td><td>{{ row.estimated_biomass_kg or '—' }}</td><td>{{ row.weekly_gain_g or '—' }}</td></tr>{% else %}<tr><td colspan="8" class="empty-cell">Nenhuma biometria registrada.</td></tr>{% endfor %}</tbody></table></div></section></div>
+<div class="grid-2 intelligence-layout">
+  <section class="panel">
+    <div class="panel-head"><div><p class="panel-kicker">Entrada</p><h2>Registrar biometria</h2></div></div>
+    <form method="post" class="form-grid">
+      <label>Data<input type="date" name="sample_date" value="{{ today.isoformat() }}" required></label>
+      <label>Lote<select name="lot_id" required><option value="">Selecione</option>{% for lot in lots %}<option value="{{ lot.id }}">{{ lot.lot_code }}</option>{% endfor %}</select></label>
+      <label>Viveiro<select name="unit_id"><option value="">Selecione</option>{% for unit in units %}<option value="{{ unit.id }}">{{ unit.name }}</option>{% endfor %}</select></label>
+      <label>Amostra (un.)<input type="number" name="sample_size" value="100"></label>
+      <label>Peso médio (g)<input type="number" step="0.01" name="average_weight_g" required></label>
+      <label>CV (%)<input type="number" step="0.01" name="cv_pct"></label>
+      <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg" placeholder="Se deixar vazio, o sistema calcula"></label>
+      <label class="full">Observações<textarea name="notes" placeholder="Ex.: amostra bem uniforme, presença de indivíduos menores no canto norte"></textarea></label>
+      <div class="form-actions"><button type="submit">Salvar biometria e sincronizar manejo</button></div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><p class="panel-kicker">Reflexo operacional</p><h2>Resumo por lote ativo</h2></div></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Lote</th><th>Última biometria</th><th>Peso atual</th><th>Esperado</th><th>Desvio</th><th>Proj. 7d</th></tr></thead>
+        <tbody>
+          {% for item in active_summaries %}
+          <tr>
+            <td>{{ item.lot.lot_code }}</td>
+            <td>{{ item.latest.sample_date|brdate if item.latest else '—' }}</td>
+            <td>{{ item.summary.current_weight_g if item.summary else '—' }}{% if item.summary %} g{% endif %}</td>
+            <td>{{ item.summary.expected_weight_g if item.summary else '—' }}{% if item.summary %} g{% endif %}</td>
+            <td>{% if item.summary and item.summary.deviation_pct is not none %}<span class="pill {{ 'pill-danger' if item.summary.deviation_pct < -5 else 'pill-success' if item.summary.deviation_pct > 5 else 'pill-neutral' }}">{{ item.summary.deviation_pct }}%</span>{% else %}—{% endif %}</td>
+            <td>{{ item.summary.projection_7d_g if item.summary else '—' }}{% if item.summary %} g{% endif %}</td>
+          </tr>
+          {% else %}<tr><td colspan="6" class="empty-cell">Nenhum lote ativo.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Biometrias registradas</h2></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Amostra</th><th>Peso médio</th><th>Peso esperado</th><th>Desvio</th><th>CV</th><th>Biomassa</th><th>Ganho semanal</th><th>Sync manejo</th></tr></thead>
+      <tbody>
+        {% for item in rows %}
+        <tr>
+          <td>{{ item.row.sample_date|brdate }}</td>
+          <td>{{ item.row.lot.lot_code if item.row.lot else '—' }}</td>
+          <td>{{ item.row.unit.name if item.row.unit else '—' }}</td>
+          <td>{{ item.row.sample_size }}</td>
+          <td>{{ item.row.average_weight_g }} g</td>
+          <td>{{ item.expected_weight_g }} g</td>
+          <td>{{ item.deviation_g }} g{% if item.deviation_pct is not none %} ({{ item.deviation_pct }}%){% endif %}</td>
+          <td>{{ item.row.cv_pct or '—' }}</td>
+          <td>{{ item.row.estimated_biomass_kg or '—' }}</td>
+          <td>{{ item.row.weekly_gain_g or '—' }}</td>
+          <td>{% if item.linked_management %}<span class="pill pill-success">Sim</span>{% else %}<span class="pill pill-danger">Não</span>{% endif %}</td>
+        </tr>
+        {% else %}<tr><td colspan="11" class="empty-cell">Nenhuma biometria registrada.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endblock %}

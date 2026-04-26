@@ -1,6 +1,46 @@
 {% extends 'base.html' %}
 {% block page_title %}Ponto ótimo de despesca{% endblock %}
-{% block page_subtitle %}Simulação rápida para decidir entre despescAR agora ou esperar mais 7 dias.{% endblock %}
+{% block page_subtitle %}A precificação usa sua regra: preço base do camarão de 10 g e + R$ 1,00/kg por grama acima dessa faixa.{% endblock %}
 {% block content %}
-<section class="panel"><div class="panel-head"><div><p class="panel-kicker">Simulador</p><h2>Receita marginal da espera</h2></div></div><form method="get" class="form-grid compact-form"><label>Lote<select name="lot_id">{% for lot in lots %}<option value="{{ lot.id }}" {% if selected_lot and selected_lot.id == lot.id %}selected{% endif %}>{{ lot.lot_code }}</option>{% endfor %}</select></label><label>Preço hoje (R$/kg)<input type="number" step="0.01" name="price_now" value="{{ analysis.price_now if analysis else 22 }}"></label><label>Preço em 7 dias (R$/kg)<input type="number" step="0.01" name="price_next" value="{{ analysis.price_next if analysis else 24 }}"></label><div class="form-actions"><button type="submit">Calcular</button></div></form>{% if analysis %}<div class="kpi-grid"><article class="kpi-card"><span>Receita hoje</span><strong>{{ analysis.revenue_now|money }}</strong></article><article class="kpi-card"><span>Receita em 7 dias</span><strong>{{ analysis.revenue_next|money }}</strong></article><article class="kpi-card"><span>Custo extra de ração</span><strong>{{ analysis.extra_feed_cost|money }}</strong></article><article class="kpi-card"><span>Decisão sugerida</span><strong>{{ analysis.decision }}</strong></article></div><div class="table-wrap"><table><thead><tr><th></th><th>Hoje</th><th>+7 dias</th></tr></thead><tbody><tr><td>Peso médio</td><td>{{ analysis.projection_now.current_weight_g }} g</td><td>{{ analysis.projection_next.projected_weight_g }} g</td></tr><tr><td>Biomassa estimada</td><td>{{ analysis.harvest_kg_now }} kg</td><td>{{ analysis.harvest_kg_next }} kg</td></tr><tr><td>Margem adicional líquida</td><td colspan="2"><strong>{{ analysis.margin_gain|money }}</strong></td></tr></tbody></table></div>{% endif %}</section>
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Simulador econômico</p><h2>Comparação de cenários</h2></div></div>
+  <form method="get" class="form-grid compact-form">
+    <label>Lote<select name="lot_id">{% for lot in lots %}<option value="{{ lot.id }}" {% if selected_lot and selected_lot.id == lot.id %}selected{% endif %}>{{ lot.lot_code }}</option>{% endfor %}</select></label>
+    <label>Preço base 10 g (R$/kg)<input type="number" step="0.01" name="base_price_10g" value="{{ analysis.base_price_10g if analysis else 22 }}"></label>
+    <label>Custo da ração (R$/kg)<input type="number" step="0.01" name="feed_cost_kg" value="{{ analysis.feed_cost_kg if analysis else '' }}" placeholder="Se vazio, usa média do lote"></label>
+    <div class="form-actions"><button type="submit">Calcular cenários</button></div>
+  </form>
+
+  {% if analysis %}
+  <div class="kpi-grid">
+    <article class="kpi-card"><span>Decisão sugerida</span><strong>{{ analysis.decision }}</strong></article>
+    <article class="kpi-card"><span>Melhor cenário</span><strong>{{ analysis.best.days_wait }} dias</strong></article>
+    <article class="kpi-card"><span>Receita líquida do melhor cenário</span><strong>{{ analysis.best.net_value|money }}</strong></article>
+    <article class="kpi-card"><span>Preço base 10 g</span><strong>{{ analysis.base_price_10g|money }}</strong></article>
+  </div>
+  <div class="hero-inline-note">A tabela abaixo usa o peso projetado pelo modelo adaptativo, aplica a regra de preço por grama e desconta ração extra + custo fixo adicional do período.</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Cenário</th><th>Data</th><th>Peso projetado</th><th>Preço/kg</th><th>Biomassa</th><th>Receita</th><th>Ração extra</th><th>Custo fixo extra</th><th>Valor líquido</th><th>Ganho incremental</th><th>Confiança</th></tr></thead>
+      <tbody>
+        {% for row in analysis.scenarios %}
+        <tr>
+          <td>{% if row.days_wait == 0 %}Hoje{% else %}+{{ row.days_wait }} dias{% endif %}</td>
+          <td>{{ row.projected_date|brdate }}</td>
+          <td>{{ row.weight_g }} g</td>
+          <td>{{ row.price_kg|money }}</td>
+          <td>{{ row.biomass_kg }} kg</td>
+          <td>{{ row.revenue|money }}</td>
+          <td>{{ row.extra_feed_cost|money }}</td>
+          <td>{{ row.extra_fixed_cost|money }}</td>
+          <td><strong>{{ row.net_value|money }}</strong></td>
+          <td><span class="pill {{ 'pill-success' if row.incremental_gain > 0 else 'pill-danger' if row.incremental_gain < 0 else 'pill-neutral' }}">{{ row.incremental_gain|money }}</span></td>
+          <td>{{ row.confidence }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
 {% endblock %}
