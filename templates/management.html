@@ -1,191 +1,212 @@
 {% extends 'base.html' %}
 {% block page_title %}Manejo diário{% endblock %}
-{% block page_subtitle %}Registre alimentação, mortalidade, biomassa e também os insumos usados em cada viveiro, com baixa automática no estoque e custo lançado no lote.{% endblock %}
+{% block page_subtitle %}Na engorda, o peso oficial vem da biometria. A biomassa estimada usa score de bandeja + tabela clássica de Van Wyk para cultivo intensivo.{% endblock %}
 {% block content %}
 <div class="cards compact-cards">
   <div class="metric-card">
     <span class="metric-label">Ração ofertada no filtro</span>
     <strong>{{ cost_summary.total_offered_kg }} kg</strong>
-    <small>Total lançado nos registros exibidos para manejo.</small>
+    <small>Total lançado nos registros exibidos.</small>
   </div>
   <div class="metric-card">
     <span class="metric-label">Custo estimado acumulado</span>
     <strong>{{ cost_summary.total_cost|money }}</strong>
-    <small>Soma de ração e insumos vinculados ao manejo.</small>
+    <small>Soma de ração e insumos do manejo.</small>
   </div>
   <div class="metric-card">
     <span class="metric-label">Custo médio por kg</span>
     <strong>{{ cost_summary.avg_cost_per_kg|money if cost_summary.avg_cost_per_kg is not none else '—' }}</strong>
-    <small>Ajuda a acompanhar alimentação por viveiro e lote.</small>
+    <small>Ajuda a acompanhar viveiro e lote.</small>
   </div>
 </div>
 
 <div class="grid-2">
 <section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>Novo manejo</h2></div></div>
-<form method="post" class="form-grid" id="management-form">
-  <label>Data<input type="date" name="manage_date" id="manage_date" value="{{ today.isoformat() }}" required></label>
-  <label>Unidade<select name="unit_id" id="management_unit_id">{% for u in units %}<option value="{{u.id}}" {% if selected_unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
-  <div class="full inline-actions-row">
-    <button type="button" class="secondary-button" id="copy-previous-btn">Repetir informações do dia anterior</button>
-    <span class="inline-hint">Agora o sistema copia também os insumos usados no último manejo desse viveiro.</span>
-  </div>
-  <label class="full">Ração utilizada
-    <select name="feed_product_id" id="feed_product_id">
-      <option value="">Selecione a ração em estoque</option>
-      {% for p in feed_products %}
-      <option value="{{ p.id }}" data-stock="{{ stock_by_product.get(p.id, 0) }}" {% if not p.active %}data-inactive="1"{% endif %}>
-        {{ p.full_name }}{% if p.technical_summary %} · {{ p.technical_summary }}{% endif %} · saldo {{ stock_by_product.get(p.id, 0) }} kg{% if not p.active %} · inativa{% endif %}
-      </option>
-      {% endfor %}
-    </select>
-  </label>
-  <div class="full selection-info" id="feed-selection-info">Selecione a ração para ver o saldo disponível antes de salvar.</div>
-  <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg" id="feed_offered_kg"></label>
-  <label>Ração consumida (kg)<input type="number" step="0.01" name="feed_consumed_kg" id="feed_consumed_kg"></label>
-  <label>Mortalidade (un)<input type="number" name="mortality_qty" id="mortality_qty"></label>
-  <label>Peso médio (g)<input type="number" step="0.001" name="average_weight_g" id="average_weight_g"></label>
-  <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg" id="estimated_biomass_kg"></label>
-  <label class="full">Observação<textarea name="notes" id="notes"></textarea></label>
+  <div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>Novo manejo</h2></div></div>
+  <form method="post" class="form-grid" id="management-form">
+    <label>Data<input type="date" name="manage_date" id="manage_date" value="{{ today.isoformat() }}" required></label>
+    <label>Unidade<select name="unit_id" id="management_unit_id">{% for u in units %}<option value="{{u.id}}" {% if selected_unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
+    <div class="full inline-actions-row">
+      <button type="button" class="secondary-button" id="copy-previous-btn">Repetir informações do dia anterior</button>
+      <span class="inline-hint">Copia a ração, o score de bandeja e os insumos do último manejo.</span>
+    </div>
+    <label class="full">Ração utilizada
+      <select name="feed_product_id" id="feed_product_id">
+        <option value="">Selecione a ração em estoque</option>
+        {% for p in feed_products %}
+        <option value="{{ p.id }}" data-stock="{{ stock_by_product.get(p.id, 0) }}" {% if not p.active %}data-inactive="1"{% endif %}>
+          {{ p.full_name }}{% if p.technical_summary %} · {{ p.technical_summary }}{% endif %} · saldo {{ stock_by_product.get(p.id, 0) }} kg{% if not p.active %} · inativa{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="full selection-info" id="feed-selection-info">Selecione a ração para ver o saldo disponível antes de salvar.</div>
+    <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg" id="feed_offered_kg"></label>
+    <label>Score de bandeja (0 a 5)<input type="number" step="0.1" min="0" max="5" name="tray_score" id="tray_score" placeholder="3 = ponto ideal"></label>
+    <label>Mortalidade observada (un)<input type="number" name="mortality_qty" id="mortality_qty"></label>
+    <div class="full selection-info">
+      {% if new_form_context.lot %}
+        <strong>Lote ativo:</strong> {{ new_form_context.lot.lot_code }} ·
+        <strong>Última biometria:</strong> {% if new_form_context.biometric %}{{ new_form_context.biometric.sample_date|brdate }} · {{ new_form_context.biometric.average_weight_g }} g{% else %}não encontrada{% endif %}
+        {% if new_form_context.estimate %}<br>
+        <strong>Van Wyk:</strong> {{ new_form_context.estimate.van_wyk_pct or '—' }}% da biomassa ·
+        <strong>Biomassa estimada:</strong> {{ new_form_context.estimate.biomass_kg or '—' }} kg ·
+        <strong>Sobrevivência estimada:</strong> {{ new_form_context.estimate.survival_pct or '—' }}% ·
+        <strong>FCR estimado atual:</strong> {{ new_form_context.estimate.estimated_fcr or '—' }}
+        {% endif %}
+      {% else %}
+        Selecione o viveiro para puxar a biometria mais recente e estimar biomassa, sobrevivência e FCR atual.
+      {% endif %}
+    </div>
+    <label class="full">Observação<textarea name="notes" id="notes"></textarea></label>
 
-  <div class="full supply-section">
-    <div class="panel-head tight-panel-head"><div><p class="panel-kicker">Insumos do manejo</p><h2>Baixa automática de probióticos, corretivos e materiais</h2></div></div>
-    <div class="supply-usage-wrap" id="supply-usage-wrap">
-      {% for row in supply_form_rows %}
-      <div class="supply-usage-row">
-        <input type="hidden" name="supply_usage_id[]" value="{{ row.usage_id }}">
-        <label>Item
-          <select name="supply_product_id[]" class="supply-product-select">
-            <option value="">Selecione o insumo</option>
-            {% for p in supply_products %}
-            <option value="{{ p.id }}" data-stock="{{ supply_stock_by_product.get(p.id, 0) }}" data-unit="{{ p.measure_unit }}" {% if row.product_id == p.id %}selected{% endif %}>{{ p.full_name }} · {{ p.category }} · saldo {{ supply_stock_by_product.get(p.id, 0) }} {{ p.measure_unit }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label>Quantidade<input type="number" step="0.01" name="supply_quantity[]" value="{{ row.quantity }}" class="supply-quantity-input"></label>
-        <label>Observação<input type="text" name="supply_notes[]" value="{{ row.notes }}" placeholder="Ex.: aplicado após troca d'água"></label>
-        <button type="button" class="danger-button small-button remove-supply-row">Remover</button>
+    <div class="full supply-section">
+      <div class="panel-head tight-panel-head"><div><p class="panel-kicker">Insumos do manejo</p><h2>Baixa automática de probióticos, corretivos e materiais</h2></div></div>
+      <div class="supply-usage-wrap" id="supply-usage-wrap">
+        {% for row in supply_form_rows %}
+        <div class="supply-usage-row">
+          <input type="hidden" name="supply_usage_id[]" value="{{ row.usage_id }}">
+          <label>Item
+            <select name="supply_product_id[]" class="supply-product-select">
+              <option value="">Selecione o insumo</option>
+              {% for p in supply_products %}
+              <option value="{{ p.id }}" data-stock="{{ supply_stock_by_product.get(p.id, 0) }}" data-unit="{{ p.measure_unit }}" {% if row.product_id == p.id %}selected{% endif %}>{{ p.full_name }} · {{ p.category }} · saldo {{ supply_stock_by_product.get(p.id, 0) }} {{ p.measure_unit }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Quantidade<input type="number" step="0.01" name="supply_quantity[]" value="{{ row.quantity }}" class="supply-quantity-input"></label>
+          <label>Observação<input type="text" name="supply_notes[]" value="{{ row.notes }}" placeholder="Ex.: aplicado após troca d'água"></label>
+          <button type="button" class="danger-button small-button remove-supply-row">Remover</button>
+        </div>
+        {% endfor %}
       </div>
-      {% endfor %}
+      <div class="inline-actions-row">
+        <button type="button" class="secondary-button" id="add-supply-row-btn">Adicionar outro insumo</button>
+        <span class="inline-hint">Cada item lançado aqui derruba o estoque e entra no custo do lote.</span>
+      </div>
     </div>
-    <div class="inline-actions-row">
-      <button type="button" class="secondary-button" id="add-supply-row-btn">Adicionar outro insumo</button>
-      <span class="inline-hint">Cada item lançado aqui derruba o estoque automaticamente e entra no custo do lote/viveiro.</span>
-    </div>
-  </div>
-  <div class="form-actions"><button type="submit">Salvar manejo</button></div>
-</form>
-<div id="copy-previous-message" class="copy-message" hidden></div>
+    <div class="form-actions"><button type="submit">Salvar manejo</button></div>
+  </form>
+  <div id="copy-previous-message" class="copy-message" hidden></div>
 </section>
 
 <section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Últimos registros</p><h2>Histórico recente</h2></div></div>
-<form method="get" class="history-toolbar form-grid compact-form">
-  <label>Filtrar por viveiro
-    <select name="unit_id" onchange="this.form.submit()">
-      <option value="">Todos</option>
-      {% for u in units %}<option value="{{ u.id }}" {% if selected_unit_id == u.id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}
-    </select>
-  </label>
-  <div class="history-toolbar-actions inline-actions-row">
-    {% if selected_unit_id %}<a class="secondary-link-button" href="{{ url_for('management_page') }}">Limpar filtro</a>{% endif %}
-  </div>
-</form>
-<div class="table-wrap">
-<table>
-<thead><tr><th>Data</th><th>Unidade</th><th>Ração</th><th>Insumos</th><th>Custo total</th><th>Mortalidade</th><th>Biomassa</th><th></th></tr></thead>
-<tbody>
-{% for r in records %}
-<tr>
-  <td>{{ r.manage_date|brdate }}</td>
-  <td>{{ r.unit.name }}</td>
-  <td>
-    {% if r.feed_product %}
-      {{ r.feed_product.full_name }}<div class="table-subtext">{{ r.feed_offered_kg }} kg</div>
-    {% else %}—{% endif %}
-  </td>
-  <td>
-    {% for usage in usages_by_record.get(r.id, []) %}
-      <div>{{ usage.supply_product.full_name if usage.supply_product else 'Insumo' }} · {{ usage.quantity }} {{ usage.supply_product.measure_unit if usage.supply_product else '' }}</div>
-    {% else %}
-      —
-    {% endfor %}
-  </td>
-  <td>{{ ((r.feed_total_cost or 0) + (supply_cost_by_record.get(r.id, 0) or 0))|money }}</td>
-  <td>{{ r.mortality_qty }}</td>
-  <td>{{ r.estimated_biomass_kg or '' }}</td>
-  <td class="actions-cell">
-    <div class="action-stack">
-      <a class="link-button small-button" href="{{ url_for('management_page', edit_id=r.id, unit_id=selected_unit_id) }}">Editar</a>
-      <form method="post" action="{{ url_for('delete_management_record', record_id=r.id) }}" onsubmit="return confirm('Excluir este registro de manejo? O estoque da ração e dos insumos será recalculado.');">
-        <button type="submit" class="danger-button small-button">Excluir</button>
-      </form>
+  <div class="panel-head"><div><p class="panel-kicker">Últimos registros</p><h2>Histórico recente</h2></div></div>
+  <form method="get" class="history-toolbar form-grid compact-form">
+    <label>Filtrar por viveiro
+      <select name="unit_id" onchange="this.form.submit()">
+        <option value="">Todos</option>
+        {% for u in units %}<option value="{{ u.id }}" {% if selected_unit_id == u.id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="history-toolbar-actions inline-actions-row">
+      {% if selected_unit_id %}<a class="secondary-link-button" href="{{ url_for('management_page') }}">Limpar filtro</a>{% endif %}
     </div>
-  </td>
-</tr>
-{% else %}
-<tr><td colspan="8" class="empty-cell">Nenhum registro encontrado para o filtro selecionado.</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-
-{% if edit_record %}
-<hr class="panel-divider">
-<div class="panel-head"><div><p class="panel-kicker">Edição</p><h2>Editar manejo selecionado</h2></div></div>
-<form method="post" action="{{ url_for('edit_management_record', record_id=edit_record.id) }}" class="form-grid" id="management-edit-form">
-  <label>Data<input type="date" name="manage_date" value="{{ edit_record.manage_date.isoformat() }}" required></label>
-  <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if edit_record.unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
-  <label class="full">Ração utilizada
-    <select name="feed_product_id" id="edit_feed_product_id">
-      <option value="">Selecione a ração em estoque</option>
-      {% for p in feed_products %}
-      <option value="{{ p.id }}" data-stock="{{ stock_by_product.get(p.id, 0) }}" {% if edit_record.feed_product_id == p.id %}selected{% endif %}>
-        {{ p.full_name }}{% if p.technical_summary %} · {{ p.technical_summary }}{% endif %} · saldo {{ stock_by_product.get(p.id, 0) }} kg{% if not p.active %} · inativa{% endif %}
-      </option>
+  </form>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Data</th><th>Unidade</th><th>Ração</th><th>Score</th><th>Biomassa</th><th>Sobrev.</th><th>FCR est.</th><th>Insumos</th><th>Custo total</th><th></th></tr></thead>
+      <tbody>
+      {% for r in records %}
+      <tr>
+        <td>{{ r.manage_date|brdate }}</td>
+        <td>{{ r.unit.name }}</td>
+        <td>
+          {% if r.feed_product %}
+            {{ r.feed_product.full_name }}<div class="table-subtext">{{ r.feed_offered_kg }} kg · mort. {{ r.mortality_qty or 0 }}</div>
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ r.tray_score if r.tray_score is not none else '—' }}{% if r.tray_score is not none %}<div class="table-subtext">{{ r.score_basis or 'bandeja' }}</div>{% endif %}</td>
+        <td>{{ r.estimated_biomass_kg or '—' }}{% if r.average_weight_g %}<div class="table-subtext">peso {{ r.average_weight_g }} g</div>{% endif %}</td>
+        <td>{{ r.estimated_survival_pct or '—' }}{% if r.estimated_survival_pct %}%{% endif %}</td>
+        <td>{{ r.estimated_fcr or '—' }}</td>
+        <td>
+          {% for usage in usages_by_record.get(r.id, []) %}
+            <div>{{ usage.supply_product.full_name if usage.supply_product else 'Insumo' }} · {{ usage.quantity }} {{ usage.supply_product.measure_unit if usage.supply_product else '' }}</div>
+          {% else %}
+            —
+          {% endfor %}
+        </td>
+        <td>{{ ((r.feed_total_cost or 0) + (supply_cost_by_record.get(r.id, 0) or 0))|money }}</td>
+        <td class="actions-cell">
+          <div class="action-stack">
+            <a class="link-button small-button" href="{{ url_for('management_page', edit_id=r.id, unit_id=selected_unit_id) }}">Editar</a>
+            <form method="post" action="{{ url_for('delete_management_record', record_id=r.id) }}" onsubmit="return confirm('Excluir este registro de manejo? O estoque da ração e dos insumos será recalculado.');">
+              <button type="submit" class="danger-button small-button">Excluir</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="empty-cell">Nenhum registro encontrado para o filtro selecionado.</td></tr>
       {% endfor %}
-    </select>
-  </label>
-  <div class="full selection-info" id="edit-feed-selection-info">Ao salvar, o sistema recalcula a saída automática ligada a este manejo.</div>
-  <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg" value="{{ edit_record.feed_offered_kg if edit_record.feed_offered_kg is not none else '' }}"></label>
-  <label>Ração consumida (kg)<input type="number" step="0.01" name="feed_consumed_kg" value="{{ edit_record.feed_consumed_kg if edit_record.feed_consumed_kg is not none else '' }}"></label>
-  <label>Mortalidade (un)<input type="number" name="mortality_qty" value="{{ edit_record.mortality_qty if edit_record.mortality_qty is not none else '' }}"></label>
-  <label>Peso médio (g)<input type="number" step="0.001" name="average_weight_g" value="{{ edit_record.average_weight_g if edit_record.average_weight_g is not none else '' }}"></label>
-  <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg" value="{{ edit_record.estimated_biomass_kg if edit_record.estimated_biomass_kg is not none else '' }}"></label>
-  <label class="full">Observação<textarea name="notes">{{ edit_record.notes or '' }}</textarea></label>
+      </tbody>
+    </table>
+  </div>
 
-  <div class="full supply-section">
-    <div class="panel-head tight-panel-head"><div><p class="panel-kicker">Insumos do manejo</p><h2>Editar insumos vinculados</h2></div></div>
-    <div class="supply-usage-wrap" id="edit-supply-usage-wrap">
-      {% for row in edit_supply_form_rows %}
-      <div class="supply-usage-row">
-        <input type="hidden" name="supply_usage_id[]" value="{{ row.usage_id }}">
-        <label>Item
-          <select name="supply_product_id[]" class="supply-product-select">
-            <option value="">Selecione o insumo</option>
-            {% for p in supply_products %}
-            <option value="{{ p.id }}" data-stock="{{ supply_stock_by_product.get(p.id, 0) }}" data-unit="{{ p.measure_unit }}" {% if row.product_id == p.id %}selected{% endif %}>{{ p.full_name }} · {{ p.category }} · saldo {{ supply_stock_by_product.get(p.id, 0) }} {{ p.measure_unit }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label>Quantidade<input type="number" step="0.01" name="supply_quantity[]" value="{{ row.quantity }}" class="supply-quantity-input"></label>
-        <label>Observação<input type="text" name="supply_notes[]" value="{{ row.notes }}" placeholder="Ex.: aplicado após troca d'água"></label>
-        <button type="button" class="danger-button small-button remove-supply-row">Remover</button>
+  {% if edit_record %}
+  <hr class="panel-divider">
+  <div class="panel-head"><div><p class="panel-kicker">Edição</p><h2>Editar manejo selecionado</h2></div></div>
+  <form method="post" action="{{ url_for('edit_management_record', record_id=edit_record.id) }}" class="form-grid" id="management-edit-form">
+    <label>Data<input type="date" name="manage_date" value="{{ edit_record.manage_date.isoformat() }}" required></label>
+    <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if edit_record.unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
+    <label class="full">Ração utilizada
+      <select name="feed_product_id" id="edit_feed_product_id">
+        <option value="">Selecione a ração em estoque</option>
+        {% for p in feed_products %}
+        <option value="{{ p.id }}" data-stock="{{ stock_by_product.get(p.id, 0) }}" {% if edit_record.feed_product_id == p.id %}selected{% endif %}>{{ p.full_name }}{% if p.technical_summary %} · {{ p.technical_summary }}{% endif %} · saldo {{ stock_by_product.get(p.id, 0) }} kg{% if not p.active %} · inativa{% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="full selection-info" id="edit-feed-selection-info">Ao salvar, o sistema recalcula automaticamente a biomassa estimada, a sobrevivência estimada e o FCR estimado.</div>
+    <label>Ração ofertada (kg)<input type="number" step="0.01" name="feed_offered_kg" value="{{ edit_record.feed_offered_kg if edit_record.feed_offered_kg is not none else '' }}"></label>
+    <label>Score de bandeja (0 a 5)<input type="number" step="0.1" min="0" max="5" name="tray_score" value="{{ edit_record.tray_score if edit_record.tray_score is not none else '' }}"></label>
+    <label>Mortalidade observada (un)<input type="number" name="mortality_qty" value="{{ edit_record.mortality_qty if edit_record.mortality_qty is not none else '' }}"></label>
+    <div class="full selection-info">
+      {% if edit_form_context and edit_form_context.biometric %}
+        <strong>Biometria vinculada:</strong> {{ edit_form_context.biometric.sample_date|brdate }} · {{ edit_form_context.biometric.average_weight_g }} g ·
+        <strong>Van Wyk:</strong> {{ edit_form_context.estimate.van_wyk_pct if edit_form_context.estimate else '—' }}% ·
+        <strong>Biomassa estimada:</strong> {{ edit_form_context.estimate.biomass_kg if edit_form_context and edit_form_context.estimate else (edit_record.estimated_biomass_kg or '—') }} kg ·
+        <strong>Sobrevivência:</strong> {{ edit_form_context.estimate.survival_pct if edit_form_context and edit_form_context.estimate else (edit_record.estimated_survival_pct or '—') }}% ·
+        <strong>FCR est.:</strong> {{ edit_form_context.estimate.estimated_fcr if edit_form_context and edit_form_context.estimate else (edit_record.estimated_fcr or '—') }}
+      {% else %}
+        Sem biometria vinculada antes desta data.
+      {% endif %}
+    </div>
+    <label class="full">Observação<textarea name="notes">{{ edit_record.notes or '' }}</textarea></label>
+
+    <div class="full supply-section">
+      <div class="panel-head tight-panel-head"><div><p class="panel-kicker">Insumos do manejo</p><h2>Editar insumos vinculados</h2></div></div>
+      <div class="supply-usage-wrap" id="edit-supply-usage-wrap">
+        {% for row in edit_supply_form_rows %}
+        <div class="supply-usage-row">
+          <input type="hidden" name="supply_usage_id[]" value="{{ row.usage_id }}">
+          <label>Item
+            <select name="supply_product_id[]" class="supply-product-select">
+              <option value="">Selecione o insumo</option>
+              {% for p in supply_products %}
+              <option value="{{ p.id }}" data-stock="{{ supply_stock_by_product.get(p.id, 0) }}" data-unit="{{ p.measure_unit }}" {% if row.product_id == p.id %}selected{% endif %}>{{ p.full_name }} · {{ p.category }} · saldo {{ supply_stock_by_product.get(p.id, 0) }} {{ p.measure_unit }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Quantidade<input type="number" step="0.01" name="supply_quantity[]" value="{{ row.quantity }}" class="supply-quantity-input"></label>
+          <label>Observação<input type="text" name="supply_notes[]" value="{{ row.notes }}" placeholder="Ex.: aplicado após troca d'água"></label>
+          <button type="button" class="danger-button small-button remove-supply-row">Remover</button>
+        </div>
+        {% endfor %}
       </div>
-      {% endfor %}
+      <div class="inline-actions-row">
+        <button type="button" class="secondary-button" id="edit-add-supply-row-btn">Adicionar outro insumo</button>
+        <span class="inline-hint">Os custos desses itens entram automaticamente no lote e no viveiro.</span>
+      </div>
     </div>
-    <div class="inline-actions-row">
-      <button type="button" class="secondary-button" id="edit-add-supply-row-btn">Adicionar outro insumo</button>
-      <span class="inline-hint">Os custos desses itens entram automaticamente no lote e no viveiro.</span>
-    </div>
-  </div>
 
-  <div class="form-actions action-row-between">
-    <button type="submit">Salvar alterações</button>
-    <a class="secondary-link-button" href="{{ url_for('management_page', unit_id=selected_unit_id) }}">Cancelar edição</a>
-  </div>
-</form>
-{% endif %}
+    <div class="form-actions action-row-between">
+      <button type="submit">Salvar alterações</button>
+      <a class="secondary-link-button" href="{{ url_for('management_page', unit_id=selected_unit_id) }}">Cancelar edição</a>
+    </div>
+  </form>
+  {% endif %}
 </section>
 </div>
 
@@ -263,8 +284,7 @@ function mountSupplyRows(containerId, addButtonId) {
         if (rows.length <= 1) {
           const row = btn.closest('.supply-usage-row');
           row.querySelectorAll('input, select').forEach(field => {
-            if (field.type === 'hidden') field.value = '';
-            else field.value = '';
+            field.value = '';
           });
           return;
         }
@@ -299,16 +319,12 @@ if (copyBtn) {
     try {
       const response = await fetch(`{{ url_for('previous_management_data') }}?unit_id=${encodeURIComponent(unitId)}&manage_date=${encodeURIComponent(manageDate)}`);
       const payload = await response.json();
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.message || 'Não foi possível copiar o manejo anterior.');
-      }
+      if (!response.ok || !payload.ok) throw new Error(payload.message || 'Não foi possível copiar o manejo anterior.');
       const data = payload.record;
       document.getElementById('feed_product_id').value = data.feed_product_id ?? '';
       document.getElementById('feed_offered_kg').value = data.feed_offered_kg ?? '';
-      document.getElementById('feed_consumed_kg').value = data.feed_consumed_kg ?? '';
+      document.getElementById('tray_score').value = data.tray_score ?? '';
       document.getElementById('mortality_qty').value = data.mortality_qty ?? '';
-      document.getElementById('average_weight_g').value = data.average_weight_g ?? '';
-      document.getElementById('estimated_biomass_kg').value = data.estimated_biomass_kg ?? '';
       document.getElementById('notes').value = data.notes ?? '';
       document.getElementById('feed_product_id').dispatchEvent(new Event('change'));
 
