@@ -4,14 +4,15 @@
 {% block content %}
 <section class="panel">
   <div class="panel-head"><div><p class="panel-kicker">Simulador econômico</p><h2>Comparação de cenários</h2></div></div>
-  <form method="get" class="form-grid compact-form">
-    <label>Lote<select name="lot_id">{% for lot in lots %}<option value="{{ lot.id }}" {% if selected_lot and selected_lot.id == lot.id %}selected{% endif %}>{{ lot.lot_code }}</option>{% endfor %}</select></label>
+  <form method="get" class="form-grid compact-form" id="harvestDecisionForm">
+    <label>Lote<select name="lot_id" id="harvestLotSelect">{% for lot in lots %}<option value="{{ lot.id }}" {% if selected_lot and selected_lot.id == lot.id %}selected{% endif %}>{{ lot.lot_code }}</option>{% endfor %}</select></label>
     <label>Preço base 10 g (R$/kg)<input type="number" step="0.01" name="base_price_10g" value="{{ analysis.base_price_10g if analysis else 22 }}"></label>
-    <label>Custo da ração (R$/kg)<input type="number" step="0.01" name="feed_cost_kg" value="{{ analysis.feed_cost_kg if analysis else '' }}" placeholder="Se vazio, usa média do lote"></label>
+    <label>Custo da ração atual do lote (R$/kg)<input type="number" step="0.01" id="feedCostKg" value="{{ analysis.feed_cost_kg if analysis else '' }}" readonly></label>
     <div class="form-actions"><button type="submit">Calcular cenários</button></div>
   </form>
 
   {% if analysis %}
+  <div class="hero-inline-note">Custo de ração usado: <strong>{{ analysis.feed_cost_kg|money }}/kg</strong> · {{ analysis.feed_cost_source }}. Ao trocar o lote, o sistema recalcula automaticamente esse custo.</div>
   <div class="kpi-grid">
     <article class="kpi-card"><span>Decisão sugerida</span><strong>{{ analysis.decision }}</strong></article>
     <article class="kpi-card"><span>Melhor cenário</span><strong>{{ analysis.best.days_wait }} dias</strong></article>
@@ -43,4 +44,15 @@
   </div>
   {% endif %}
 </section>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const lotSelect = document.getElementById('harvestLotSelect');
+    const form = document.getElementById('harvestDecisionForm');
+    if (!lotSelect || !form) return;
+    lotSelect.addEventListener('change', function () {
+      form.submit();
+    });
+  });
+</script>
 {% endblock %}

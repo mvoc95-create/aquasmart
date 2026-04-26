@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block page_title %}Arraçoamento sugerido{% endblock %}
-{% block page_subtitle %}Modelo adaptativo da fazenda: mistura curva zootécnica base com histórico real dos lotes, biometria e ambiente recente.{% endblock %}
+{% block page_subtitle %}Modelo adaptativo da fazenda: começa pela tabela padrão enviada, cruza com biometria/manejo real e ajusta pelo ambiente recente.{% endblock %}
 {% block content %}
 <section class="panel intelligence-hero">
   <div class="panel-head compact-between">
@@ -23,8 +23,8 @@
     <table>
       <thead>
         <tr>
-          <th>Lote</th><th>Peso atual</th><th>Peso esperado</th><th>Desvio</th><th>Biomassa</th>
-          <th>% base</th><th>% histórico</th><th>% final</th><th>Faixa segura</th>
+          <th>Lote</th><th>Peso atual</th><th>Peso esperado</th><th>Desvio</th><th>Biomassa</th><th>Origem biomassa</th>
+          <th>% base</th><th>Sobrev. base</th><th>% histórico</th><th>% final</th><th>FCR base</th><th>Faixa segura</th>
           <th>Sugerido hoje</th><th>Granulometria</th><th>Peso em 7 dias</th><th>Confiança</th>
         </tr>
       </thead>
@@ -36,9 +36,12 @@
           <td>{{ row.rec.expected_weight_g or '—' }} g</td>
           <td>{% if row.rec.growth_gap_pct is not none %}<span class="pill {{ 'pill-danger' if row.rec.growth_gap_pct < -5 else 'pill-success' if row.rec.growth_gap_pct > 5 else 'pill-neutral' }}">{{ row.rec.growth_gap_pct }}%</span>{% else %}—{% endif %}</td>
           <td>{{ row.rec.biomass_kg }} kg</td>
+          <td>{{ row.rec.biomass_source or '—' }}</td>
           <td>{{ row.rec.base_pct_biomass }}%</td>
+          <td>{{ row.rec.standard_survival_pct or '—' }}{% if row.rec.standard_survival_pct %}%{% endif %}</td>
           <td>{{ row.rec.learned_pct_biomass }}%</td>
           <td><strong>{{ row.rec.feed_pct_biomass }}%</strong></td>
+          <td>{{ row.rec.standard_fcr or '—' }}</td>
           <td>{{ row.rec.min_feed_kg }} a {{ row.rec.max_feed_kg }} kg</td>
           <td><strong>{{ row.rec.suggested_feed_kg }} kg/dia</strong></td>
           <td>{{ row.rec.pellet_hint }}</td>
@@ -46,10 +49,10 @@
           <td>{{ row.rec.model_confidence or '—' }}%</td>
         </tr>
         {% if row.rec.drivers %}
-        <tr class="subrow"><td colspan="13"><div class="driver-list">{% for driver in row.rec.drivers[:4] %}<span class="driver-chip">{{ driver }}</span>{% endfor %}</div></td></tr>
+        <tr class="subrow"><td colspan="16"><div class="driver-list">{% for driver in row.rec.drivers[:4] %}<span class="driver-chip">{{ driver }}</span>{% endfor %}</div></td></tr>
         {% endif %}
         {% else %}
-        <tr><td colspan="13" class="empty-cell">Nenhum lote ativo para sugerir arraçoamento.</td></tr>
+        <tr><td colspan="16" class="empty-cell">Nenhum lote ativo para sugerir arraçoamento.</td></tr>
         {% endfor %}
       </tbody>
     </table>
