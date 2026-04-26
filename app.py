@@ -23,6 +23,13 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 import io
 from openpyxl import Workbook
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+except Exception:
+    colors = A4 = landscape = getSampleStyleSheet = SimpleDocTemplate = Table = TableStyle = Paragraph = Spacer = None
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
@@ -3303,6 +3310,12 @@ def water_page():
         'ph': [WaterMonitoring.ph, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
         'temperature': [WaterMonitoring.temperature_c, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
         'salinity': [WaterMonitoring.salinity, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'transparency': [WaterMonitoring.transparency_cm, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'ammonia': [WaterMonitoring.ammonia, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'nitrite': [WaterMonitoring.nitrite, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'nitrate': [WaterMonitoring.nitrate, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'alkalinity': [WaterMonitoring.alkalinity, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'hardness': [WaterMonitoring.hardness, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
     }
     order_columns = sort_map.get(sort_by, sort_map['monitor_date'])
     ordered = [col.asc().nullslast() if sort_dir == 'asc' else col.desc().nullslast() for col in order_columns]
@@ -4279,48 +4292,124 @@ def managerial_reports_page():
     )
 
 
+def managerial_report_dataset(report_key):
+    if report_key == 'stock':
+        headers = ['Categoria', 'Item', 'Grupo', 'Saldo', 'Unidade', 'Estoque mínimo', 'Custo médio']
+        rows = []
+        for row in build_feed_stock_snapshot()['rows']:
+            rows.append(['Ração', row.get('name') or row.get('feed_name'), row.get('feed_type') or row.get('category'), row.get('stock_kg', row.get('stock_qty')), 'kg', row.get('minimum_stock_kg', row.get('minimum_stock_qty')), row.get('avg_unit_cost')])
+        for row in build_supply_stock_snapshot()['rows']:
+            rows.append(['Insumo/material', row['name'], row['category'], row['stock_qty'], row['measure_unit'], row['minimum_stock_qty'], row.get('avg_unit_cost')])
+        return 'Relatório de estoque', headers, rows
+    if report_key == 'production':
+        headers = ['Lote', 'Status', 'Fornecedora', 'Unidades atuais', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'FCR real', 'Sobrevivência %']
+        rows = []
+        for summary in [lot_financial_summary(lot) for lot in Lot.query.order_by(Lot.start_date.desc()).all()]:
+            rows.append([summary['lot'].lot_code, summary['lot'].status, summary['lot'].larva_supplier, ', '.join(item['unit_name'] for item in summary['allocations']), summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
+        return 'Relatório de produção e lotes', headers, rows
+    if report_key == 'financial':
+        headers = ['Data', 'Lote', 'Viveiro', 'Receita', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'Resultado']
+        rows = []
+        for sale in Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc()).all():
+            summary = sale_financial_summary(sale)
+            if summary:
+                rows.append([sale.sale_date.strftime('%d/%m/%Y'), sale.lot.lot_code if sale.lot else '', sale.unit.name if sale.unit else '', summary['revenue'], summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['profit']])
+        return 'Relatório financeiro', headers, rows
+    if report_key == 'water_quality':
+        headers = ['Data', 'Hora', 'Unidade', 'OD', 'Temp.', 'pH', 'Salin.', 'Transp.', 'Amônia', 'Nitrito', 'Nitrato', 'Alcalin.', 'Dureza', 'Alertas']
+        config = get_water_reference_config()
+        rows = []
+        records = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit)).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.monitor_time.desc(), WaterMonitoring.id.desc()).all()
+        for record in records:
+            alerts = '; '.join(alert['message'] for alert in water_alerts_for_record(record, config))
+            rows.append([record.monitor_date.strftime('%d/%m/%Y') if record.monitor_date else '', record.monitor_time.strftime('%H:%M') if record.monitor_time else '', record.unit.name if record.unit else '', record.dissolved_oxygen, record.temperature_c, record.ph, record.salinity, record.transparency_cm, record.ammonia, record.nitrite, record.nitrate, record.alkalinity, record.hardness, alerts])
+        return 'Relatório completo de qualidade da água', headers, rows
+    if report_key == 'water_alerts':
+        headers = ['Data', 'Hora', 'Unidade', 'Parâmetro', 'Valor', 'Alerta']
+        config = get_water_reference_config()
+        rows = []
+        records = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit)).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.monitor_time.desc(), WaterMonitoring.id.desc()).all()
+        for record in records:
+            for alert in water_alerts_for_record(record, config):
+                rows.append([record.monitor_date.strftime('%d/%m/%Y') if record.monitor_date else '', record.monitor_time.strftime('%H:%M') if record.monitor_time else '', record.unit.name if record.unit else '', alert.get('label'), alert.get('value'), alert.get('message')])
+        return 'Relatório de alertas da água', headers, rows
+    if report_key == 'management':
+        headers = ['Data', 'Unidade', 'Lote', 'Ração ofertada kg', 'Ração consumida kg', 'Mortalidade', 'Peso médio g', 'Biomassa estimada kg', 'Observação']
+        rows = []
+        records = DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.lot)).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).all()
+        for record in records:
+            rows.append([record.manage_date.strftime('%d/%m/%Y') if record.manage_date else '', record.unit.name if record.unit else '', record.lot.lot_code if record.lot else '', record.feed_offered_kg, record.feed_consumed_kg, record.mortality_qty, record.average_weight_g, record.estimated_biomass_kg, record.notes])
+        return 'Relatório de manejo diário', headers, rows
+    if report_key == 'sales':
+        headers = ['Data', 'Cliente', 'Canal', 'Lote', 'Viveiro', 'Kg vendidos', 'Peso médio g', 'Unidades despescadas', 'Preço/kg', 'Receita', 'Resultado', 'Observação']
+        rows = []
+        records = Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc(), Sale.id.desc()).all()
+        for record in records:
+            summary = sale_financial_summary(record)
+            rows.append([
+                record.sale_date.strftime('%d/%m/%Y') if record.sale_date else '',
+                record.client_name,
+                record.channel,
+                record.lot.lot_code if record.lot else '',
+                record.unit.name if record.unit else '',
+                record.quantity_kg,
+                record.average_weight_g,
+                summary['harvested_units'] if summary else record.harvested_units,
+                record.unit_price,
+                summary['revenue'] if summary else round((record.quantity_kg or 0) * (record.unit_price or 0), 2),
+                summary['profit'] if summary else None,
+                record.notes,
+            ])
+        return 'Relatório de despescas e vendas', headers, rows
+    abort(404)
+
+
 @app.get('/managerial-reports/export/<report_key>.xlsx')
 @login_required
 @requires_permission('dashboard')
 def export_managerial_report(report_key):
+    title, headers, rows = managerial_report_dataset(report_key)
     wb = Workbook()
     ws = wb.active
-    ws.title = 'Relatorio'
-    today = date.today()
-    if report_key == 'stock':
-        ws.title = 'Estoque'
-        ws.append(['Categoria', 'Item', 'Grupo', 'Saldo', 'Unidade', 'Estoque mínimo', 'Custo médio'])
-        for row in build_feed_stock_snapshot()['rows']:
-            ws.append(['Ração', row['name'] if 'name' in row else row['feed_name'], row.get('feed_type') or row.get('category'), row.get('stock_kg', row.get('stock_qty')), 'kg', row.get('minimum_stock_kg', row.get('minimum_stock_qty')), row.get('avg_unit_cost')])
-        for row in build_supply_stock_snapshot()['rows']:
-            ws.append(['Insumo/material', row['name'], row['category'], row['stock_qty'], row['measure_unit'], row['minimum_stock_qty'], row.get('avg_unit_cost')])
-    elif report_key == 'production':
-        ws.title = 'Producao'
-        ws.append(['Lote', 'Status', 'Fornecedora', 'Unidades atuais', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'FCR real', 'Sobrevivência %'])
-        for summary in [lot_financial_summary(lot) for lot in Lot.query.order_by(Lot.start_date.desc()).all()]:
-            ws.append([summary['lot'].lot_code, summary['lot'].status, summary['lot'].larva_supplier, ', '.join(item['unit_name'] for item in summary['allocations']), summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
-    elif report_key == 'financial':
-        ws.title = 'Financeiro'
-        ws.append(['Data', 'Lote', 'Viveiro', 'Receita', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'Resultado'])
-        for sale in Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc()).all():
-            summary = sale_financial_summary(sale)
-            if not summary:
-                continue
-            ws.append([sale.sale_date.strftime('%d/%m/%Y'), sale.lot.lot_code if sale.lot else '', sale.unit.name if sale.unit else '', summary['revenue'], summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['profit']])
-    elif report_key == 'water_quality':
-        ws.title = 'Qualidade agua'
-        ws.append(['Data', 'Hora', 'Unidade', 'OD', 'Temperatura', 'pH', 'Salinidade', 'Alertas'])
-        config = get_water_reference_config()
-        rows = WaterMonitoring.query.options(joinedload(WaterMonitoring.unit)).order_by(WaterMonitoring.monitor_date.desc(), WaterMonitoring.id.desc()).all()
-        for record in rows:
-            alerts = '; '.join(alert['message'] for alert in water_alerts_for_record(record, config))
-            ws.append([record.monitor_date.strftime('%d/%m/%Y') if record.monitor_date else '', record.monitor_time.strftime('%H:%M') if record.monitor_time else '', record.unit.name if record.unit else '', record.dissolved_oxygen, record.temperature_c, record.ph, record.salinity, alerts])
-    else:
-        abort(404)
+    ws.title = re.sub(r'[^A-Za-z0-9 ]+', '', title)[:31] or 'Relatorio'
+    ws.append(headers)
+    for row in rows:
+        ws.append(row)
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
-    return send_file(output, as_attachment=True, download_name=f'relatorio_{report_key}_{today.strftime("%Y%m%d")}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    return send_file(output, as_attachment=True, download_name=f'relatorio_{report_key}_{date.today().strftime("%Y%m%d")}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.get('/managerial-reports/export/<report_key>.pdf')
+@login_required
+@requires_permission('dashboard')
+def export_managerial_report_pdf(report_key):
+    if SimpleDocTemplate is None:
+        flash('Exportação em PDF indisponível. Verifique se reportlab está instalado.', 'danger')
+        return redirect(url_for('managerial_reports_page'))
+    title, headers, rows = managerial_report_dataset(report_key)
+    output = io.BytesIO()
+    doc = SimpleDocTemplate(output, pagesize=landscape(A4), rightMargin=18, leftMargin=18, topMargin=24, bottomMargin=18)
+    styles = getSampleStyleSheet()
+    story = [Paragraph(title, styles['Title']), Paragraph(f'Gerado em {date.today().strftime("%d/%m/%Y")}', styles['Normal']), Spacer(1, 10)]
+    data = [headers] + [[('' if cell is None else str(cell)) for cell in row] for row in rows[:500]]
+    if len(data) == 1:
+        data.append(['Sem dados'] + [''] * (len(headers) - 1))
+    table = Table(data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0f766e')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
+    story.append(table)
+    doc.build(story)
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name=f'relatorio_{report_key}_{date.today().strftime("%Y%m%d")}.pdf', mimetype='application/pdf')
 
 
 @app.route('/nursery-feed', methods=['GET', 'POST'])
