@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block page_title %}Arraçoamento sugerido{% endblock %}
-{% block page_subtitle %}Na engorda, a biometria é a fonte oficial de peso. O cálculo usa histórico do lote, score de bandeja e a taxa de alimentação clássica de Van Wyk.{% endblock %}
+{% block page_subtitle %}Modelo adaptativo da fazenda: mistura curva zootécnica base com histórico real dos lotes, biometria e ambiente recente.{% endblock %}
 {% block content %}
 <section class="panel intelligence-hero">
   <div class="panel-head compact-between">
@@ -23,24 +23,9 @@
     <table>
       <thead>
         <tr>
-          <th>Lote</th>
-          <th>Peso atual</th>
-          <th>Biometria</th>
-          <th>Peso esperado</th>
-          <th>Desvio</th>
-          <th>Biomassa est.</th>
-          <th>Van Wyk</th>
-          <th>Score bandeja</th>
-          <th>Sobrev. est.</th>
-          <th>FCR est.</th>
-          <th>% base</th>
-          <th>% histórico</th>
-          <th>% final</th>
-          <th>Faixa segura</th>
-          <th>Sugerido hoje</th>
-          <th>Granulometria</th>
-          <th>Peso em 7 dias</th>
-          <th>Confiança</th>
+          <th>Lote</th><th>Peso atual</th><th>Peso esperado</th><th>Desvio</th><th>Biomassa</th>
+          <th>% base</th><th>% histórico</th><th>% final</th><th>Faixa segura</th>
+          <th>Sugerido hoje</th><th>Granulometria</th><th>Peso em 7 dias</th><th>Confiança</th>
         </tr>
       </thead>
       <tbody>
@@ -48,14 +33,9 @@
         <tr>
           <td><strong>{{ row.lot.lot_code }}</strong><div class="table-subline">{{ row.rec.model_name }}</div></td>
           <td>{{ row.rec.current_weight_g }} g</td>
-          <td>{% if row.rec.biometric_date %}{{ row.rec.biometric_date|brdate }}{% else %}—{% endif %}</td>
           <td>{{ row.rec.expected_weight_g or '—' }} g</td>
           <td>{% if row.rec.growth_gap_pct is not none %}<span class="pill {{ 'pill-danger' if row.rec.growth_gap_pct < -5 else 'pill-success' if row.rec.growth_gap_pct > 5 else 'pill-neutral' }}">{{ row.rec.growth_gap_pct }}%</span>{% else %}—{% endif %}</td>
           <td>{{ row.rec.biomass_kg }} kg</td>
-          <td>{{ row.rec.van_wyk_pct or '—' }}%</td>
-          <td>{{ row.rec.tray_score_label or '—' }}</td>
-          <td>{{ row.rec.estimated_survival_pct or '—' }}{% if row.rec.estimated_survival_pct %}%{% endif %}</td>
-          <td>{{ row.rec.estimated_fcr or '—' }}</td>
           <td>{{ row.rec.base_pct_biomass }}%</td>
           <td>{{ row.rec.learned_pct_biomass }}%</td>
           <td><strong>{{ row.rec.feed_pct_biomass }}%</strong></td>
@@ -66,10 +46,10 @@
           <td>{{ row.rec.model_confidence or '—' }}%</td>
         </tr>
         {% if row.rec.drivers %}
-        <tr class="subrow"><td colspan="18"><div class="driver-list">{% for driver in row.rec.drivers[:4] %}<span class="driver-chip">{{ driver }}</span>{% endfor %}</div></td></tr>
+        <tr class="subrow"><td colspan="13"><div class="driver-list">{% for driver in row.rec.drivers[:4] %}<span class="driver-chip">{{ driver }}</span>{% endfor %}</div></td></tr>
         {% endif %}
         {% else %}
-        <tr><td colspan="18" class="empty-cell">Nenhum lote ativo para sugerir arraçoamento.</td></tr>
+        <tr><td colspan="13" class="empty-cell">Nenhum lote ativo para sugerir arraçoamento.</td></tr>
         {% endfor %}
       </tbody>
     </table>
