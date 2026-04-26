@@ -413,3 +413,20 @@ button:hover{transform:translateY(-1px)}
 .warning-badge { background:#fff6df; color:#9a6700; border:1px solid #f5d37a; }
 .assistant-answer { margin-top:18px; border-radius:16px; background:#f4fbff; border:1px solid #c7e5f4; padding:18px; }
 .page-assistant_page textarea, .page-finance_page textarea, .page-biometrics_page textarea { min-height:92px; }
+
+
+.table-subline{display:block;margin-top:4px;font-size:12px;color:#6b7280}
+.pill{display:inline-flex;align-items:center;justify-content:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid transparent}
+.pill-success{background:#eafaf0;color:#166534;border-color:#b9ebc7}
+.pill-danger{background:#fff0f0;color:#b42318;border-color:#f6c7c7}
+.pill-neutral{background:#f4f5f7;color:#344054;border-color:#d0d5dd}
+.subrow td{background:#fafcff;border-top:0}
+.driver-list{display:flex;flex-wrap:wrap;gap:8px}
+.driver-chip{display:inline-flex;padding:6px 10px;border-radius:999px;background:#eef6ff;color:#1d4ed8;font-size:12px;font-weight:600;border:1px solid #cfe1ff}
+.hero-inline-note{font-size:13px;color:#475467;background:#f8fbff;border:1px solid #dbeafe;border-radius:14px;padding:12px 14px}
+.top-space{margin-top:14px}
+.intelligence-layout{align-items:start}
+.suggested-question-list{display:flex;flex-wrap:wrap;gap:10px}
+.question-chip{border:1px solid #d0d5dd;background:#fff;border-radius:999px;padding:8px 12px;font-size:13px;font-weight:600;color:#344054;cursor:pointer}
+.question-chip:hover{background:#f8fafc}
+@media (max-width:960px){.suggested-question-list{gap:8px}.question-chip{width:100%;justify-content:flex-start}}
