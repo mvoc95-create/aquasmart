@@ -1,0 +1,6 @@
+{% extends 'base.html' %}
+{% block page_title %}Fornecedores de PL{% endblock %}
+{% block page_subtitle %}Comparativo simples para apoiar a próxima compra de larva.{% endblock %}
+{% block content %}
+<section class="panel"><div class="panel-head"><div><p class="panel-kicker">Performance histórica</p><h2>Ranking de fornecedores</h2></div></div><div class="table-wrap"><table><thead><tr><th>Fornecedor</th><th>Lotes</th><th>Lotes ativos</th><th>Sobrevivência média</th><th>FCR médio</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.supplier }}</td><td>{{ row.lot_count }}</td><td>{{ row.active_lots }}</td><td>{{ row.survival_avg or '—' }}{% if row.survival_avg %}%{% endif %}</td><td>{{ row.fcr_avg or '—' }}</td></tr>{% else %}<tr><td colspan="5" class="empty-cell">Sem dados suficientes por fornecedor.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

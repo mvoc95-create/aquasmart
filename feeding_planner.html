@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block page_title %}Arraçoamento sugerido{% endblock %}
+{% block page_subtitle %}Sugestão automática por biomassa, fase e faixa de peso, com projeção de 7 dias.{% endblock %}
+{% block content %}
+<section class="panel"><div class="panel-head"><div><p class="panel-kicker">Recomendação diária</p><h2>Quanto ofertar hoje</h2></div></div>
+<div class="table-wrap"><table><thead><tr><th>Lote</th><th>Peso atual</th><th>Biomassa estimada</th><th>% biomassa/dia</th><th>Oferta sugerida</th><th>Granulometria</th><th>Peso em 7 dias</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.lot.lot_code }}</td><td>{{ row.rec.current_weight_g }} g</td><td>{{ row.rec.biomass_kg }} kg</td><td>{{ row.rec.feed_pct_biomass }}%</td><td><strong>{{ row.rec.suggested_feed_kg }} kg/dia</strong></td><td>{{ row.rec.pellet_hint }}</td><td>{{ row.projection.projected_weight_g }} g</td></tr>{% else %}<tr><td colspan="7" class="empty-cell">Nenhum lote ativo para sugerir arraçoamento.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}
