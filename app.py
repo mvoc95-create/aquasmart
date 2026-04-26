@@ -5191,6 +5191,30 @@ def feeding_recommendation_for_lot(lot):
     final_pct = blended_pct * growth_factor * water_factor
     final_pct = min(max(final_pct, profile['min_pct']), profile['max_pct'])
     suggested = biomass_kg * final_pct
+    feedings_per_day = 4
+    feed_per_feeding = suggested / feedings_per_day if feedings_per_day else suggested
+    gap_pct = growth_projection.get('gap_pct')
+    env_attention = False
+    if env.get('dissolved_oxygen') is not None and env['dissolved_oxygen'] < TARGET_OD_MIN:
+        env_attention = True
+    if env.get('ammonia') is not None and env['ammonia'] > TARGET_AMMONIA_MAX:
+        env_attention = True
+    if gap_pct is not None and gap_pct <= -5:
+        attention_level = 'danger'
+        attention_label = 'Atrasado na curva'
+        action_hint = 'Priorize conferência de bandeja/OD; se a bandeja limpar bem, trabalhe mais perto do topo da faixa segura.'
+    elif env_attention:
+        attention_level = 'warning'
+        attention_label = 'Atenção à água'
+        action_hint = 'Mantenha a oferta sugerida ou reduza para a base da faixa se OD cair, amônia subir ou sobrar ração na bandeja.'
+    elif gap_pct is not None and gap_pct >= 8:
+        attention_level = 'success'
+        attention_label = 'Acima da curva'
+        action_hint = 'Pode trabalhar no meio ou base da faixa segura, acompanhando bandeja de controle.'
+    else:
+        attention_level = 'neutral'
+        attention_label = 'Dentro da curva'
+        action_hint = 'Use o valor sugerido como ponto de partida e ajuste pela bandeja de controle.'
     return {
         'model_name': 'Tabela padrão + modelo adaptativo da fazenda',
         'biomass_kg': round(biomass_kg, 2),
@@ -5202,9 +5226,14 @@ def feeding_recommendation_for_lot(lot):
         'learned_pct_biomass': round((learned_pct or profile['base_pct']) * 100, 2),
         'feed_pct_biomass': round(final_pct * 100, 2),
         'suggested_feed_kg': round(suggested, 2),
+        'feedings_per_day': feedings_per_day,
+        'feed_per_feeding_kg': round(feed_per_feeding, 2),
         'min_feed_kg': round(biomass_kg * max(profile['min_pct'], final_pct * 0.92), 2),
         'max_feed_kg': round(biomass_kg * min(profile['max_pct'], final_pct * 1.08), 2),
         'pellet_hint': profile['pellet'],
+        'attention_level': attention_level,
+        'attention_label': attention_label,
+        'action_hint': action_hint,
         'current_weight_g': round(weight or 0, 2),
         'expected_weight_g': growth_projection.get('expected_weight_g'),
         'growth_gap_pct': growth_projection.get('gap_pct'),
@@ -5560,10 +5589,14 @@ def feeding_planner_page():
         projection = smart_growth_projection(lot, 7)
         rows.append({'lot': lot, 'rec': rec, 'projection': projection})
     rows.sort(key=lambda item: (item['rec'].get('growth_gap_pct') is None, item['rec'].get('growth_gap_pct', 999)))
+    total_suggested = sum((row['rec'].get('suggested_feed_kg') or 0) for row in rows)
+    attention_lots = sum(1 for row in rows if row['rec'].get('attention_level') in {'danger', 'warning'})
     model_summary = {
         'active_lots': len(rows),
         'avg_confidence': round(sum((row['rec'].get('model_confidence') or 0) for row in rows) / len(rows), 1) if rows else 0,
         'historical_cases': sum((row['rec'].get('historical_cases') or 0) for row in rows),
+        'total_suggested_feed_kg': round(total_suggested, 2),
+        'attention_lots': attention_lots,
     }
     return render_template('feeding_planner.html', rows=rows, model_summary=model_summary)
 
