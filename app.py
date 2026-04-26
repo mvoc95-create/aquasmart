@@ -4717,10 +4717,21 @@ def smart_growth_projection(lot, days_ahead=7):
     }
 
 
+def current_live_count_for_lot(lot):
+    allocations = LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot.id,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= date.today()),
+    ).all()
+    qty = sum((allocation.quantity_allocated or 0) for allocation in allocations)
+    if qty:
+        return qty
+    return parse_int(getattr(lot, 'initial_count', 0), 0) or 0
+
+
 def feeding_recommendation_for_lot(lot):
-    weight = current_weight_for_lot(lot)
-    live_count = lot_current_units(lot) or lot.initial_count or 0
-    biomass_kg = (live_count * weight) / 1000 if weight and live_count else 0
+    weight = parse_float(current_weight_for_lot(lot), 0) or 0
+    live_count = current_live_count_for_lot(lot)
+    biomass_kg = (live_count * weight) / 1000 if weight > 0 and live_count > 0 else 0
     if weight <= 1:
         pct = 0.12
         pellet = '0,8 a 1,2 mm'
@@ -4951,9 +4962,9 @@ def harvest_decision_page():
         projection_next = smart_growth_projection(selected_lot, 7)
         price_now = request.values.get('price_now', type=float) or 22
         price_next = request.values.get('price_next', type=float) or 24
-        live_count = lot_current_units(selected_lot) or selected_lot.initial_count or 0
-        harvest_kg_now = (live_count * projection_now['current_weight_g']) / 1000 if live_count else 0
-        harvest_kg_next = (live_count * projection_next['projected_weight_g']) / 1000 if live_count else 0
+        live_count = current_live_count_for_lot(selected_lot)
+        harvest_kg_now = (live_count * parse_float(projection_now.get('current_weight_g'), 0)) / 1000 if live_count else 0
+        harvest_kg_next = (live_count * parse_float(projection_next.get('projected_weight_g'), 0)) / 1000 if live_count else 0
         revenue_now = harvest_kg_now * price_now
         revenue_next = harvest_kg_next * price_next
         extra_feed_cost = feeding_recommendation_for_lot(selected_lot)['suggested_feed_kg'] * 7 * 6.0
