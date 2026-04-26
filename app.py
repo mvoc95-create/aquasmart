@@ -232,11 +232,16 @@ class DailyManagement(db.Model):
     feed_product_id = db.Column(db.Integer, db.ForeignKey('feed_product.id'))
     feed_offered_kg = db.Column(db.Float, default=0)
     feed_consumed_kg = db.Column(db.Float, default=0)
+    tray_score = db.Column(db.Float)
+    score_basis = db.Column(db.String(30), default='bandeja')
+    biomass_method = db.Column(db.String(40), default='biometria_van_wyk')
     feed_unit_cost = db.Column(db.Float)
     feed_total_cost = db.Column(db.Float, default=0)
     mortality_qty = db.Column(db.Integer, default=0)
     average_weight_g = db.Column(db.Float)
     estimated_biomass_kg = db.Column(db.Float)
+    estimated_survival_pct = db.Column(db.Float)
+    estimated_fcr = db.Column(db.Float)
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -1571,6 +1576,11 @@ def run_lightweight_migrations():
     if 'daily_management' in tables:
         daily_management_columns = get_columns('daily_management')
         add_column_if_missing('daily_management', daily_management_columns, 'feed_product_id', 'ALTER TABLE daily_management ADD COLUMN feed_product_id INTEGER', 'ALTER TABLE daily_management ADD COLUMN feed_product_id INTEGER')
+        add_column_if_missing('daily_management', daily_management_columns, 'tray_score', 'ALTER TABLE daily_management ADD COLUMN tray_score FLOAT', 'ALTER TABLE daily_management ADD COLUMN tray_score DOUBLE PRECISION')
+        add_column_if_missing('daily_management', daily_management_columns, 'score_basis', "ALTER TABLE daily_management ADD COLUMN score_basis VARCHAR(30) DEFAULT 'bandeja'", "ALTER TABLE daily_management ADD COLUMN score_basis VARCHAR(30) DEFAULT 'bandeja'")
+        add_column_if_missing('daily_management', daily_management_columns, 'biomass_method', "ALTER TABLE daily_management ADD COLUMN biomass_method VARCHAR(40) DEFAULT 'biometria_van_wyk'", "ALTER TABLE daily_management ADD COLUMN biomass_method VARCHAR(40) DEFAULT 'biometria_van_wyk'")
+        add_column_if_missing('daily_management', daily_management_columns, 'estimated_survival_pct', 'ALTER TABLE daily_management ADD COLUMN estimated_survival_pct FLOAT', 'ALTER TABLE daily_management ADD COLUMN estimated_survival_pct DOUBLE PRECISION')
+        add_column_if_missing('daily_management', daily_management_columns, 'estimated_fcr', 'ALTER TABLE daily_management ADD COLUMN estimated_fcr FLOAT', 'ALTER TABLE daily_management ADD COLUMN estimated_fcr DOUBLE PRECISION')
         add_column_if_missing('daily_management', daily_management_columns, 'feed_unit_cost', 'ALTER TABLE daily_management ADD COLUMN feed_unit_cost FLOAT', 'ALTER TABLE daily_management ADD COLUMN feed_unit_cost DOUBLE PRECISION')
         add_column_if_missing('daily_management', daily_management_columns, 'feed_total_cost', 'ALTER TABLE daily_management ADD COLUMN feed_total_cost FLOAT DEFAULT 0', 'ALTER TABLE daily_management ADD COLUMN feed_total_cost DOUBLE PRECISION DEFAULT 0')
         add_column_if_missing('daily_management', daily_management_columns, 'created_at', f"ALTER TABLE daily_management ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE daily_management ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
@@ -3339,6 +3349,17 @@ def water_page():
     )
 
 
+def build_management_form_context(unit_id=None, manage_date=None, edit_record=None):
+    manage_date = manage_date or date.today()
+    lot = active_lot_for_unit(unit_id, on_date=manage_date) if unit_id else None
+    biometric = latest_biometric_for_lot_on_or_before(lot.id, manage_date) if lot else None
+    weight = round(biometric.average_weight_g, 3) if biometric and biometric.average_weight_g is not None else None
+    tray_score = edit_record.tray_score if edit_record and edit_record.tray_score is not None else None
+    feed_offered = edit_record.feed_offered_kg if edit_record else None
+    estimate = estimate_lot_state_from_feed(lot, ref_date=manage_date, feed_offered_kg=feed_offered, tray_score=tray_score, weight_g=weight or (current_weight_for_lot(lot) if lot else 0)) if lot else None
+    return {'lot': lot, 'biometric': biometric, 'weight_g': weight, 'estimate': estimate, 'manage_date': manage_date}
+
+
 @app.route('/management', methods=['GET', 'POST'])
 @login_required
 @requires_permission('management_manage')
@@ -3349,10 +3370,7 @@ def management_page():
         lot = active_lot_for_unit(unit_id, on_date=manage_date)
         feed_product = selected_feed_product_from_form()
         feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
-        feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
-        if feed_consumed_kg > feed_offered_kg and feed_offered_kg > 0:
-            flash('A ração consumida não pode ser maior que a ofertada.', 'danger')
-            return redirect(url_for('management_page', unit_id=unit_id))
+        tray_score = parse_float(request.form.get('tray_score'))
         validation_error = validate_feed_usage(feed_product, feed_offered_kg)
         if validation_error:
             flash(validation_error, 'danger')
@@ -3363,16 +3381,24 @@ def management_page():
             flash(supply_validation_error, 'danger')
             return redirect(url_for('management_page', unit_id=unit_id))
 
+        biometric = latest_biometric_for_lot_on_or_before(lot.id, manage_date) if lot else None
+        linked_weight = round(biometric.average_weight_g, 3) if biometric and biometric.average_weight_g is not None else parse_float(request.form.get('average_weight_g'))
+        estimate = estimate_lot_state_from_feed(lot, ref_date=manage_date, feed_offered_kg=feed_offered_kg, tray_score=tray_score, weight_g=linked_weight) if lot else None
         rec = DailyManagement(
             manage_date=manage_date,
             unit_id=unit_id,
             lot_id=lot.id if lot else None,
             feed_product_id=feed_product.id if feed_product else None,
             feed_offered_kg=feed_offered_kg,
-            feed_consumed_kg=feed_consumed_kg,
+            feed_consumed_kg=None,
+            tray_score=tray_score,
+            score_basis='bandeja',
+            biomass_method='biometria_van_wyk',
             mortality_qty=parse_int(request.form.get('mortality_qty'), 0) or 0,
-            average_weight_g=parse_float(request.form.get('average_weight_g')),
-            estimated_biomass_kg=parse_float(request.form.get('estimated_biomass_kg')),
+            average_weight_g=linked_weight,
+            estimated_biomass_kg=(estimate or {}).get('biomass_kg') or parse_float(request.form.get('estimated_biomass_kg')),
+            estimated_survival_pct=(estimate or {}).get('survival_pct'),
+            estimated_fcr=(estimate or {}).get('estimated_fcr'),
             notes=request.form.get('notes'),
             updated_at=datetime.utcnow(),
         )
@@ -3392,6 +3418,8 @@ def management_page():
     records = records_query.order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).limit(100).all()
     edit_id = request.args.get('edit_id', type=int)
     edit_record = db.session.get(DailyManagement, edit_id) if edit_id else None
+    new_form_context = build_management_form_context(selected_unit_id, date.today())
+    edit_form_context = build_management_form_context(edit_record.unit_id, edit_record.manage_date, edit_record) if edit_record else None
     feed_snapshot = build_feed_stock_snapshot()
     stock_by_product = {row['product'].id: row['stock_kg'] for row in feed_snapshot['rows']}
     feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
@@ -3423,6 +3451,8 @@ def management_page():
         cost_summary=cost_summary,
         supply_cost_by_record=supply_cost_by_record,
         usages_by_record=usages_by_record,
+        new_form_context=new_form_context,
+        edit_form_context=edit_form_context,
     )
 
 
@@ -3449,7 +3479,7 @@ def previous_management_data():
             'manage_date': previous_record.manage_date.isoformat(),
             'feed_product_id': previous_record.feed_product_id,
             'feed_offered_kg': previous_record.feed_offered_kg,
-            'feed_consumed_kg': previous_record.feed_consumed_kg,
+            'tray_score': previous_record.tray_score,
             'mortality_qty': previous_record.mortality_qty,
             'average_weight_g': previous_record.average_weight_g,
             'estimated_biomass_kg': previous_record.estimated_biomass_kg,
@@ -3512,12 +3542,8 @@ def edit_management_record(record_id):
     lot = active_lot_for_unit(unit_id, on_date=new_manage_date)
     feed_product = selected_feed_product_from_form()
     feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
-    feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
+    tray_score = parse_float(request.form.get('tray_score'))
     existing_movement = get_management_feed_movement(record_id)
-
-    if feed_consumed_kg > feed_offered_kg and feed_offered_kg > 0:
-        flash('A ração consumida não pode ser maior que a ofertada.', 'danger')
-        return redirect(request.referrer or url_for('management_page'))
 
     validation_error = validate_feed_usage(feed_product, feed_offered_kg, existing_movement=existing_movement)
     if validation_error:
@@ -3533,11 +3559,19 @@ def edit_management_record(record_id):
     rec.unit_id = unit_id
     rec.lot_id = lot.id if lot else None
     rec.feed_product_id = feed_product.id if feed_product else None
+    biometric = latest_biometric_for_lot_on_or_before(lot.id, new_manage_date) if lot else None
+    linked_weight = round(biometric.average_weight_g, 3) if biometric and biometric.average_weight_g is not None else parse_float(request.form.get('average_weight_g'))
+    estimate = estimate_lot_state_from_feed(lot, ref_date=new_manage_date, feed_offered_kg=feed_offered_kg, tray_score=tray_score, weight_g=linked_weight) if lot else None
     rec.feed_offered_kg = feed_offered_kg
-    rec.feed_consumed_kg = feed_consumed_kg
+    rec.feed_consumed_kg = None
+    rec.tray_score = tray_score
+    rec.score_basis = 'bandeja'
+    rec.biomass_method = 'biometria_van_wyk'
     rec.mortality_qty = parse_int(request.form.get('mortality_qty'), 0) or 0
-    rec.average_weight_g = parse_float(request.form.get('average_weight_g'))
-    rec.estimated_biomass_kg = parse_float(request.form.get('estimated_biomass_kg'))
+    rec.average_weight_g = linked_weight
+    rec.estimated_biomass_kg = (estimate or {}).get('biomass_kg') or parse_float(request.form.get('estimated_biomass_kg'))
+    rec.estimated_survival_pct = (estimate or {}).get('survival_pct')
+    rec.estimated_fcr = (estimate or {}).get('estimated_fcr')
     rec.notes = request.form.get('notes')
     rec.updated_at = datetime.utcnow()
     sync_management_feed_movement(rec, feed_product, feed_offered_kg, existing_movement=existing_movement)
@@ -4656,6 +4690,109 @@ def ensure_alert_rules():
         db.session.commit()
 
 
+VAN_WYK_INTENSIVE_FEED_TABLE = [
+    (0.3, 14.0), (0.5, 12.0), (0.8, 10.0), (1.0, 8.5), (2.0, 6.5),
+    (3.0, 5.5), (5.0, 4.5), (8.0, 3.5), (10.0, 3.0), (12.0, 2.7),
+    (15.0, 2.4), (20.0, 2.0), (25.0, 1.7), (30.0, 1.5),
+]
+
+
+def van_wyk_feed_rate_pct(weight_g):
+    weight_g = parse_float(weight_g, 0) or 0
+    if weight_g <= 0:
+        return None
+    table = VAN_WYK_INTENSIVE_FEED_TABLE
+    if weight_g <= table[0][0]:
+        return table[0][1]
+    for (w1, p1), (w2, p2) in zip(table, table[1:]):
+        if w1 <= weight_g <= w2:
+            span = max(w2 - w1, 0.0001)
+            ratio = (weight_g - w1) / span
+            return round(p1 + (p2 - p1) * ratio, 3)
+    return table[-1][1]
+
+
+def tray_score_pct_factor(score):
+    score = parse_float(score)
+    if score is None:
+        return 1.0
+    if score <= 0:
+        return 1.12
+    if score <= 1:
+        return 1.06
+    if score <= 2:
+        return 1.02
+    if score <= 3:
+        return 1.0
+    if score <= 4:
+        return 0.95
+    return 0.90
+
+
+def tray_score_label(score):
+    score = parse_float(score)
+    if score is None:
+        return 'Sem score'
+    if score <= 0:
+        return '0 · muita sobra'
+    if score <= 1:
+        return '1 · sobra relevante'
+    if score <= 2:
+        return '2 · leve sobra'
+    if score <= 3:
+        return '3 · ponto ideal'
+    if score <= 4:
+        return '4 · consumo forte'
+    return '5 · consumo muito forte'
+
+
+def latest_biometric_for_lot_on_or_before(lot_id, ref_date=None):
+    query = BiometricsSample.query.filter(BiometricsSample.lot_id == lot_id)
+    if ref_date:
+        query = query.filter(BiometricsSample.sample_date <= ref_date)
+    return query.order_by(BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()).first()
+
+
+def current_management_weight_for_lot(lot, ref_date=None):
+    biometric = latest_biometric_for_lot_on_or_before(lot.id, ref_date)
+    if biometric and biometric.average_weight_g is not None:
+        return round(biometric.average_weight_g, 3), biometric
+    obs = merged_weight_observations(lot.id)
+    if obs:
+        return round(obs[-1]['weight_g'] or 0, 3), None
+    return round(parse_float(lot.estimated_weight_g, 0) or 0, 3), None
+
+
+def estimate_lot_state_from_feed(lot, ref_date=None, feed_offered_kg=None, tray_score=None, weight_g=None):
+    ref_date = ref_date or date.today()
+    weight_g = parse_float(weight_g, 0) or 0
+    if not lot or weight_g <= 0:
+        return {'weight_g': round(weight_g or 0, 3), 'biomass_kg': None, 'live_count': None, 'survival_pct': None, 'estimated_fcr': None, 'van_wyk_pct': van_wyk_feed_rate_pct(weight_g), 'score_factor': tray_score_pct_factor(tray_score), 'score_label': tray_score_label(tray_score), 'biometric': latest_biometric_for_lot_on_or_before(lot.id, ref_date) if lot else None}
+    van_wyk_pct = van_wyk_feed_rate_pct(weight_g) or 0
+    score_factor = tray_score_pct_factor(tray_score)
+    effective_pct = (van_wyk_pct / 100.0) * score_factor if van_wyk_pct else 0
+    if feed_offered_kg is None:
+        last_feed = DailyManagement.query.filter(DailyManagement.lot_id == lot.id, DailyManagement.manage_date <= ref_date, DailyManagement.feed_offered_kg.isnot(None), DailyManagement.feed_offered_kg > 0).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).first()
+        feed_offered_kg = last_feed.feed_offered_kg if last_feed else 0
+        if tray_score is None and last_feed:
+            tray_score = last_feed.tray_score
+            score_factor = tray_score_pct_factor(tray_score)
+            effective_pct = (van_wyk_pct / 100.0) * score_factor if van_wyk_pct else 0
+    feed_offered_kg = parse_float(feed_offered_kg, 0) or 0
+    biomass_from_feed = (feed_offered_kg / effective_pct) if feed_offered_kg > 0 and effective_pct > 0 else None
+    observed_live_count = current_live_count_for_lot(lot)
+    estimated_live_from_feed = int(round((biomass_from_feed * 1000) / weight_g)) if biomass_from_feed and weight_g > 0 else observed_live_count
+    capped_live_count = min(observed_live_count, estimated_live_from_feed) if observed_live_count else estimated_live_from_feed
+    biomass_kg = round((capped_live_count * weight_g) / 1000, 2) if capped_live_count and weight_g else (round(biomass_from_feed, 2) if biomass_from_feed else None)
+    survival_pct = round((capped_live_count / lot.initial_count) * 100, 2) if lot.initial_count and capped_live_count is not None else None
+    initial_weight = parse_float(lot.estimated_weight_g, 0) or 0.001
+    initial_biomass = (parse_int(lot.initial_count, 0) or 0) * initial_weight / 1000.0
+    cumulative_feed = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.lot_id == lot.id, DailyManagement.manage_date <= ref_date).scalar() or 0
+    biomass_gain = max((biomass_kg or 0) - initial_biomass, 0)
+    estimated_fcr = round(cumulative_feed / biomass_gain, 2) if biomass_gain > 0 and cumulative_feed > 0 else None
+    return {'weight_g': round(weight_g, 3), 'biomass_kg': biomass_kg, 'live_count': capped_live_count, 'survival_pct': survival_pct, 'estimated_fcr': estimated_fcr, 'van_wyk_pct': round(van_wyk_pct, 3) if van_wyk_pct else None, 'score_factor': round(score_factor, 3), 'score_label': tray_score_label(tray_score), 'biometric': latest_biometric_for_lot_on_or_before(lot.id, ref_date)}
+
+
 def latest_management_for_lot(lot_id):
     return DailyManagement.query.filter(DailyManagement.lot_id == lot_id).order_by(DailyManagement.manage_date.desc(), DailyManagement.id.desc()).first()
 
@@ -4926,9 +5063,12 @@ def learned_feed_profile(lot, weight_g):
 
 
 def feeding_recommendation_for_lot(lot):
-    weight = parse_float(current_weight_for_lot(lot), 0) or 0
-    live_count = current_live_count_for_lot(lot)
-    biomass_kg = (live_count * weight) / 1000 if weight > 0 and live_count > 0 else 0
+    weight, biometric = current_management_weight_for_lot(lot, date.today())
+    latest_management = latest_management_for_lot(lot.id)
+    tray_score = latest_management.tray_score if latest_management else None
+    state = estimate_lot_state_from_feed(lot, ref_date=date.today(), tray_score=tray_score, weight_g=weight)
+    live_count = state.get('live_count') or current_live_count_for_lot(lot)
+    biomass_kg = state.get('biomass_kg') or ((live_count * weight) / 1000 if weight > 0 and live_count > 0 else 0)
     profile = feed_profile_for_weight(weight)
     growth_projection = smart_growth_projection(lot, 7)
     learned = learned_feed_profile(lot, weight)
@@ -4980,6 +5120,12 @@ def feeding_recommendation_for_lot(lot):
         'projected_weight_7d_g': growth_projection.get('projected_weight_g'),
         'model_confidence': growth_projection.get('model_confidence'),
         'similar_cases': growth_projection.get('similar_cases'),
+        'tray_score': tray_score,
+        'tray_score_label': state.get('score_label'),
+        'van_wyk_pct': state.get('van_wyk_pct'),
+        'estimated_survival_pct': state.get('survival_pct'),
+        'estimated_fcr': state.get('estimated_fcr'),
+        'biometric_date': biometric.sample_date if biometric else None,
     }
 
 
