@@ -9,7 +9,7 @@
   <input type="hidden" name="form_mode" value="{{ 'edit_lot' if edit_lot else 'lot' }}">
   {% if edit_lot %}<input type="hidden" name="lot_id" value="{{ edit_lot.id }}">{% endif %}
   <label>Código do lote<input name="lot_code" value="{{ edit_lot.lot_code if edit_lot else '' }}" required></label>
-  <label>Fase<select name="phase"><option value="bercario" {% if edit_lot and edit_lot.phase=='bercario' %}selected{% endif %}>Berçário</option><option value="engorda" {% if edit_lot and edit_lot.phase=='engorda' %}selected{% endif %}>Engorda</option></select></label>
+  <label>Fase<select name="phase"><option value="bercario" {% if edit_lot and edit_lot.phase=='bercario' %}selected{% endif %}>Berçário</option><option value="juvenil" {% if edit_lot and edit_lot.phase=='juvenil' %}selected{% endif %}>Juvenil</option><option value="engorda" {% if edit_lot and edit_lot.phase=='engorda' %}selected{% endif %}>Engorda</option></select></label>
   <label>Data inicial<input type="date" name="start_date" value="{{ edit_lot.start_date.isoformat() if edit_lot and edit_lot.start_date else today.isoformat() }}" required></label>
   <label>Unidade inicial<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if edit_lot and edit_lot.unit_id==u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
   <label>Quantidade inicial<input type="number" name="initial_count" value="{{ edit_lot.initial_count if edit_lot else '' }}" required></label>

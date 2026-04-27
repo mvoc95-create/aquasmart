@@ -1,33 +1,167 @@
 {% extends 'base.html' %}
-{% block page_title %}Transferências bifásicas{% endblock %}
-{% block page_subtitle %}Mova o mesmo lote do berçário para um ou vários viveiros de engorda.{% endblock %}
+{% block page_title %}Movimentação trifásica de lotes{% endblock %}
+{% block page_subtitle %}Controle o fluxo Berçário → Juvenil → Engorda, com transferência parcial, múltiplas transferências e saldo por unidade.{% endblock %}
 {% block content %}
+
+<div class="panel">
+  <div class="panel-head">
+    <div>
+      <p class="panel-kicker">Mapa atual</p>
+      <h2>Saldos vivos estimados por unidade</h2>
+      <p class="muted">Esses saldos são atualizados a cada transferência. Use esta tabela para conferir onde está cada parte do lote antes de movimentar.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Lote</th>
+          <th>Unidade</th>
+          <th>Fase</th>
+          <th>Entrada na unidade</th>
+          <th>Saldo estimado</th>
+          <th>Densidade estimada</th>
+          <th>Obs.</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in allocations %}
+        <tr>
+          <td>{{ a.lot.lot_code if a.lot else '—' }}</td>
+          <td>{{ a.unit.name if a.unit else '—' }}</td>
+          <td>{{ a.unit.phase|phase_label if a.unit else '—' }}</td>
+          <td>{{ a.start_date|brdate }}</td>
+          <td>{{ '{:,.0f}'.format(a.quantity_allocated or 0).replace(',', '.') }}</td>
+          <td>{% if a.unit and a.unit.area_m2 and a.quantity_allocated %}{{ ((a.quantity_allocated or 0) / a.unit.area_m2)|round(1) }} cam/m²{% else %}—{% endif %}</td>
+          <td>{{ a.notes or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7">Nenhum saldo ativo encontrado. Cadastre um lote ou confira as alocações.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <div class="grid-2">
 <section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>{{ 'Editar transferência' if edit_transfer else 'Nova transferência' }}</h2></div></div>
+<div class="panel-head">
+  <div>
+    <p class="panel-kicker">Lançamento</p>
+    <h2>{{ 'Editar transferência' if edit_transfer else 'Nova transferência' }}</h2>
+    <p class="muted">Pode ser Berçário → Juvenil, Juvenil → Engorda, Berçário → Engorda ou divisão parcial para mais de uma unidade.</p>
+  </div>
+</div>
+
 <form method="post" class="form-grid">
   <input type="hidden" name="form_mode" value="{{ 'edit' if edit_transfer else 'create' }}">
   {% if edit_transfer %}<input type="hidden" name="transfer_id" value="{{ edit_transfer.id }}">{% endif %}
-  <label>Data<input type="date" name="transfer_date" value="{{ edit_transfer.transfer_date.isoformat() if edit_transfer and edit_transfer.transfer_date else today.isoformat() }}" required></label>
-  <label>Origem<select name="source_unit_id">{% for u in units %}<option value="{{u.id}}" {% if edit_transfer and edit_transfer.source_unit_id==u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
-  <label>Destino<select name="destination_unit_id">{% for u in units %}<option value="{{u.id}}" {% if edit_transfer and edit_transfer.destination_unit_id==u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
-  <label>Lote<select name="source_lot_id">{% for l in lots %}<option value="{{l.id}}" {% if edit_transfer and edit_transfer.source_lot_id==l.id %}selected{% endif %}>{{l.lot_code}} - {{l.unit.name}}</option>{% endfor %}</select></label>
-  <label>Quantidade transferida<input type="number" name="transferred_qty" value="{{ edit_transfer.transferred_qty if edit_transfer else '' }}" required></label>
-  <label>Peso médio (g)<input type="number" step="0.001" name="avg_weight_g" value="{{ edit_transfer.avg_weight_g if edit_transfer else '' }}"></label>
-  {% if not edit_transfer %}<label>Encerrar ocupação da origem?<select name="close_source_allocation"><option value="0">Não</option><option value="1">Sim</option></select></label>{% endif %}
-  <label class="full">Observação<textarea name="notes">{{ edit_transfer.notes if edit_transfer else '' }}</textarea></label>
-  <div class="form-actions action-row-between"><button type="submit">{{ 'Salvar alterações' if edit_transfer else 'Salvar transferência' }}</button>{% if edit_transfer %}<a class="secondary-link-button" href="{{ url_for('transfers_page') }}">Cancelar</a>{% endif %}</div>
+
+  <label>Data
+    <input type="date" name="transfer_date" value="{{ edit_transfer.transfer_date.isoformat() if edit_transfer and edit_transfer.transfer_date else today.isoformat() }}" required>
+  </label>
+
+  {% if edit_transfer %}
+    <label>Origem
+      <select name="source_unit_id">
+        {% for u in units %}
+        <option value="{{u.id}}" {% if edit_transfer and edit_transfer.source_unit_id==u.id %}selected{% endif %}>{{u.name}} · {{ u.phase|phase_label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Lote
+      <select name="source_lot_id">
+        {% for l in lots %}
+        <option value="{{l.id}}" {% if edit_transfer and edit_transfer.source_lot_id==l.id %}selected{% endif %}>{{l.lot_code}} - {{l.unit.name}}</option>
+        {% endfor %}
+      </select>
+    </label>
+  {% else %}
+    <label class="full">Origem com saldo ativo
+      <select name="source_allocation_id" required>
+        <option value="">Selecione o lote/unidade de origem</option>
+        {% for a in allocations %}
+        <option value="{{ a.id }}">{{ a.lot.lot_code if a.lot else 'Lote' }} · {{ a.unit.name if a.unit else 'Unidade' }} · {{ a.unit.phase|phase_label if a.unit else '' }} · saldo {{ '{:,.0f}'.format(a.quantity_allocated or 0).replace(',', '.') }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  {% endif %}
+
+  <label>Destino
+    <select name="destination_unit_id" required>
+      {% for u in units %}
+      <option value="{{u.id}}" {% if edit_transfer and edit_transfer.destination_unit_id==u.id %}selected{% endif %}>{{u.name}} · {{ u.phase|phase_label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Quantidade transferida
+    <input type="number" name="transferred_qty" min="1" value="{{ edit_transfer.transferred_qty if edit_transfer else '' }}" required>
+  </label>
+
+  <label>Peso médio na transferência (g)
+    <input type="number" step="0.001" name="avg_weight_g" value="{{ edit_transfer.avg_weight_g if edit_transfer else '' }}">
+  </label>
+
+  {% if not edit_transfer %}
+  <label>Encerrar origem após a transferência?
+    <select name="close_source_allocation">
+      <option value="0">Não, é transferência parcial</option>
+      <option value="1">Sim, saiu tudo da origem</option>
+    </select>
+  </label>
+  {% endif %}
+
+  <label class="full">Observação
+    <textarea name="notes" placeholder="Ex.: transferência para Juvenil 01; lote dividido entre dois viveiros; contagem por biometria etc.">{{ edit_transfer.notes if edit_transfer else '' }}</textarea>
+  </label>
+
+  <div class="form-actions action-row-between">
+    <button type="submit">{{ 'Salvar alterações' if edit_transfer else 'Salvar transferência' }}</button>
+    {% if edit_transfer %}<a class="secondary-link-button" href="{{ url_for('transfers_page') }}">Cancelar</a>{% endif %}
+  </div>
 </form>
 </section>
+
 <section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Transferências registradas</h2></div></div>
-<div class="table-wrap"><table>
-<thead><tr><th>Data</th><th>Lote</th><th>Origem</th><th>Destino</th><th>Quantidade transferida</th><th>Peso médio</th><th></th></tr></thead>
-<tbody>
-{% for r in rows %}
-<tr><td>{{ r.transfer_date|brdate }}</td><td>{{ r.source_lot.lot_code }}</td><td>{{ r.source_unit.name }}</td><td>{{ r.destination_unit.name }}</td><td>{{ r.transferred_qty }}</td><td>{{ r.avg_weight_g if r.avg_weight_g is not none else '—' }}</td><td><a class="link-button small-button" href="{{ url_for('transfers_page', edit_id=r.id) }}">Editar</a></td></tr>
-{% endfor %}
-</tbody></table></div>
+<div class="panel-head">
+  <div>
+    <p class="panel-kicker">Histórico</p>
+    <h2>Linha do tempo de transferências</h2>
+  </div>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Data</th>
+        <th>Lote</th>
+        <th>Origem</th>
+        <th>Destino</th>
+        <th>Fase</th>
+        <th>Quantidade</th>
+        <th>Peso médio</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.transfer_date|brdate }}</td>
+        <td>{{ r.source_lot.lot_code if r.source_lot else '—' }}</td>
+        <td>{{ r.source_unit.name if r.source_unit else '—' }}</td>
+        <td>{{ r.destination_unit.name if r.destination_unit else '—' }}</td>
+        <td>{{ r.source_unit.phase|phase_label if r.source_unit else '—' }} → {{ r.destination_unit.phase|phase_label if r.destination_unit else '—' }}</td>
+        <td>{{ '{:,.0f}'.format(r.transferred_qty or 0).replace(',', '.') }}</td>
+        <td>{{ r.avg_weight_g if r.avg_weight_g is not none else '—' }}</td>
+        <td><a class="link-button small-button" href="{{ url_for('transfers_page', edit_id=r.id) }}">Editar</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8">Nenhuma transferência registrada.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 </section>
 </div>
 {% endblock %}

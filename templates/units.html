@@ -14,7 +14,7 @@
       <label>Nome<input type="text" name="name" value="{{ edit_unit.name if edit_unit else '' }}" placeholder="Ex.: Viveiro 04" required></label>
       <label>Código<input type="text" name="code" value="{{ edit_unit.code if edit_unit else '' }}" placeholder="Ex.: VIVEIRO_04"></label>
       <label>Área (m²)<input type="number" step="0.01" name="area_m2" value="{{ edit_unit.area_m2 if edit_unit else '' }}" required></label>
-      <label>Fase<select name="phase"><option value="engorda" {% if edit_unit and edit_unit.phase=='engorda' %}selected{% endif %}>Engorda</option><option value="bercario" {% if edit_unit and edit_unit.phase=='bercario' %}selected{% endif %}>Berçário</option></select></label>
+      <label>Fase<select name="phase"><option value="engorda" {% if edit_unit and edit_unit.phase=='engorda' %}selected{% endif %}>Engorda</option><option value="juvenil" {% if edit_unit and edit_unit.phase=='juvenil' %}selected{% endif %}>Juvenil</option><option value="bercario" {% if edit_unit and edit_unit.phase=='bercario' %}selected{% endif %}>Berçário</option></select></label>
       <label>Tipo<select name="structure_type"><option value="escavado" {% if edit_unit and edit_unit.structure_type=='escavado' %}selected{% endif %}>Escavado</option><option value="estufa" {% if edit_unit and edit_unit.structure_type=='estufa' %}selected{% endif %}>Estufa</option></select></label>
       <label>Status<select name="active"><option value="1" {% if not edit_unit or edit_unit.active %}selected{% endif %}>Ativa</option><option value="0" {% if edit_unit and not edit_unit.active %}selected{% endif %}>Inativa</option></select></label>
       <div class="form-actions action-row-between">
