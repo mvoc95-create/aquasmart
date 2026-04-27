@@ -102,10 +102,17 @@
       <input type="hidden" name="unit_id" value="{{ plan.unit.id }}">
       <input type="hidden" name="lot_id" value="{{ plan.lot.id }}">
       <label>Quantidade real do dia (kg)<input type="number" step="0.001" name="quantity_kg" value="{{ plan.existing_entry.quantity_kg if plan.existing_entry else plan.total_day_kg }}" required></label>
-      <label>Score intestinal (0,0 a 4,0)
-        <input type="number" step="0.1" min="0" max="4" name="intestinal_score" class="intestinal-score-input" value="{{ '%.1f'|format(plan.existing_entry.intestinal_score) if plan.existing_entry and plan.existing_entry.intestinal_score is not none else '' }}" placeholder="Ex.: 2,5">
-      </label>
-      <div class="full selection-info score-adjustment-info">O score lançado hoje não altera a alimentação de hoje. A partir de amanhã, ele corrige a tabela atual do lote e essa correção continua acumulada nos dias seguintes: 0,0–1,0 +30%; 1,1–2,0 +20%; 2,1–3,0 +10%; 3,1–3,5 mantém; 3,6–4,0 -10%.</div>
+      <div class="score-adjustment-row full">
+        <label>Score intestinal (0,0 a 4,0)
+          <input type="number" step="0.1" min="0" max="4" name="intestinal_score" class="intestinal-score-input" value="{{ '%.1f'|format(plan.existing_entry.intestinal_score) if plan.existing_entry and plan.existing_entry.intestinal_score is not none else '' }}" placeholder="Ex.: 2,9">
+        </label>
+        {% set existing_adjustment = plan.existing_entry.score_adjustment_pct if plan.existing_entry and plan.existing_entry.score_adjustment_pct is not none else none %}
+        <label>Ajuste da ração para amanhã (%)
+          <input type="number" step="0.1" name="score_adjustment_pct" class="score-adjustment-input" value="{{ '%.1f'|format(existing_adjustment) if existing_adjustment is not none else '' }}" placeholder="Ex.: 0 ou 10">
+          <span class="helper-text">Preenche automático pelo score, mas pode ser alterado antes de salvar.</span>
+        </label>
+      </div>
+      <div class="full selection-info score-adjustment-info">O score lançado hoje não altera a alimentação de hoje. A partir de amanhã, o sistema usa o percentual salvo ao lado do score. Sugestão padrão: 0,0–1,0 +30%; 1,1–2,0 +20%; 2,1–3,0 +10%; 3,1–3,5 mantém; 3,6–4,0 -10%.</div>
       <label class="full">Observações<textarea name="notes">{{ plan.existing_entry.notes if plan.existing_entry else '' }}</textarea></label>
       <div class="form-actions"><button type="submit">{{ 'Salvar alterações' if plan.existing_entry else 'Salvar alimentação' }}</button></div>
     </form>
@@ -130,21 +137,63 @@
 <section class="panel" style="margin-top:1rem;">
   <div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos lançamentos</h2></div></div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Obs.</th><th></th></tr></thead>
+    <thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Ajuste</th><th>Obs.</th><th></th></tr></thead>
     <tbody>
     {% for e in entries %}
-    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ '%.1f'|format(e.intestinal_score) if e.intestinal_score is not none else '—' }}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for('delete_nursery_feed_entry', entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento do berçário? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
-    {% else %}<tr><td colspan="7" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
+    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ '%.1f'|format(e.intestinal_score) if e.intestinal_score is not none else '—' }}</td><td>{% if e.score_adjustment_pct is not none %}{% if e.score_adjustment_pct > 0 %}+{% endif %}{{ '%.1f'|format(e.score_adjustment_pct) }}%{% else %}—{% endif %}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for('delete_nursery_feed_entry', entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento do berçário? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
+    {% else %}<tr><td colspan="8" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
     </tbody></table></div>
 </section>
 
 <script>
-document.querySelectorAll('.nursery-entry-form .intestinal-score-input').forEach((scoreInput) => {
-  const form = scoreInput.closest('.nursery-entry-form');
-  const info = form ? form.querySelector('.score-adjustment-info') : null;
-  scoreInput.addEventListener('input', () => {
-    if (info) info.textContent = 'Score registrado. A correção será aplicada a partir do próximo dia e continuará acumulada na curva do lote.';
+function suggestedNurseryAdjustmentPct(score) {
+  const value = Number.parseFloat(String(score || '').replace(',', '.'));
+  if (Number.isNaN(value)) return '';
+  if (value >= 0 && value <= 1.0) return '30';
+  if (value <= 2.0) return '20';
+  if (value <= 3.0) return '10';
+  if (value <= 3.5) return '0';
+  if (value <= 4.0) return '-10';
+  return '';
+}
+
+function formatAdjustmentLabel(value) {
+  const number = Number.parseFloat(String(value || '').replace(',', '.'));
+  if (Number.isNaN(number)) return 'sem ajuste definido';
+  if (number > 0) return `+${number}%`;
+  if (number < 0) return `${number}%`;
+  return 'sem ajuste';
+}
+
+document.querySelectorAll('.nursery-entry-form').forEach((form) => {
+  const scoreInput = form.querySelector('.intestinal-score-input');
+  const adjustmentInput = form.querySelector('.score-adjustment-input');
+  const info = form.querySelector('.score-adjustment-info');
+  if (!scoreInput || !adjustmentInput) return;
+
+  const fillSuggestedAdjustment = (force = false) => {
+    const suggestion = suggestedNurseryAdjustmentPct(scoreInput.value);
+    if (suggestion === '') return;
+    if (force || !adjustmentInput.dataset.manualEdited) {
+      adjustmentInput.value = suggestion;
+    }
+    if (info) {
+      info.textContent = `Sugestão pelo score: ${formatAdjustmentLabel(suggestion)}. Você pode manter essa sugestão ou editar o percentual antes de salvar. Esse ajuste só entra a partir de amanhã.`;
+    }
+  };
+
+  adjustmentInput.addEventListener('input', () => {
+    adjustmentInput.dataset.manualEdited = 'true';
+    if (info) {
+      info.textContent = `Ajuste manual definido: ${formatAdjustmentLabel(adjustmentInput.value)}. O sistema vai usar este percentual salvo para corrigir a ração a partir de amanhã.`;
+    }
   });
+
+  scoreInput.addEventListener('input', () => fillSuggestedAdjustment(false));
+
+  if (scoreInput.value && !adjustmentInput.value) {
+    fillSuggestedAdjustment(true);
+  }
 });
 
 document.addEventListener('click', async (event) => {
