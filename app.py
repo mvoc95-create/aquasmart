@@ -3036,13 +3036,20 @@ def is_auto_nursery_protocol_product(product):
     return False
 
 
+def numeric_search_text(value: str) -> str:
+    value = unicodedata.normalize('NFKD', value or '')
+    value = ''.join(ch for ch in value if not unicodedata.combining(ch))
+    return value.lower().replace(',', '.')
+
+
 def numeric_ranges_from_text(text_value: str):
-    normalized = normalize_text(text_value or '')
+    # Não usa normalize_text aqui, porque ele remove o hífen de faixas como 300-500.
+    text_value = numeric_search_text(text_value)
     ranges = []
-    for start, end in re.findall(r'(\d+(?:[\.,]\d+)?)\s*[-–—]\s*(\d+(?:[\.,]\d+)?)', normalized):
+    for start, end in re.findall(r'(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)', text_value):
         try:
-            a = float(start.replace(',', '.'))
-            b = float(end.replace(',', '.'))
+            a = float(start)
+            b = float(end)
         except ValueError:
             continue
         ranges.append((min(a, b), max(a, b)))
@@ -3050,13 +3057,17 @@ def numeric_ranges_from_text(text_value: str):
 
 
 def numeric_values_from_text(text_value: str):
-    normalized = normalize_text(text_value or '')
+    # Mantém casas decimais: 0.45 mm também vira 450 micra para casar com 300-500.
+    text_value = numeric_search_text(text_value)
     values = []
-    for value in re.findall(r'\d+(?:[\.,]\d+)?', normalized):
+    for value in re.findall(r'\d+(?:\.\d+)?', text_value):
         try:
-            values.append(float(value.replace(',', '.')))
+            parsed = float(value)
         except ValueError:
-            pass
+            continue
+        values.append(parsed)
+        if 0 < parsed < 10:
+            values.append(parsed * 1000)
     return values
 
 
@@ -3077,88 +3088,115 @@ def nursery_product_stock(product_id):
         return 0
 
 
+def nursery_product_match_score(label: str, product) -> tuple[int, bool]:
+    label = (label or '').strip()
+    normalized_label = normalize_text(label)
+    label_tokens = nursery_feed_alias_tokens(label)
+    numeric_tokens = {token for token in label_tokens if token.replace('.', '', 1).isdigit()}
+
+    product_text = f'{product.brand} {product.feed_type} {product.technical_summary or ""}'
+    product_tokens = nursery_feed_alias_tokens(product_text)
+    product_numbers = {token for token in product_tokens if token.replace('.', '', 1).isdigit()}
+    product_is_nursery = 'bercario' in product_tokens or is_auto_nursery_protocol_product(product)
+
+    score = len(label_tokens.intersection(product_tokens))
+
+    if normalized_label == normalize_text(product_text) or normalized_label == normalize_text(product.full_name):
+        score += 8
+
+    if product_matches_nursery_range(label, product_text):
+        score += 20
+
+    if numeric_tokens and product_numbers and numeric_tokens.intersection(product_numbers):
+        score += 4
+
+    if 'nutrisfera' in label_tokens and 'nutrisfera' in product_tokens:
+        score += 4
+
+    if 'triturada' in label_tokens.intersection(product_tokens) or 'triturado' in label_tokens.intersection(product_tokens):
+        score += 2
+
+    if product_is_nursery and not is_auto_nursery_protocol_product(product):
+        score += 8
+
+    if product.active:
+        score += 2
+
+    if nursery_product_stock(product.id) > 0:
+        score += 2
+
+    return score, product_is_nursery
+
+
 def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, create_missing=True):
     label = (label or '').strip()
     normalized_label = normalize_text(label)
     if not normalized_label:
         return None
 
-    label_tokens = nursery_feed_alias_tokens(label)
-    numeric_tokens = {token for token in label_tokens if token.replace('.', '', 1).isdigit()}
     protocol_label = normalized_label in nursery_protocol_product_names() or normalized_label.startswith('mem ')
-    nursery_candidates = []
-    best_product = None
-    best_score = -1
+    products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
 
-    for product in FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all():
+    scored_real_nursery = []
+    scored_any = []
+
+    for product in products:
         if exclude_product_id is not None and product.id == exclude_product_id:
             continue
 
-        product_text = f'{product.brand} {product.feed_type} {product.technical_summary or ""}'
-        product_tokens = nursery_feed_alias_tokens(product_text)
-        product_numbers = {token for token in product_tokens if token.replace('.', '', 1).isdigit()}
-        product_is_nursery = 'bercario' in product_tokens or 'bercário' in product_tokens or is_auto_nursery_protocol_product(product)
+        score, product_is_nursery = nursery_product_match_score(label, product)
+        is_auto_protocol = is_auto_nursery_protocol_product(product)
 
-        if product_is_nursery and not is_auto_nursery_protocol_product(product):
-            nursery_candidates.append(product)
+        if product_is_nursery and not is_auto_protocol:
+            scored_real_nursery.append((score, nursery_product_stock(product.id), product.active, product.full_name.lower(), product))
 
-        score = len(label_tokens.intersection(product_tokens))
+        # Produtos técnicos do protocolo (MeM 200-300, MeM 300-500 etc.) não devem ganhar
+        # prioridade sobre as rações reais cadastradas no estoque.
+        if not (protocol_label and is_auto_protocol):
+            scored_any.append((score, nursery_product_stock(product.id), product.active, product.full_name.lower(), product))
 
-        if normalized_label == normalize_text(product_text) or normalized_label == normalize_text(product.full_name):
-            score += 8
+    if protocol_label and scored_real_nursery:
+        scored_real_nursery.sort(key=lambda item: (item[0], item[2], item[1], item[3]), reverse=True)
+        return scored_real_nursery[0][4]
 
-        if product_matches_nursery_range(label, product_text):
-            score += 7
-
-        if numeric_tokens and product_numbers and numeric_tokens.intersection(product_numbers):
-            score += 4
-
-        if 'nutrisfera' in label_tokens and 'nutrisfera' in product_tokens:
-            score += 4
-
-        if 'triturada' in label_tokens.intersection(product_tokens) or 'triturado' in label_tokens.intersection(product_tokens):
-            score += 2
-
-        if protocol_label and product_is_nursery and not is_auto_nursery_protocol_product(product):
-            score += 5
-
-        if protocol_label and not product_is_nursery:
-            score -= 5
-
-        if product.active:
-            score += 1
-
-        if nursery_product_stock(product.id) > 0:
-            score += 1
-
-        if score > best_score:
-            best_score = score
-            best_product = product
-
-    if best_product and best_score >= (5 if protocol_label else 3):
-        return best_product
-
-    nursery_candidates = sorted(
-        nursery_candidates,
-        key=lambda product: (
-            product.active is False,
-            -nursery_product_stock(product.id),
-            product.brand.lower(),
-            product.feed_type.lower(),
-        ),
-    )
-    if protocol_label and nursery_candidates:
-        return nursery_candidates[0]
+    if scored_any:
+        scored_any.sort(key=lambda item: (item[0], item[2], item[1], item[3]), reverse=True)
+        best_score, _, _, _, best_product = scored_any[0]
+        if best_score >= (5 if protocol_label else 3):
+            return best_product
 
     if not create_missing:
         return None
 
-    # Cria só quando realmente não encontrou produto compatível.
-    # Não adiciona "· Berçário" no nome, para não sujar o histórico de manejo.
-    product = FeedProduct(brand=label, feed_type='', active=True, notes='Criado automaticamente pelo protocolo de berçário.')
+    # Se a linha da tabela traz um nome técnico (MeM 300-500), não cria mais produto
+    # com esse nome. Usa um nome genérico até o usuário cadastrar a ração real.
+    product_name = 'Ração berçário' if protocol_label else label
+    product = FeedProduct(brand=product_name, feed_type='', active=True, notes='Criado automaticamente pelo protocolo de berçário.')
     db.session.add(product)
     db.session.flush()
     return product
+
+
+def resolve_nursery_mix_label(label: str) -> str:
+    product = find_or_create_nursery_feed_product(label, create_missing=False)
+    if product and not is_auto_nursery_protocol_product(product):
+        return product.full_name
+    return 'Ração berçário'
+
+
+def consolidate_feed_mixes(mixes):
+    totals = {}
+    order = []
+    for item in mixes or []:
+        label = item.get('label') or 'Ração berçário'
+        grams = int(round(item.get('grams') or 0))
+        if grams <= 0:
+            continue
+        if label not in totals:
+            totals[label] = 0
+            order.append(label)
+        totals[label] += grams
+    return [{'label': label, 'grams': totals[label]} for label in order]
 
 
 def scale_nursery_mixes(mixes, quantity_kg):
@@ -3209,15 +3247,15 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     projected_population = int(round((lot.initial_count or 0) * (row['survival_pct'] / 100.0)))
     biomass_kg = round((projected_population * row['individual_weight_g']) / 1000.0, 2)
     base_mixes = [
-        {'label': item.get('label', 'Ração berçário'), 'grams': scaled(item.get('grams', 0))}
+        {'label': resolve_nursery_mix_label(item.get('label', 'Ração berçário')), 'grams': scaled(item.get('grams', 0))}
         for item in row.get('mixes', [])
     ]
-    base_mixes = [item for item in base_mixes if item['grams'] > 0]
+    base_mixes = consolidate_feed_mixes(base_mixes)
     mixes = [
         {'label': item['label'], 'grams': int(round(item['grams'] * correction_factor))}
         for item in base_mixes
     ]
-    mixes = [item for item in mixes if item['grams'] > 0]
+    mixes = consolidate_feed_mixes(mixes)
     total_day_g = sum(item['grams'] for item in mixes) if mixes else int(round(base_total_day_g * correction_factor))
 
     feedings_per_day = row['feedings_per_day']
