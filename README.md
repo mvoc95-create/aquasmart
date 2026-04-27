@@ -1,6 +1,6 @@
 # Sistema Fazenda Aqua Smart
 
-Sistema web para operação bifásica de camarão, pensado para uso em tablet, celular ou computador. Esta versão já vem com **login, perfis de acesso e permissões por usuário**.
+Sistema web para operação trifásica de camarão, pensado para uso em tablet, celular ou computador. Esta versão já vem com **login, perfis de acesso e permissões por usuário**.
 
 ## O que este sistema já faz
 - Painel operacional do dia

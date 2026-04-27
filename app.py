@@ -171,7 +171,7 @@ class Unit(db.Model):
     code = db.Column(db.String(50), unique=True, nullable=False)
     name = db.Column(db.String(120), nullable=False)
     area_m2 = db.Column(db.Float, nullable=False)
-    phase = db.Column(db.String(30), nullable=False)  # bercario / engorda
+    phase = db.Column(db.String(30), nullable=False)  # bercario / juvenil / engorda
     structure_type = db.Column(db.String(30), nullable=False)  # estufa / escavado
     active = db.Column(db.Boolean, default=True, nullable=False)
 
@@ -484,7 +484,7 @@ def brdate_filter(value):
 
 @app.template_filter('phase_label')
 def phase_label(value):
-    return {'bercario': 'Berçário', 'engorda': 'Engorda'}.get(value, value)
+    return {'bercario': 'Berçário', 'juvenil': 'Juvenil', 'engorda': 'Engorda'}.get(value, value)
 
 
 @app.template_filter('shift_label')
@@ -920,42 +920,1903 @@ def parse_int(value, default=None):
     return int(float(value))
 
 
-NURSERY_PROTOCOL_BASE_POPULATION = 265000
-NURSERY_PROTOCOL_ROWS = [
-    {'pl_stage': 11, 'survival_pct': 100.0, 'individual_weight_g': 0.003, 'feed_rate_pct': 35.0, 'total_day_g': 279, 'nutrisphera_225_g': 279, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 23},
-    {'pl_stage': 12, 'survival_pct': 99.0, 'individual_weight_g': 0.004, 'feed_rate_pct': 34.0, 'total_day_g': 357, 'nutrisphera_225_g': 357, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 30},
-    {'pl_stage': 13, 'survival_pct': 98.0, 'individual_weight_g': 0.010, 'feed_rate_pct': 30.0, 'total_day_g': 456, 'nutrisphera_225_g': 342, 'nutrisphera_450_g': 114, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 38},
-    {'pl_stage': 14, 'survival_pct': 97.5, 'individual_weight_g': 0.010, 'feed_rate_pct': 29.0, 'total_day_g': 663, 'nutrisphera_225_g': 332, 'nutrisphera_450_g': 332, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 55},
-    {'pl_stage': 15, 'survival_pct': 97.0, 'individual_weight_g': 0.010, 'feed_rate_pct': 28.0, 'total_day_g': 923, 'nutrisphera_225_g': 231, 'nutrisphera_450_g': 692, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 77},
-    {'pl_stage': 16, 'survival_pct': 96.75, 'individual_weight_g': 0.020, 'feed_rate_pct': 26.0, 'total_day_g': 1130, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1130, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 94},
-    {'pl_stage': 17, 'survival_pct': 96.5, 'individual_weight_g': 0.020, 'feed_rate_pct': 24.0, 'total_day_g': 1334, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1334, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 111},
-    {'pl_stage': 18, 'survival_pct': 96.25, 'individual_weight_g': 0.030, 'feed_rate_pct': 22.0, 'total_day_g': 1559, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1559, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 130},
-    {'pl_stage': 19, 'survival_pct': 96.0, 'individual_weight_g': 0.030, 'feed_rate_pct': 20.0, 'total_day_g': 1754, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1754, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 146},
-    {'pl_stage': 20, 'survival_pct': 95.75, 'individual_weight_g': 0.040, 'feed_rate_pct': 18.0, 'total_day_g': 1986, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1986, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 165},
-    {'pl_stage': 21, 'survival_pct': 95.5, 'individual_weight_g': 0.050, 'feed_rate_pct': 17.0, 'total_day_g': 2264, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2264, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 189},
-    {'pl_stage': 22, 'survival_pct': 95.25, 'individual_weight_g': 0.060, 'feed_rate_pct': 16.0, 'total_day_g': 2524, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2524, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 210},
-    {'pl_stage': 23, 'survival_pct': 95.0, 'individual_weight_g': 0.070, 'feed_rate_pct': 15.0, 'total_day_g': 2697, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2697, 'triturada_1_g': 0, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 225},
-    {'pl_stage': 24, 'survival_pct': 94.75, 'individual_weight_g': 0.080, 'feed_rate_pct': 14.0, 'total_day_g': 2929, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2197, 'triturada_1_g': 732, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 244},
-    {'pl_stage': 25, 'survival_pct': 94.5, 'individual_weight_g': 0.130, 'feed_rate_pct': 13.0, 'total_day_g': 4232, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 2116, 'triturada_1_g': 2116, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 353},
-    {'pl_stage': 26, 'survival_pct': 94.25, 'individual_weight_g': 0.180, 'feed_rate_pct': 12.0, 'total_day_g': 5395, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 1349, 'triturada_1_g': 4046, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 450},
-    {'pl_stage': 27, 'survival_pct': 94.0, 'individual_weight_g': 0.230, 'feed_rate_pct': 11.0, 'total_day_g': 6302, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 6302, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 525},
-    {'pl_stage': 28, 'survival_pct': 93.75, 'individual_weight_g': 0.280, 'feed_rate_pct': 10.0, 'total_day_g': 6956, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 6956, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 580},
-    {'pl_stage': 29, 'survival_pct': 93.5, 'individual_weight_g': 0.330, 'feed_rate_pct': 9.0, 'total_day_g': 7359, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 7359, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 613},
-    {'pl_stage': 30, 'survival_pct': 93.25, 'individual_weight_g': 0.380, 'feed_rate_pct': 8.5, 'total_day_g': 7982, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 7982, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 665},
-    {'pl_stage': 31, 'survival_pct': 93.0, 'individual_weight_g': 0.430, 'feed_rate_pct': 7.6, 'total_day_g': 8054, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8054, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 671},
-    {'pl_stage': 32, 'survival_pct': 92.75, 'individual_weight_g': 0.480, 'feed_rate_pct': 7.3, 'total_day_g': 8612, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8612, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 718},
-    {'pl_stage': 33, 'survival_pct': 92.5, 'individual_weight_g': 0.520, 'feed_rate_pct': 6.8, 'total_day_g': 8668, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8668, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 722},
-    {'pl_stage': 34, 'survival_pct': 92.25, 'individual_weight_g': 0.570, 'feed_rate_pct': 6.4, 'total_day_g': 8918, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 8918, 'triturada_2_g': 0, 'feedings_per_day': 12, 'per_feeding_g': 743},
-    {'pl_stage': 35, 'survival_pct': 92.0, 'individual_weight_g': 0.620, 'feed_rate_pct': 6.4, 'total_day_g': 9674, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 7255, 'triturada_2_g': 2418, 'feedings_per_day': 12, 'per_feeding_g': 806},
-    {'pl_stage': 36, 'survival_pct': 91.75, 'individual_weight_g': 0.670, 'feed_rate_pct': 6.3, 'total_day_g': 10263, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 5131, 'triturada_2_g': 5131, 'feedings_per_day': 12, 'per_feeding_g': 855},
-    {'pl_stage': 37, 'survival_pct': 91.5, 'individual_weight_g': 0.720, 'feed_rate_pct': 6.2, 'total_day_g': 10824, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 2706, 'triturada_2_g': 8118, 'feedings_per_day': 12, 'per_feeding_g': 902},
-    {'pl_stage': 38, 'survival_pct': 91.25, 'individual_weight_g': 0.770, 'feed_rate_pct': 6.1, 'total_day_g': 11358, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 11358, 'feedings_per_day': 12, 'per_feeding_g': 946},
-    {'pl_stage': 39, 'survival_pct': 91.0, 'individual_weight_g': 0.820, 'feed_rate_pct': 6.0, 'total_day_g': 11865, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 11865, 'feedings_per_day': 12, 'per_feeding_g': 989},
-    {'pl_stage': 40, 'survival_pct': 90.75, 'individual_weight_g': 0.870, 'feed_rate_pct': 5.9, 'total_day_g': 12344, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 12344, 'feedings_per_day': 12, 'per_feeding_g': 1029},
-    {'pl_stage': 41, 'survival_pct': 90.5, 'individual_weight_g': 0.910, 'feed_rate_pct': 5.8, 'total_day_g': 12658, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 12658, 'feedings_per_day': 12, 'per_feeding_g': 1055},
-    {'pl_stage': 42, 'survival_pct': 90.25, 'individual_weight_g': 0.960, 'feed_rate_pct': 5.7, 'total_day_g': 13087, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 13087, 'feedings_per_day': 12, 'per_feeding_g': 1091},
-    {'pl_stage': 43, 'survival_pct': 90.0, 'individual_weight_g': 1.010, 'feed_rate_pct': 5.6, 'total_day_g': 13490, 'nutrisphera_225_g': 0, 'nutrisphera_450_g': 0, 'triturada_1_g': 0, 'triturada_2_g': 13490, 'feedings_per_day': 12, 'per_feeding_g': 1124},
-]
+NURSERY_PROTOCOL_BASE_POPULATION = 160000
+NURSERY_PROTOCOL_ROWS = [{'pl_stage': 10,
+  'day': 1,
+  'population': 160000,
+  'survival_pct': 100.0,
+  'individual_weight_g': 0.002,
+  'daily_growth_g': None,
+  'feed_rate_pct': 35.0,
+  'total_day_g': 110,
+  'feedings_per_day': 12,
+  'per_feeding_g': 9,
+  'biomass_kg': 0.32,
+  'estimated_fcr': 0.35,
+  'mixes': [{'label': 'MeM 200-300', 'grams': 112}]},
+ {'pl_stage': 11,
+  'day': 2,
+  'population': 159467,
+  'survival_pct': 100.0,
+  'individual_weight_g': 0.003,
+  'daily_growth_g': 0.001,
+  'feed_rate_pct': 34.0,
+  'total_day_g': 160,
+  'feedings_per_day': 12,
+  'per_feeding_g': 13,
+  'biomass_kg': 0.48,
+  'estimated_fcr': 0.57,
+  'mixes': [{'label': 'MeM 200-300', 'grams': 163}]},
+ {'pl_stage': 12,
+  'day': 3,
+  'population': 158933,
+  'survival_pct': 99.0,
+  'individual_weight_g': 0.004,
+  'daily_growth_g': 0.001,
+  'feed_rate_pct': 30.0,
+  'total_day_g': 190,
+  'feedings_per_day': 12,
+  'per_feeding_g': 16,
+  'biomass_kg': 0.64,
+  'estimated_fcr': 0.73,
+  'mixes': [{'label': 'MeM 200-300', 'grams': 143}, {'label': 'MeM 300-500', 'grams': 48}]},
+ {'pl_stage': 13,
+  'day': 4,
+  'population': 158400,
+  'survival_pct': 99.0,
+  'individual_weight_g': 0.006,
+  'daily_growth_g': 0.0019,
+  'feed_rate_pct': 29.0,
+  'total_day_g': 270,
+  'feedings_per_day': 12,
+  'per_feeding_g': 22,
+  'biomass_kg': 0.93,
+  'estimated_fcr': 0.79,
+  'mixes': [{'label': 'MeM 200-300', 'grams': 135}, {'label': 'MeM 300-500', 'grams': 135}]},
+ {'pl_stage': 14,
+  'day': 5,
+  'population': 157867,
+  'survival_pct': 99.0,
+  'individual_weight_g': 0.009,
+  'daily_growth_g': 0.003,
+  'feed_rate_pct': 28.0,
+  'total_day_g': 390,
+  'feedings_per_day': 12,
+  'per_feeding_g': 32,
+  'biomass_kg': 1.4,
+  'estimated_fcr': 0.81,
+  'mixes': [{'label': 'MeM 200-300', 'grams': 98}, {'label': 'MeM 300-500', 'grams': 294}]},
+ {'pl_stage': 15,
+  'day': 6,
+  'population': 157333,
+  'survival_pct': 98.0,
+  'individual_weight_g': 0.013,
+  'daily_growth_g': 0.004,
+  'feed_rate_pct': 26.0,
+  'total_day_g': 530,
+  'feedings_per_day': 12,
+  'per_feeding_g': 44,
+  'biomass_kg': 2.02,
+  'estimated_fcr': 0.82,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 526}]},
+ {'pl_stage': 16,
+  'day': 7,
+  'population': 156800,
+  'survival_pct': 98.0,
+  'individual_weight_g': 0.017,
+  'daily_growth_g': 0.004,
+  'feed_rate_pct': 24.0,
+  'total_day_g': 630,
+  'feedings_per_day': 12,
+  'per_feeding_g': 52,
+  'biomass_kg': 2.64,
+  'estimated_fcr': 0.86,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 634}]},
+ {'pl_stage': 17,
+  'day': 8,
+  'population': 156267,
+  'survival_pct': 98.0,
+  'individual_weight_g': 0.022,
+  'daily_growth_g': 0.005,
+  'feed_rate_pct': 22.0,
+  'total_day_g': 750,
+  'feedings_per_day': 12,
+  'per_feeding_g': 62,
+  'biomass_kg': 3.42,
+  'estimated_fcr': 0.89,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 751}]},
+ {'pl_stage': 18,
+  'day': 9,
+  'population': 155733,
+  'survival_pct': 97.0,
+  'individual_weight_g': 0.028,
+  'daily_growth_g': 0.006,
+  'feed_rate_pct': 20.0,
+  'total_day_g': 870,
+  'feedings_per_day': 12,
+  'per_feeding_g': 72,
+  'biomass_kg': 4.34,
+  'estimated_fcr': 0.9,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 868}]},
+ {'pl_stage': 19,
+  'day': 10,
+  'population': 155200,
+  'survival_pct': 97.0,
+  'individual_weight_g': 0.035,
+  'daily_growth_g': 0.007,
+  'feed_rate_pct': 18.0,
+  'total_day_g': 970,
+  'feedings_per_day': 12,
+  'per_feeding_g': 81,
+  'biomass_kg': 5.41,
+  'estimated_fcr': 0.9,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 974}]},
+ {'pl_stage': 20,
+  'day': 11,
+  'population': 154667,
+  'survival_pct': 97.0,
+  'individual_weight_g': 0.043,
+  'daily_growth_g': 0.008,
+  'feed_rate_pct': 17.0,
+  'total_day_g': 1130,
+  'feedings_per_day': 12,
+  'per_feeding_g': 94,
+  'biomass_kg': 6.63,
+  'estimated_fcr': 0.91,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 1127}]},
+ {'pl_stage': 21,
+  'day': 12,
+  'population': 154133,
+  'survival_pct': 96.0,
+  'individual_weight_g': 0.052,
+  'daily_growth_g': 0.009,
+  'feed_rate_pct': 16.0,
+  'total_day_g': 1280,
+  'feedings_per_day': 12,
+  'per_feeding_g': 107,
+  'biomass_kg': 7.99,
+  'estimated_fcr': 0.91,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 1279}]},
+ {'pl_stage': 22,
+  'day': 13,
+  'population': 153600,
+  'survival_pct': 96.0,
+  'individual_weight_g': 0.062,
+  'daily_growth_g': 0.01,
+  'feed_rate_pct': 15.0,
+  'total_day_g': 1430,
+  'feedings_per_day': 12,
+  'per_feeding_g': 119,
+  'biomass_kg': 9.5,
+  'estimated_fcr': 0.92,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 1425}]},
+ {'pl_stage': 23,
+  'day': 14,
+  'population': 153067,
+  'survival_pct': 96.0,
+  'individual_weight_g': 0.073,
+  'daily_growth_g': 0.011,
+  'feed_rate_pct': 14.0,
+  'total_day_g': 1560,
+  'feedings_per_day': 12,
+  'per_feeding_g': 130,
+  'biomass_kg': 11.15,
+  'estimated_fcr': 0.92,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 1561}]},
+ {'pl_stage': 24,
+  'day': 15,
+  'population': 152000,
+  'survival_pct': 95.0,
+  'individual_weight_g': 0.085,
+  'daily_growth_g': 0.0125,
+  'feed_rate_pct': 13.0,
+  'total_day_g': 1690,
+  'feedings_per_day': 12,
+  'per_feeding_g': 141,
+  'biomass_kg': 12.97,
+  'estimated_fcr': 0.89,
+  'mixes': [{'label': 'MeM 300-500', 'grams': 1265}]}]
+TABLE_PROTOCOL_BASE_POPULATION = 160000
+PRODUCTION_PROTOCOL_ROWS = [{'phase': 'juvenil',
+  'phase_day': 1,
+  'cumulative_day': 16,
+  'stage': 'JUVENILE',
+  'population': 152000,
+  'weight_g': 0.09,
+  'daily_growth_g': None,
+  'growth_rate_pct_day': None,
+  'biomass_kg': 12.97,
+  'feed_rate_pct': 13.0,
+  'daily_feed_kg': 1.69,
+  'feedings_per_day': 12,
+  'survival_pct': 100.0,
+  'cumulative_feed_kg': 1.69,
+  'estimated_fcr': 0.13,
+  'crop_fcr': 1.05,
+  'mixes': [{'label': 'Crumbled I', 'kg': 1.69}]},
+ {'phase': 'juvenil',
+  'phase_day': 2,
+  'cumulative_day': 17,
+  'stage': 'JUVENILE',
+  'population': 151240,
+  'weight_g': 0.13,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 36.4,
+  'biomass_kg': 20.29,
+  'feed_rate_pct': 12.0,
+  'daily_feed_kg': 2.43,
+  'feedings_per_day': 12,
+  'survival_pct': 100.0,
+  'cumulative_feed_kg': 4.12,
+  'estimated_fcr': 0.2,
+  'crop_fcr': 0.79,
+  'mixes': [{'label': 'Crumbled I', 'kg': 2.43}]},
+ {'phase': 'juvenil',
+  'phase_day': 3,
+  'cumulative_day': 18,
+  'stage': 'JUVENILE',
+  'population': 150480,
+  'weight_g': 0.18,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 26.7,
+  'biomass_kg': 27.53,
+  'feed_rate_pct': 11.0,
+  'daily_feed_kg': 3.03,
+  'feedings_per_day': 12,
+  'survival_pct': 99.0,
+  'cumulative_feed_kg': 7.15,
+  'estimated_fcr': 0.26,
+  'crop_fcr': 0.69,
+  'mixes': [{'label': 'Crumbled I', 'kg': 3.03}]},
+ {'phase': 'juvenil',
+  'phase_day': 4,
+  'cumulative_day': 19,
+  'stage': 'JUVENILE',
+  'population': 149720,
+  'weight_g': 0.23,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 21.1,
+  'biomass_kg': 34.69,
+  'feed_rate_pct': 10.0,
+  'daily_feed_kg': 3.47,
+  'feedings_per_day': 12,
+  'survival_pct': 99.0,
+  'cumulative_feed_kg': 10.62,
+  'estimated_fcr': 0.31,
+  'crop_fcr': 0.65,
+  'mixes': [{'label': 'Crumbled I', 'kg': 3.47}]},
+ {'phase': 'juvenil',
+  'phase_day': 5,
+  'cumulative_day': 20,
+  'stage': 'JUVENILE',
+  'population': 148960,
+  'weight_g': 0.28,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 17.4,
+  'biomass_kg': 41.78,
+  'feed_rate_pct': 9.0,
+  'daily_feed_kg': 3.76,
+  'feedings_per_day': 12,
+  'survival_pct': 98.0,
+  'cumulative_feed_kg': 14.38,
+  'estimated_fcr': 0.34,
+  'crop_fcr': 0.63,
+  'mixes': [{'label': 'Crumbled I', 'kg': 3.76}]},
+ {'phase': 'juvenil',
+  'phase_day': 6,
+  'cumulative_day': 21,
+  'stage': 'JUVENILE',
+  'population': 148200,
+  'weight_g': 0.33,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 14.8,
+  'biomass_kg': 48.8,
+  'feed_rate_pct': 8.5,
+  'daily_feed_kg': 4.15,
+  'feedings_per_day': 12,
+  'survival_pct': 98.0,
+  'cumulative_feed_kg': 18.53,
+  'estimated_fcr': 0.38,
+  'crop_fcr': 0.62,
+  'mixes': [{'label': 'Crumbled I', 'kg': 4.15}]},
+ {'phase': 'juvenil',
+  'phase_day': 7,
+  'cumulative_day': 22,
+  'stage': 'JUVENILE',
+  'population': 147440,
+  'weight_g': 0.38,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 12.9,
+  'biomass_kg': 55.74,
+  'feed_rate_pct': 7.6,
+  'daily_feed_kg': 4.24,
+  'feedings_per_day': 12,
+  'survival_pct': 97.0,
+  'cumulative_feed_kg': 22.76,
+  'estimated_fcr': 0.41,
+  'crop_fcr': 0.62,
+  'mixes': [{'label': 'Crumbled I', 'kg': 4.24}]},
+ {'phase': 'juvenil',
+  'phase_day': 8,
+  'cumulative_day': 23,
+  'stage': 'JUVENILE',
+  'population': 146680,
+  'weight_g': 0.43,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 11.4,
+  'biomass_kg': 62.61,
+  'feed_rate_pct': 7.3,
+  'daily_feed_kg': 4.57,
+  'feedings_per_day': 12,
+  'survival_pct': 97.0,
+  'cumulative_feed_kg': 27.33,
+  'estimated_fcr': 0.44,
+  'crop_fcr': 0.63,
+  'mixes': [{'label': 'Crumbled I', 'kg': 4.57}]},
+ {'phase': 'juvenil',
+  'phase_day': 9,
+  'cumulative_day': 24,
+  'stage': 'JUVENILE',
+  'population': 145920,
+  'weight_g': 0.48,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 10.3,
+  'biomass_kg': 69.4,
+  'feed_rate_pct': 6.8,
+  'daily_feed_kg': 4.72,
+  'feedings_per_day': 12,
+  'survival_pct': 96.0,
+  'cumulative_feed_kg': 32.05,
+  'estimated_fcr': 0.46,
+  'crop_fcr': 0.63,
+  'mixes': [{'label': 'Crumbled I', 'kg': 3.54}, {'label': 'Crumbled II', 'kg': 1.18}]},
+ {'phase': 'juvenil',
+  'phase_day': 10,
+  'cumulative_day': 25,
+  'stage': 'JUVENILE',
+  'population': 145160,
+  'weight_g': 0.52,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 9.3,
+  'biomass_kg': 76.12,
+  'feed_rate_pct': 6.4,
+  'daily_feed_kg': 4.87,
+  'feedings_per_day': 12,
+  'survival_pct': 96.0,
+  'cumulative_feed_kg': 36.92,
+  'estimated_fcr': 0.49,
+  'crop_fcr': 0.64,
+  'mixes': [{'label': 'Crumbled I', 'kg': 2.44}, {'label': 'Crumbled II', 'kg': 2.44}]},
+ {'phase': 'juvenil',
+  'phase_day': 11,
+  'cumulative_day': 26,
+  'stage': 'JUVENILE',
+  'population': 144400,
+  'weight_g': 0.57,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 8.5,
+  'biomass_kg': 82.77,
+  'feed_rate_pct': 6.4,
+  'daily_feed_kg': 5.3,
+  'feedings_per_day': 12,
+  'survival_pct': 95.0,
+  'cumulative_feed_kg': 42.22,
+  'estimated_fcr': 0.51,
+  'crop_fcr': 0.65,
+  'mixes': [{'label': 'Crumbled I', 'kg': 1.32}, {'label': 'Crumbled II', 'kg': 3.97}]},
+ {'phase': 'juvenil',
+  'phase_day': 12,
+  'cumulative_day': 27,
+  'stage': 'JUVENILE',
+  'population': 143640,
+  'weight_g': 0.62,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 7.8,
+  'biomass_kg': 89.34,
+  'feed_rate_pct': 6.3,
+  'daily_feed_kg': 5.63,
+  'feedings_per_day': 12,
+  'survival_pct': 95.0,
+  'cumulative_feed_kg': 47.85,
+  'estimated_fcr': 0.54,
+  'crop_fcr': 0.67,
+  'mixes': [{'label': 'Crumbled II', 'kg': 5.63}]},
+ {'phase': 'juvenil',
+  'phase_day': 13,
+  'cumulative_day': 28,
+  'stage': 'JUVENILE',
+  'population': 142880,
+  'weight_g': 0.67,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 7.3,
+  'biomass_kg': 95.83,
+  'feed_rate_pct': 6.2,
+  'daily_feed_kg': 5.94,
+  'feedings_per_day': 12,
+  'survival_pct': 94.0,
+  'cumulative_feed_kg': 53.79,
+  'estimated_fcr': 0.56,
+  'crop_fcr': 0.69,
+  'mixes': [{'label': 'Crumbled II', 'kg': 5.94}]},
+ {'phase': 'juvenil',
+  'phase_day': 14,
+  'cumulative_day': 29,
+  'stage': 'JUVENILE',
+  'population': 142120,
+  'weight_g': 0.72,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 6.8,
+  'biomass_kg': 102.26,
+  'feed_rate_pct': 6.1,
+  'daily_feed_kg': 6.24,
+  'feedings_per_day': 12,
+  'survival_pct': 94.0,
+  'cumulative_feed_kg': 60.03,
+  'estimated_fcr': 0.59,
+  'crop_fcr': 0.7,
+  'mixes': [{'label': 'Crumbled II', 'kg': 6.24}]},
+ {'phase': 'juvenil',
+  'phase_day': 15,
+  'cumulative_day': 30,
+  'stage': 'JUVENILE',
+  'population': 141360,
+  'weight_g': 0.77,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 6.3,
+  'biomass_kg': 108.61,
+  'feed_rate_pct': 6.0,
+  'daily_feed_kg': 6.52,
+  'feedings_per_day': 12,
+  'survival_pct': 93.0,
+  'cumulative_feed_kg': 66.54,
+  'estimated_fcr': 0.61,
+  'crop_fcr': 0.72,
+  'mixes': [{'label': 'Crumbled II', 'kg': 6.52}]},
+ {'phase': 'juvenil',
+  'phase_day': 16,
+  'cumulative_day': 31,
+  'stage': 'JUVENILE',
+  'population': 140600,
+  'weight_g': 0.82,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 6.0,
+  'biomass_kg': 114.88,
+  'feed_rate_pct': 5.9,
+  'daily_feed_kg': 6.78,
+  'feedings_per_day': 12,
+  'survival_pct': 93.0,
+  'cumulative_feed_kg': 73.32,
+  'estimated_fcr': 0.64,
+  'crop_fcr': 0.74,
+  'mixes': [{'label': 'Crumbled II', 'kg': 6.78}]},
+ {'phase': 'juvenil',
+  'phase_day': 17,
+  'cumulative_day': 32,
+  'stage': 'JUVENILE',
+  'population': 139840,
+  'weight_g': 0.87,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 5.6,
+  'biomass_kg': 121.08,
+  'feed_rate_pct': 5.8,
+  'daily_feed_kg': 7.02,
+  'feedings_per_day': 12,
+  'survival_pct': 92.0,
+  'cumulative_feed_kg': 80.34,
+  'estimated_fcr': 0.66,
+  'crop_fcr': 0.76,
+  'mixes': [{'label': 'Crumbled II', 'kg': 7.02}]},
+ {'phase': 'juvenil',
+  'phase_day': 18,
+  'cumulative_day': 33,
+  'stage': 'JUVENILE',
+  'population': 139080,
+  'weight_g': 0.91,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 5.3,
+  'biomass_kg': 127.21,
+  'feed_rate_pct': 5.7,
+  'daily_feed_kg': 7.25,
+  'feedings_per_day': 12,
+  'survival_pct': 92.0,
+  'cumulative_feed_kg': 87.6,
+  'estimated_fcr': 0.69,
+  'crop_fcr': 0.78,
+  'mixes': [{'label': 'Crumbled II', 'kg': 7.25}]},
+ {'phase': 'juvenil',
+  'phase_day': 19,
+  'cumulative_day': 34,
+  'stage': 'JUVENILE',
+  'population': 138320,
+  'weight_g': 0.96,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 5.1,
+  'biomass_kg': 133.26,
+  'feed_rate_pct': 5.6,
+  'daily_feed_kg': 7.46,
+  'feedings_per_day': 12,
+  'survival_pct': 91.0,
+  'cumulative_feed_kg': 95.06,
+  'estimated_fcr': 0.71,
+  'crop_fcr': 0.8,
+  'mixes': [{'label': 'Crumbled II', 'kg': 7.46}]},
+ {'phase': 'juvenil',
+  'phase_day': 20,
+  'cumulative_day': 35,
+  'stage': 'JUVENILE',
+  'population': 137560,
+  'weight_g': 1.01,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 4.8,
+  'biomass_kg': 139.24,
+  'feed_rate_pct': 5.5,
+  'daily_feed_kg': 7.66,
+  'feedings_per_day': 12,
+  'survival_pct': 91.0,
+  'cumulative_feed_kg': 102.72,
+  'estimated_fcr': 0.74,
+  'crop_fcr': 0.82,
+  'mixes': [{'label': 'Crumbled II', 'kg': 7.66}]},
+ {'phase': 'juvenil',
+  'phase_day': 21,
+  'cumulative_day': 36,
+  'stage': 'JUVENILE',
+  'population': 136800,
+  'weight_g': 1.06,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 4.6,
+  'biomass_kg': 145.14,
+  'feed_rate_pct': 5.5,
+  'daily_feed_kg': 7.98,
+  'feedings_per_day': 12,
+  'survival_pct': 90.0,
+  'cumulative_feed_kg': 110.7,
+  'estimated_fcr': 0.76,
+  'crop_fcr': 0.85,
+  'mixes': [{'label': 'Crumbled II', 'kg': 7.98}]},
+ {'phase': 'juvenil',
+  'phase_day': 22,
+  'cumulative_day': 37,
+  'stage': 'JUVENILE',
+  'population': 136040,
+  'weight_g': 1.11,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 4.4,
+  'biomass_kg': 150.97,
+  'feed_rate_pct': 5.5,
+  'daily_feed_kg': 8.3,
+  'feedings_per_day': 12,
+  'survival_pct': 90.0,
+  'cumulative_feed_kg': 119.0,
+  'estimated_fcr': 0.79,
+  'crop_fcr': 0.87,
+  'mixes': [{'label': 'Crumbled II', 'kg': 8.3}]},
+ {'phase': 'juvenil',
+  'phase_day': 23,
+  'cumulative_day': 38,
+  'stage': 'JUVENILE',
+  'population': 135280,
+  'weight_g': 1.16,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 4.2,
+  'biomass_kg': 156.73,
+  'feed_rate_pct': 5.5,
+  'daily_feed_kg': 8.62,
+  'feedings_per_day': 12,
+  'survival_pct': 89.0,
+  'cumulative_feed_kg': 127.62,
+  'estimated_fcr': 0.81,
+  'crop_fcr': 0.89,
+  'mixes': [{'label': 'Crumbled II', 'kg': 8.62}]},
+ {'phase': 'juvenil',
+  'phase_day': 24,
+  'cumulative_day': 39,
+  'stage': 'JUVENILE',
+  'population': 134520,
+  'weight_g': 1.21,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 4.0,
+  'biomass_kg': 162.41,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 8.12,
+  'feedings_per_day': 12,
+  'survival_pct': 89.0,
+  'cumulative_feed_kg': 135.74,
+  'estimated_fcr': 0.84,
+  'crop_fcr': 0.91,
+  'mixes': [{'label': 'Crumbled II', 'kg': 8.12}]},
+ {'phase': 'juvenil',
+  'phase_day': 25,
+  'cumulative_day': 40,
+  'stage': 'JUVENILE',
+  'population': 133760,
+  'weight_g': 1.26,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 3.9,
+  'biomass_kg': 168.02,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 8.4,
+  'feedings_per_day': 12,
+  'survival_pct': 88.0,
+  'cumulative_feed_kg': 144.14,
+  'estimated_fcr': 0.86,
+  'crop_fcr': 0.93,
+  'mixes': [{'label': 'Crumbled II', 'kg': 8.4}]},
+ {'phase': 'juvenil',
+  'phase_day': 26,
+  'cumulative_day': 41,
+  'stage': 'JUVENILE',
+  'population': 133000,
+  'weight_g': 1.3,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 3.7,
+  'biomass_kg': 173.55,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 8.68,
+  'feedings_per_day': 12,
+  'survival_pct': 88.0,
+  'cumulative_feed_kg': 152.82,
+  'estimated_fcr': 0.88,
+  'crop_fcr': 0.95,
+  'mixes': [{'label': 'Crumbled II', 'kg': 8.68}]},
+ {'phase': 'juvenil',
+  'phase_day': 27,
+  'cumulative_day': 42,
+  'stage': 'JUVENILE',
+  'population': 132240,
+  'weight_g': 1.35,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 3.6,
+  'biomass_kg': 179.01,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 8.95,
+  'feedings_per_day': 12,
+  'survival_pct': 87.0,
+  'cumulative_feed_kg': 161.77,
+  'estimated_fcr': 0.9,
+  'crop_fcr': 0.97,
+  'mixes': [{'label': 'Crumbled II', 'kg': 8.95}]},
+ {'phase': 'juvenil',
+  'phase_day': 28,
+  'cumulative_day': 43,
+  'stage': 'JUVENILE',
+  'population': 131480,
+  'weight_g': 1.4,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 3.5,
+  'biomass_kg': 184.39,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 9.22,
+  'feedings_per_day': 12,
+  'survival_pct': 87.0,
+  'cumulative_feed_kg': 170.99,
+  'estimated_fcr': 0.93,
+  'crop_fcr': 0.99,
+  'mixes': [{'label': 'Crumbled II', 'kg': 9.22}]},
+ {'phase': 'juvenil',
+  'phase_day': 29,
+  'cumulative_day': 44,
+  'stage': 'JUVENILE',
+  'population': 130720,
+  'weight_g': 1.45,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 3.4,
+  'biomass_kg': 189.7,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 9.49,
+  'feedings_per_day': 12,
+  'survival_pct': 86.0,
+  'cumulative_feed_kg': 180.48,
+  'estimated_fcr': 0.95,
+  'crop_fcr': 1.01,
+  'mixes': [{'label': 'Crumbled II', 'kg': 9.49}]},
+ {'phase': 'juvenil',
+  'phase_day': 30,
+  'cumulative_day': 45,
+  'stage': 'JUVENILE',
+  'population': 129200,
+  'weight_g': 1.5,
+  'daily_growth_g': 0.0488,
+  'growth_rate_pct_day': 3.3,
+  'biomass_kg': 193.8,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 9.69,
+  'feedings_per_day': 12,
+  'survival_pct': 85.0,
+  'cumulative_feed_kg': 190.17,
+  'estimated_fcr': 0.98,
+  'crop_fcr': 1.04,
+  'mixes': [{'label': 'Crumbled II', 'kg': 9.69}]},
+ {'phase': 'engorda',
+  'phase_day': 1,
+  'cumulative_day': 46,
+  'stage': 'GROW OUT',
+  'population': 129200,
+  'weight_g': 1.5,
+  'daily_growth_g': None,
+  'growth_rate_pct_day': None,
+  'biomass_kg': 193.8,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 9.69,
+  'feedings_per_day': 4,
+  'survival_pct': 100.0,
+  'cumulative_feed_kg': 9.69,
+  'estimated_fcr': 0.05,
+  'crop_fcr': 1.09,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 9.69}]},
+ {'phase': 'engorda',
+  'phase_day': 2,
+  'cumulative_day': 47,
+  'stage': 'GROW OUT',
+  'population': 128831,
+  'weight_g': 1.71,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 12.1,
+  'biomass_kg': 219.93,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 11.0,
+  'feedings_per_day': 4,
+  'survival_pct': 100.0,
+  'cumulative_feed_kg': 20.69,
+  'estimated_fcr': 0.09,
+  'crop_fcr': 0.15,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 11.0}]},
+ {'phase': 'engorda',
+  'phase_day': 3,
+  'cumulative_day': 48,
+  'stage': 'GROW OUT',
+  'population': 128462,
+  'weight_g': 1.91,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 10.8,
+  'biomass_kg': 245.91,
+  'feed_rate_pct': 5.0,
+  'daily_feed_kg': 12.3,
+  'feedings_per_day': 4,
+  'survival_pct': 99.0,
+  'cumulative_feed_kg': 32.98,
+  'estimated_fcr': 0.13,
+  'crop_fcr': 0.18,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 12.3}]},
+ {'phase': 'engorda',
+  'phase_day': 4,
+  'cumulative_day': 49,
+  'stage': 'GROW OUT',
+  'population': 128093,
+  'weight_g': 2.12,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 9.8,
+  'biomass_kg': 271.74,
+  'feed_rate_pct': 4.8,
+  'daily_feed_kg': 13.04,
+  'feedings_per_day': 4,
+  'survival_pct': 99.0,
+  'cumulative_feed_kg': 46.03,
+  'estimated_fcr': 0.17,
+  'crop_fcr': 0.21,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 13.04}]},
+ {'phase': 'engorda',
+  'phase_day': 5,
+  'cumulative_day': 50,
+  'stage': 'GROW OUT',
+  'population': 127723,
+  'weight_g': 2.33,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 8.9,
+  'biomass_kg': 297.41,
+  'feed_rate_pct': 4.8,
+  'daily_feed_kg': 14.28,
+  'feedings_per_day': 4,
+  'survival_pct': 99.0,
+  'cumulative_feed_kg': 60.3,
+  'estimated_fcr': 0.2,
+  'crop_fcr': 0.24,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 14.28}]},
+ {'phase': 'engorda',
+  'phase_day': 6,
+  'cumulative_day': 51,
+  'stage': 'GROW OUT',
+  'population': 127354,
+  'weight_g': 2.54,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 8.2,
+  'biomass_kg': 322.93,
+  'feed_rate_pct': 4.8,
+  'daily_feed_kg': 15.5,
+  'feedings_per_day': 4,
+  'survival_pct': 99.0,
+  'cumulative_feed_kg': 75.8,
+  'estimated_fcr': 0.23,
+  'crop_fcr': 0.27,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 15.5}]},
+ {'phase': 'engorda',
+  'phase_day': 7,
+  'cumulative_day': 52,
+  'stage': 'GROW OUT',
+  'population': 126985,
+  'weight_g': 2.74,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 7.6,
+  'biomass_kg': 348.3,
+  'feed_rate_pct': 4.8,
+  'daily_feed_kg': 16.72,
+  'feedings_per_day': 4,
+  'survival_pct': 98.0,
+  'cumulative_feed_kg': 92.52,
+  'estimated_fcr': 0.27,
+  'crop_fcr': 0.3,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 16.72}]},
+ {'phase': 'engorda',
+  'phase_day': 8,
+  'cumulative_day': 53,
+  'stage': 'GROW OUT',
+  'population': 126616,
+  'weight_g': 2.95,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 7.0,
+  'biomass_kg': 373.52,
+  'feed_rate_pct': 4.8,
+  'daily_feed_kg': 17.93,
+  'feedings_per_day': 4,
+  'survival_pct': 98.0,
+  'cumulative_feed_kg': 110.45,
+  'estimated_fcr': 0.3,
+  'crop_fcr': 0.33,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 17.93}]},
+ {'phase': 'engorda',
+  'phase_day': 9,
+  'cumulative_day': 54,
+  'stage': 'GROW OUT',
+  'population': 126247,
+  'weight_g': 3.16,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 6.6,
+  'biomass_kg': 398.58,
+  'feed_rate_pct': 4.7,
+  'daily_feed_kg': 18.73,
+  'feedings_per_day': 4,
+  'survival_pct': 98.0,
+  'cumulative_feed_kg': 129.18,
+  'estimated_fcr': 0.32,
+  'crop_fcr': 0.35,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 18.73}]},
+ {'phase': 'engorda',
+  'phase_day': 10,
+  'cumulative_day': 55,
+  'stage': 'GROW OUT',
+  'population': 125878,
+  'weight_g': 3.36,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 6.2,
+  'biomass_kg': 423.49,
+  'feed_rate_pct': 4.7,
+  'daily_feed_kg': 19.9,
+  'feedings_per_day': 4,
+  'survival_pct': 97.0,
+  'cumulative_feed_kg': 149.09,
+  'estimated_fcr': 0.35,
+  'crop_fcr': 0.38,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 19.9}]},
+ {'phase': 'engorda',
+  'phase_day': 11,
+  'cumulative_day': 56,
+  'stage': 'GROW OUT',
+  'population': 125509,
+  'weight_g': 3.57,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 5.8,
+  'biomass_kg': 448.24,
+  'feed_rate_pct': 4.7,
+  'daily_feed_kg': 21.07,
+  'feedings_per_day': 4,
+  'survival_pct': 97.0,
+  'cumulative_feed_kg': 170.15,
+  'estimated_fcr': 0.38,
+  'crop_fcr': 0.41,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 21.07}]},
+ {'phase': 'engorda',
+  'phase_day': 12,
+  'cumulative_day': 57,
+  'stage': 'GROW OUT',
+  'population': 125139,
+  'weight_g': 3.78,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 5.5,
+  'biomass_kg': 472.85,
+  'feed_rate_pct': 4.7,
+  'daily_feed_kg': 22.22,
+  'feedings_per_day': 4,
+  'survival_pct': 97.0,
+  'cumulative_feed_kg': 192.38,
+  'estimated_fcr': 0.41,
+  'crop_fcr': 0.43,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 22.22}]},
+ {'phase': 'engorda',
+  'phase_day': 13,
+  'cumulative_day': 58,
+  'stage': 'GROW OUT',
+  'population': 124770,
+  'weight_g': 3.99,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 5.2,
+  'biomass_kg': 497.3,
+  'feed_rate_pct': 4.7,
+  'daily_feed_kg': 23.37,
+  'feedings_per_day': 4,
+  'survival_pct': 97.0,
+  'cumulative_feed_kg': 215.75,
+  'estimated_fcr': 0.43,
+  'crop_fcr': 0.46,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 23.37}]},
+ {'phase': 'engorda',
+  'phase_day': 14,
+  'cumulative_day': 59,
+  'stage': 'GROW OUT',
+  'population': 124401,
+  'weight_g': 4.19,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 4.9,
+  'biomass_kg': 521.6,
+  'feed_rate_pct': 4.5,
+  'daily_feed_kg': 23.47,
+  'feedings_per_day': 4,
+  'survival_pct': 96.0,
+  'cumulative_feed_kg': 239.22,
+  'estimated_fcr': 0.46,
+  'crop_fcr': 0.48,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 23.47}]},
+ {'phase': 'engorda',
+  'phase_day': 15,
+  'cumulative_day': 60,
+  'stage': 'GROW OUT',
+  'population': 124032,
+  'weight_g': 4.4,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 4.7,
+  'biomass_kg': 545.74,
+  'feed_rate_pct': 4.5,
+  'daily_feed_kg': 24.56,
+  'feedings_per_day': 4,
+  'survival_pct': 96.0,
+  'cumulative_feed_kg': 263.78,
+  'estimated_fcr': 0.48,
+  'crop_fcr': 0.51,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 24.56}]},
+ {'phase': 'engorda',
+  'phase_day': 16,
+  'cumulative_day': 61,
+  'stage': 'GROW OUT',
+  'population': 123663,
+  'weight_g': 4.61,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 4.5,
+  'biomass_kg': 569.73,
+  'feed_rate_pct': 4.5,
+  'daily_feed_kg': 25.64,
+  'feedings_per_day': 4,
+  'survival_pct': 96.0,
+  'cumulative_feed_kg': 289.42,
+  'estimated_fcr': 0.51,
+  'crop_fcr': 0.53,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 25.64}]},
+ {'phase': 'engorda',
+  'phase_day': 17,
+  'cumulative_day': 62,
+  'stage': 'GROW OUT',
+  'population': 123294,
+  'weight_g': 4.81,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 4.3,
+  'biomass_kg': 593.57,
+  'feed_rate_pct': 4.5,
+  'daily_feed_kg': 26.71,
+  'feedings_per_day': 4,
+  'survival_pct': 95.0,
+  'cumulative_feed_kg': 316.13,
+  'estimated_fcr': 0.53,
+  'crop_fcr': 0.55,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 26.71}]},
+ {'phase': 'engorda',
+  'phase_day': 18,
+  'cumulative_day': 63,
+  'stage': 'GROW OUT',
+  'population': 122925,
+  'weight_g': 5.02,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 4.1,
+  'biomass_kg': 617.26,
+  'feed_rate_pct': 4.3,
+  'daily_feed_kg': 26.54,
+  'feedings_per_day': 4,
+  'survival_pct': 95.0,
+  'cumulative_feed_kg': 342.67,
+  'estimated_fcr': 0.56,
+  'crop_fcr': 0.57,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 26.54}]},
+ {'phase': 'engorda',
+  'phase_day': 19,
+  'cumulative_day': 64,
+  'stage': 'GROW OUT',
+  'population': 122555,
+  'weight_g': 5.23,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 4.0,
+  'biomass_kg': 640.79,
+  'feed_rate_pct': 4.3,
+  'daily_feed_kg': 27.55,
+  'feedings_per_day': 4,
+  'survival_pct': 95.0,
+  'cumulative_feed_kg': 370.23,
+  'estimated_fcr': 0.58,
+  'crop_fcr': 0.6,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 27.55}]},
+ {'phase': 'engorda',
+  'phase_day': 20,
+  'cumulative_day': 65,
+  'stage': 'GROW OUT',
+  'population': 122186,
+  'weight_g': 5.44,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 3.8,
+  'biomass_kg': 664.17,
+  'feed_rate_pct': 4.3,
+  'daily_feed_kg': 28.56,
+  'feedings_per_day': 4,
+  'survival_pct': 95.0,
+  'cumulative_feed_kg': 398.79,
+  'estimated_fcr': 0.6,
+  'crop_fcr': 0.62,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 28.56}]},
+ {'phase': 'engorda',
+  'phase_day': 21,
+  'cumulative_day': 66,
+  'stage': 'GROW OUT',
+  'population': 121817,
+  'weight_g': 5.64,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 3.7,
+  'biomass_kg': 687.4,
+  'feed_rate_pct': 4.3,
+  'daily_feed_kg': 29.56,
+  'feedings_per_day': 4,
+  'survival_pct': 94.0,
+  'cumulative_feed_kg': 428.34,
+  'estimated_fcr': 0.62,
+  'crop_fcr': 0.64,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 29.56}]},
+ {'phase': 'engorda',
+  'phase_day': 22,
+  'cumulative_day': 67,
+  'stage': 'GROW OUT',
+  'population': 121448,
+  'weight_g': 5.85,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 3.5,
+  'biomass_kg': 710.47,
+  'feed_rate_pct': 4.3,
+  'daily_feed_kg': 30.55,
+  'feedings_per_day': 4,
+  'survival_pct': 94.0,
+  'cumulative_feed_kg': 458.89,
+  'estimated_fcr': 0.65,
+  'crop_fcr': 0.66,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 30.55}]},
+ {'phase': 'engorda',
+  'phase_day': 23,
+  'cumulative_day': 68,
+  'stage': 'GROW OUT',
+  'population': 121079,
+  'weight_g': 6.06,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 3.4,
+  'biomass_kg': 733.39,
+  'feed_rate_pct': 4.1,
+  'daily_feed_kg': 30.07,
+  'feedings_per_day': 4,
+  'survival_pct': 94.0,
+  'cumulative_feed_kg': 488.96,
+  'estimated_fcr': 0.67,
+  'crop_fcr': 0.68,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 30.07}]},
+ {'phase': 'engorda',
+  'phase_day': 24,
+  'cumulative_day': 69,
+  'stage': 'GROW OUT',
+  'population': 120710,
+  'weight_g': 6.26,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 3.3,
+  'biomass_kg': 756.16,
+  'feed_rate_pct': 4.1,
+  'daily_feed_kg': 31.0,
+  'feedings_per_day': 4,
+  'survival_pct': 93.0,
+  'cumulative_feed_kg': 519.97,
+  'estimated_fcr': 0.69,
+  'crop_fcr': 0.7,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 31.0}]},
+ {'phase': 'engorda',
+  'phase_day': 25,
+  'cumulative_day': 70,
+  'stage': 'GROW OUT',
+  'population': 120341,
+  'weight_g': 6.47,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 3.2,
+  'biomass_kg': 778.78,
+  'feed_rate_pct': 4.1,
+  'daily_feed_kg': 31.93,
+  'feedings_per_day': 4,
+  'survival_pct': 93.0,
+  'cumulative_feed_kg': 551.9,
+  'estimated_fcr': 0.71,
+  'crop_fcr': 0.72,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 31.93}]},
+ {'phase': 'engorda',
+  'phase_day': 26,
+  'cumulative_day': 71,
+  'stage': 'GROW OUT',
+  'population': 119971,
+  'weight_g': 6.68,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 3.1,
+  'biomass_kg': 801.24,
+  'feed_rate_pct': 4.1,
+  'daily_feed_kg': 32.85,
+  'feedings_per_day': 4,
+  'survival_pct': 93.0,
+  'cumulative_feed_kg': 584.75,
+  'estimated_fcr': 0.73,
+  'crop_fcr': 0.74,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 24.64}, {'label': 'Engorda 2,4 mm', 'kg': 8.21}]},
+ {'phase': 'engorda',
+  'phase_day': 27,
+  'cumulative_day': 72,
+  'stage': 'GROW OUT',
+  'population': 119602,
+  'weight_g': 6.89,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 3.0,
+  'biomass_kg': 823.55,
+  'feed_rate_pct': 4.1,
+  'daily_feed_kg': 33.77,
+  'feedings_per_day': 4,
+  'survival_pct': 93.0,
+  'cumulative_feed_kg': 618.51,
+  'estimated_fcr': 0.75,
+  'crop_fcr': 0.77,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 16.88}, {'label': 'Engorda 2,4 mm', 'kg': 16.88}]},
+ {'phase': 'engorda',
+  'phase_day': 28,
+  'cumulative_day': 73,
+  'stage': 'GROW OUT',
+  'population': 119233,
+  'weight_g': 7.09,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.9,
+  'biomass_kg': 845.7,
+  'feed_rate_pct': 3.9,
+  'daily_feed_kg': 32.98,
+  'feedings_per_day': 4,
+  'survival_pct': 92.0,
+  'cumulative_feed_kg': 651.49,
+  'estimated_fcr': 0.77,
+  'crop_fcr': 0.78,
+  'mixes': [{'label': 'Engorda J 2,0 mm', 'kg': 8.25}, {'label': 'Engorda 2,4 mm', 'kg': 24.74}]},
+ {'phase': 'engorda',
+  'phase_day': 29,
+  'cumulative_day': 74,
+  'stage': 'GROW OUT',
+  'population': 118864,
+  'weight_g': 7.3,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.8,
+  'biomass_kg': 867.71,
+  'feed_rate_pct': 3.9,
+  'daily_feed_kg': 33.84,
+  'feedings_per_day': 4,
+  'survival_pct': 92.0,
+  'cumulative_feed_kg': 685.33,
+  'estimated_fcr': 0.79,
+  'crop_fcr': 0.8,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 33.84}]},
+ {'phase': 'engorda',
+  'phase_day': 30,
+  'cumulative_day': 75,
+  'stage': 'GROW OUT',
+  'population': 118495,
+  'weight_g': 7.51,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.8,
+  'biomass_kg': 889.56,
+  'feed_rate_pct': 3.9,
+  'daily_feed_kg': 34.69,
+  'feedings_per_day': 4,
+  'survival_pct': 92.0,
+  'cumulative_feed_kg': 720.03,
+  'estimated_fcr': 0.81,
+  'crop_fcr': 0.82,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 34.69}]},
+ {'phase': 'engorda',
+  'phase_day': 31,
+  'cumulative_day': 76,
+  'stage': 'GROW OUT',
+  'population': 118126,
+  'weight_g': 7.71,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.7,
+  'biomass_kg': 911.26,
+  'feed_rate_pct': 3.9,
+  'daily_feed_kg': 35.54,
+  'feedings_per_day': 4,
+  'survival_pct': 91.0,
+  'cumulative_feed_kg': 755.57,
+  'estimated_fcr': 0.83,
+  'crop_fcr': 0.84,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 35.54}]},
+ {'phase': 'engorda',
+  'phase_day': 32,
+  'cumulative_day': 77,
+  'stage': 'GROW OUT',
+  'population': 117757,
+  'weight_g': 7.92,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.6,
+  'biomass_kg': 932.8,
+  'feed_rate_pct': 3.9,
+  'daily_feed_kg': 36.38,
+  'feedings_per_day': 4,
+  'survival_pct': 91.0,
+  'cumulative_feed_kg': 791.95,
+  'estimated_fcr': 0.85,
+  'crop_fcr': 0.86,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 36.38}]},
+ {'phase': 'engorda',
+  'phase_day': 33,
+  'cumulative_day': 78,
+  'stage': 'GROW OUT',
+  'population': 117387,
+  'weight_g': 8.13,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.5,
+  'biomass_kg': 954.19,
+  'feed_rate_pct': 3.7,
+  'daily_feed_kg': 35.31,
+  'feedings_per_day': 4,
+  'survival_pct': 91.0,
+  'cumulative_feed_kg': 827.25,
+  'estimated_fcr': 0.87,
+  'crop_fcr': 0.88,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 35.31}]},
+ {'phase': 'engorda',
+  'phase_day': 34,
+  'cumulative_day': 79,
+  'stage': 'GROW OUT',
+  'population': 117018,
+  'weight_g': 8.34,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.5,
+  'biomass_kg': 975.43,
+  'feed_rate_pct': 3.7,
+  'daily_feed_kg': 36.09,
+  'feedings_per_day': 4,
+  'survival_pct': 91.0,
+  'cumulative_feed_kg': 863.34,
+  'estimated_fcr': 0.89,
+  'crop_fcr': 0.9,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 36.09}]},
+ {'phase': 'engorda',
+  'phase_day': 35,
+  'cumulative_day': 80,
+  'stage': 'GROW OUT',
+  'population': 116649,
+  'weight_g': 8.54,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.4,
+  'biomass_kg': 996.52,
+  'feed_rate_pct': 3.7,
+  'daily_feed_kg': 36.87,
+  'feedings_per_day': 4,
+  'survival_pct': 90.0,
+  'cumulative_feed_kg': 900.21,
+  'estimated_fcr': 0.9,
+  'crop_fcr': 0.92,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 36.87}]},
+ {'phase': 'engorda',
+  'phase_day': 36,
+  'cumulative_day': 81,
+  'stage': 'GROW OUT',
+  'population': 116280,
+  'weight_g': 8.75,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.4,
+  'biomass_kg': 1017.45,
+  'feed_rate_pct': 3.7,
+  'daily_feed_kg': 37.65,
+  'feedings_per_day': 4,
+  'survival_pct': 90.0,
+  'cumulative_feed_kg': 937.86,
+  'estimated_fcr': 0.92,
+  'crop_fcr': 0.93,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 37.65}]},
+ {'phase': 'engorda',
+  'phase_day': 37,
+  'cumulative_day': 82,
+  'stage': 'GROW OUT',
+  'population': 115911,
+  'weight_g': 8.96,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.3,
+  'biomass_kg': 1038.23,
+  'feed_rate_pct': 3.7,
+  'daily_feed_kg': 38.41,
+  'feedings_per_day': 4,
+  'survival_pct': 90.0,
+  'cumulative_feed_kg': 976.27,
+  'estimated_fcr': 0.94,
+  'crop_fcr': 0.95,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 38.41}]},
+ {'phase': 'engorda',
+  'phase_day': 38,
+  'cumulative_day': 83,
+  'stage': 'GROW OUT',
+  'population': 115542,
+  'weight_g': 9.16,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.3,
+  'biomass_kg': 1058.86,
+  'feed_rate_pct': 3.5,
+  'daily_feed_kg': 37.06,
+  'feedings_per_day': 4,
+  'survival_pct': 89.0,
+  'cumulative_feed_kg': 1013.33,
+  'estimated_fcr': 0.96,
+  'crop_fcr': 0.97,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 37.06}]},
+ {'phase': 'engorda',
+  'phase_day': 39,
+  'cumulative_day': 84,
+  'stage': 'GROW OUT',
+  'population': 115173,
+  'weight_g': 9.37,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.2,
+  'biomass_kg': 1079.33,
+  'feed_rate_pct': 3.5,
+  'daily_feed_kg': 37.78,
+  'feedings_per_day': 4,
+  'survival_pct': 89.0,
+  'cumulative_feed_kg': 1051.11,
+  'estimated_fcr': 0.97,
+  'crop_fcr': 0.98,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 37.78}]},
+ {'phase': 'engorda',
+  'phase_day': 40,
+  'cumulative_day': 85,
+  'stage': 'GROW OUT',
+  'population': 114803,
+  'weight_g': 9.58,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.2,
+  'biomass_kg': 1099.65,
+  'feed_rate_pct': 3.5,
+  'daily_feed_kg': 38.49,
+  'feedings_per_day': 4,
+  'survival_pct': 89.0,
+  'cumulative_feed_kg': 1089.6,
+  'estimated_fcr': 0.99,
+  'crop_fcr': 1.0,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 38.49}]},
+ {'phase': 'engorda',
+  'phase_day': 41,
+  'cumulative_day': 86,
+  'stage': 'GROW OUT',
+  'population': 114434,
+  'weight_g': 9.79,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.1,
+  'biomass_kg': 1119.82,
+  'feed_rate_pct': 3.5,
+  'daily_feed_kg': 39.19,
+  'feedings_per_day': 4,
+  'survival_pct': 89.0,
+  'cumulative_feed_kg': 1128.79,
+  'estimated_fcr': 1.01,
+  'crop_fcr': 1.02,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 39.19}]},
+ {'phase': 'engorda',
+  'phase_day': 42,
+  'cumulative_day': 87,
+  'stage': 'GROW OUT',
+  'population': 114065,
+  'weight_g': 9.99,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.1,
+  'biomass_kg': 1139.84,
+  'feed_rate_pct': 3.5,
+  'daily_feed_kg': 39.89,
+  'feedings_per_day': 4,
+  'survival_pct': 88.0,
+  'cumulative_feed_kg': 1168.69,
+  'estimated_fcr': 1.03,
+  'crop_fcr': 1.04,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 39.89}]},
+ {'phase': 'engorda',
+  'phase_day': 43,
+  'cumulative_day': 88,
+  'stage': 'GROW OUT',
+  'population': 113696,
+  'weight_g': 10.2,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.0,
+  'biomass_kg': 1159.7,
+  'feed_rate_pct': 3.4,
+  'daily_feed_kg': 39.43,
+  'feedings_per_day': 4,
+  'survival_pct': 88.0,
+  'cumulative_feed_kg': 1208.11,
+  'estimated_fcr': 1.04,
+  'crop_fcr': 1.05,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 39.43}]},
+ {'phase': 'engorda',
+  'phase_day': 44,
+  'cumulative_day': 89,
+  'stage': 'GROW OUT',
+  'population': 113327,
+  'weight_g': 10.41,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.0,
+  'biomass_kg': 1179.41,
+  'feed_rate_pct': 3.4,
+  'daily_feed_kg': 40.1,
+  'feedings_per_day': 4,
+  'survival_pct': 88.0,
+  'cumulative_feed_kg': 1248.21,
+  'estimated_fcr': 1.06,
+  'crop_fcr': 1.07,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 40.1}]},
+ {'phase': 'engorda',
+  'phase_day': 45,
+  'cumulative_day': 90,
+  'stage': 'GROW OUT',
+  'population': 112958,
+  'weight_g': 10.61,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 2.0,
+  'biomass_kg': 1198.97,
+  'feed_rate_pct': 3.4,
+  'daily_feed_kg': 40.76,
+  'feedings_per_day': 4,
+  'survival_pct': 87.0,
+  'cumulative_feed_kg': 1288.98,
+  'estimated_fcr': 1.08,
+  'crop_fcr': 1.09,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 40.76}]},
+ {'phase': 'engorda',
+  'phase_day': 46,
+  'cumulative_day': 91,
+  'stage': 'GROW OUT',
+  'population': 112589,
+  'weight_g': 10.82,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.9,
+  'biomass_kg': 1218.37,
+  'feed_rate_pct': 3.4,
+  'daily_feed_kg': 41.42,
+  'feedings_per_day': 4,
+  'survival_pct': 87.0,
+  'cumulative_feed_kg': 1330.4,
+  'estimated_fcr': 1.09,
+  'crop_fcr': 1.1,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 41.42}]},
+ {'phase': 'engorda',
+  'phase_day': 47,
+  'cumulative_day': 92,
+  'stage': 'GROW OUT',
+  'population': 112219,
+  'weight_g': 11.03,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.9,
+  'biomass_kg': 1237.62,
+  'feed_rate_pct': 3.2,
+  'daily_feed_kg': 39.6,
+  'feedings_per_day': 4,
+  'survival_pct': 87.0,
+  'cumulative_feed_kg': 1370.01,
+  'estimated_fcr': 1.11,
+  'crop_fcr': 1.12,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 39.6}]},
+ {'phase': 'engorda',
+  'phase_day': 48,
+  'cumulative_day': 93,
+  'stage': 'GROW OUT',
+  'population': 111850,
+  'weight_g': 11.24,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.8,
+  'biomass_kg': 1256.72,
+  'feed_rate_pct': 3.2,
+  'daily_feed_kg': 40.21,
+  'feedings_per_day': 4,
+  'survival_pct': 87.0,
+  'cumulative_feed_kg': 1410.22,
+  'estimated_fcr': 1.12,
+  'crop_fcr': 1.13,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 40.21}]},
+ {'phase': 'engorda',
+  'phase_day': 49,
+  'cumulative_day': 94,
+  'stage': 'GROW OUT',
+  'population': 111481,
+  'weight_g': 11.44,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.8,
+  'biomass_kg': 1275.66,
+  'feed_rate_pct': 3.2,
+  'daily_feed_kg': 40.82,
+  'feedings_per_day': 4,
+  'survival_pct': 86.0,
+  'cumulative_feed_kg': 1451.04,
+  'estimated_fcr': 1.14,
+  'crop_fcr': 1.15,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 40.82}]},
+ {'phase': 'engorda',
+  'phase_day': 50,
+  'cumulative_day': 95,
+  'stage': 'GROW OUT',
+  'population': 111112,
+  'weight_g': 11.65,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.8,
+  'biomass_kg': 1294.45,
+  'feed_rate_pct': 3.2,
+  'daily_feed_kg': 41.42,
+  'feedings_per_day': 4,
+  'survival_pct': 86.0,
+  'cumulative_feed_kg': 1492.47,
+  'estimated_fcr': 1.15,
+  'crop_fcr': 1.16,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 41.42}]},
+ {'phase': 'engorda',
+  'phase_day': 51,
+  'cumulative_day': 96,
+  'stage': 'GROW OUT',
+  'population': 110743,
+  'weight_g': 11.86,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.7,
+  'biomass_kg': 1313.09,
+  'feed_rate_pct': 3.2,
+  'daily_feed_kg': 42.02,
+  'feedings_per_day': 4,
+  'survival_pct': 86.0,
+  'cumulative_feed_kg': 1534.49,
+  'estimated_fcr': 1.17,
+  'crop_fcr': 1.18,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 42.02}]},
+ {'phase': 'engorda',
+  'phase_day': 52,
+  'cumulative_day': 97,
+  'stage': 'GROW OUT',
+  'population': 110374,
+  'weight_g': 12.06,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.7,
+  'biomass_kg': 1331.58,
+  'feed_rate_pct': 3.1,
+  'daily_feed_kg': 41.28,
+  'feedings_per_day': 4,
+  'survival_pct': 85.0,
+  'cumulative_feed_kg': 1575.76,
+  'estimated_fcr': 1.18,
+  'crop_fcr': 1.19,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 41.28}]},
+ {'phase': 'engorda',
+  'phase_day': 53,
+  'cumulative_day': 98,
+  'stage': 'GROW OUT',
+  'population': 110005,
+  'weight_g': 12.27,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.7,
+  'biomass_kg': 1349.91,
+  'feed_rate_pct': 3.1,
+  'daily_feed_kg': 41.85,
+  'feedings_per_day': 4,
+  'survival_pct': 85.0,
+  'cumulative_feed_kg': 1617.61,
+  'estimated_fcr': 1.2,
+  'crop_fcr': 1.21,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 41.85}]},
+ {'phase': 'engorda',
+  'phase_day': 54,
+  'cumulative_day': 99,
+  'stage': 'GROW OUT',
+  'population': 109635,
+  'weight_g': 12.48,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.7,
+  'biomass_kg': 1368.09,
+  'feed_rate_pct': 3.1,
+  'daily_feed_kg': 42.41,
+  'feedings_per_day': 4,
+  'survival_pct': 85.0,
+  'cumulative_feed_kg': 1660.02,
+  'estimated_fcr': 1.21,
+  'crop_fcr': 1.22,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 42.41}]},
+ {'phase': 'engorda',
+  'phase_day': 55,
+  'cumulative_day': 100,
+  'stage': 'GROW OUT',
+  'population': 109266,
+  'weight_g': 12.69,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.6,
+  'biomass_kg': 1386.12,
+  'feed_rate_pct': 3.1,
+  'daily_feed_kg': 42.97,
+  'feedings_per_day': 4,
+  'survival_pct': 85.0,
+  'cumulative_feed_kg': 1702.99,
+  'estimated_fcr': 1.23,
+  'crop_fcr': 1.24,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 42.97}]},
+ {'phase': 'engorda',
+  'phase_day': 56,
+  'cumulative_day': 101,
+  'stage': 'GROW OUT',
+  'population': 108897,
+  'weight_g': 12.89,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.6,
+  'biomass_kg': 1404.0,
+  'feed_rate_pct': 3.1,
+  'daily_feed_kg': 43.52,
+  'feedings_per_day': 4,
+  'survival_pct': 84.0,
+  'cumulative_feed_kg': 1746.52,
+  'estimated_fcr': 1.24,
+  'crop_fcr': 1.25,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 43.52}]},
+ {'phase': 'engorda',
+  'phase_day': 57,
+  'cumulative_day': 102,
+  'stage': 'GROW OUT',
+  'population': 108528,
+  'weight_g': 13.1,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.6,
+  'biomass_kg': 1421.72,
+  'feed_rate_pct': 3.0,
+  'daily_feed_kg': 42.65,
+  'feedings_per_day': 4,
+  'survival_pct': 84.0,
+  'cumulative_feed_kg': 1789.17,
+  'estimated_fcr': 1.26,
+  'crop_fcr': 1.27,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 42.65}]},
+ {'phase': 'engorda',
+  'phase_day': 58,
+  'cumulative_day': 103,
+  'stage': 'GROW OUT',
+  'population': 108159,
+  'weight_g': 13.31,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.6,
+  'biomass_kg': 1439.29,
+  'feed_rate_pct': 3.0,
+  'daily_feed_kg': 43.18,
+  'feedings_per_day': 4,
+  'survival_pct': 84.0,
+  'cumulative_feed_kg': 1832.35,
+  'estimated_fcr': 1.27,
+  'crop_fcr': 1.28,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 43.18}]},
+ {'phase': 'engorda',
+  'phase_day': 59,
+  'cumulative_day': 104,
+  'stage': 'GROW OUT',
+  'population': 107790,
+  'weight_g': 13.51,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.5,
+  'biomass_kg': 1456.7,
+  'feed_rate_pct': 3.0,
+  'daily_feed_kg': 43.7,
+  'feedings_per_day': 4,
+  'survival_pct': 83.0,
+  'cumulative_feed_kg': 1876.05,
+  'estimated_fcr': 1.29,
+  'crop_fcr': 1.3,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 43.7}]},
+ {'phase': 'engorda',
+  'phase_day': 60,
+  'cumulative_day': 105,
+  'stage': 'GROW OUT',
+  'population': 107421,
+  'weight_g': 13.72,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.5,
+  'biomass_kg': 1473.96,
+  'feed_rate_pct': 3.0,
+  'daily_feed_kg': 44.22,
+  'feedings_per_day': 4,
+  'survival_pct': 83.0,
+  'cumulative_feed_kg': 1920.27,
+  'estimated_fcr': 1.3,
+  'crop_fcr': 1.31,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 44.22}]},
+ {'phase': 'engorda',
+  'phase_day': 61,
+  'cumulative_day': 106,
+  'stage': 'GROW OUT',
+  'population': 107051,
+  'weight_g': 13.93,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.5,
+  'biomass_kg': 1491.07,
+  'feed_rate_pct': 3.0,
+  'daily_feed_kg': 44.73,
+  'feedings_per_day': 4,
+  'survival_pct': 83.0,
+  'cumulative_feed_kg': 1965.0,
+  'estimated_fcr': 1.32,
+  'crop_fcr': 1.33,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 44.73}]},
+ {'phase': 'engorda',
+  'phase_day': 62,
+  'cumulative_day': 107,
+  'stage': 'GROW OUT',
+  'population': 106682,
+  'weight_g': 14.14,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.5,
+  'biomass_kg': 1508.03,
+  'feed_rate_pct': 2.8,
+  'daily_feed_kg': 42.22,
+  'feedings_per_day': 4,
+  'survival_pct': 83.0,
+  'cumulative_feed_kg': 2007.22,
+  'estimated_fcr': 1.33,
+  'crop_fcr': 1.34,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 42.22}]},
+ {'phase': 'engorda',
+  'phase_day': 63,
+  'cumulative_day': 108,
+  'stage': 'GROW OUT',
+  'population': 106313,
+  'weight_g': 14.34,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.4,
+  'biomass_kg': 1524.83,
+  'feed_rate_pct': 2.8,
+  'daily_feed_kg': 42.7,
+  'feedings_per_day': 4,
+  'survival_pct': 82.0,
+  'cumulative_feed_kg': 2049.92,
+  'estimated_fcr': 1.34,
+  'crop_fcr': 1.35,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 42.7}]},
+ {'phase': 'engorda',
+  'phase_day': 64,
+  'cumulative_day': 109,
+  'stage': 'GROW OUT',
+  'population': 105944,
+  'weight_g': 14.55,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.4,
+  'biomass_kg': 1541.49,
+  'feed_rate_pct': 2.8,
+  'daily_feed_kg': 43.16,
+  'feedings_per_day': 4,
+  'survival_pct': 82.0,
+  'cumulative_feed_kg': 2093.08,
+  'estimated_fcr': 1.36,
+  'crop_fcr': 1.37,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 43.16}]},
+ {'phase': 'engorda',
+  'phase_day': 65,
+  'cumulative_day': 110,
+  'stage': 'GROW OUT',
+  'population': 105575,
+  'weight_g': 14.76,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.4,
+  'biomass_kg': 1557.98,
+  'feed_rate_pct': 2.8,
+  'daily_feed_kg': 43.62,
+  'feedings_per_day': 4,
+  'survival_pct': 82.0,
+  'cumulative_feed_kg': 2136.7,
+  'estimated_fcr': 1.37,
+  'crop_fcr': 1.38,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 43.62}]},
+ {'phase': 'engorda',
+  'phase_day': 66,
+  'cumulative_day': 111,
+  'stage': 'GROW OUT',
+  'population': 105206,
+  'weight_g': 14.96,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.4,
+  'biomass_kg': 1574.33,
+  'feed_rate_pct': 2.8,
+  'daily_feed_kg': 44.08,
+  'feedings_per_day': 4,
+  'survival_pct': 81.0,
+  'cumulative_feed_kg': 2180.79,
+  'estimated_fcr': 1.39,
+  'crop_fcr': 1.39,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 44.08}]},
+ {'phase': 'engorda',
+  'phase_day': 67,
+  'cumulative_day': 112,
+  'stage': 'GROW OUT',
+  'population': 104837,
+  'weight_g': 15.17,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.4,
+  'biomass_kg': 1590.52,
+  'feed_rate_pct': 2.6,
+  'daily_feed_kg': 41.35,
+  'feedings_per_day': 4,
+  'survival_pct': 81.0,
+  'cumulative_feed_kg': 2222.14,
+  'estimated_fcr': 1.4,
+  'crop_fcr': 1.4,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 41.35}]},
+ {'phase': 'engorda',
+  'phase_day': 68,
+  'cumulative_day': 113,
+  'stage': 'GROW OUT',
+  'population': 104467,
+  'weight_g': 15.38,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.3,
+  'biomass_kg': 1606.56,
+  'feed_rate_pct': 2.6,
+  'daily_feed_kg': 41.77,
+  'feedings_per_day': 4,
+  'survival_pct': 81.0,
+  'cumulative_feed_kg': 2263.91,
+  'estimated_fcr': 1.41,
+  'crop_fcr': 1.42,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 41.77}]},
+ {'phase': 'engorda',
+  'phase_day': 69,
+  'cumulative_day': 114,
+  'stage': 'GROW OUT',
+  'population': 104098,
+  'weight_g': 15.59,
+  'daily_growth_g': 0.2071,
+  'growth_rate_pct_day': 1.3,
+  'biomass_kg': 1622.45,
+  'feed_rate_pct': 2.6,
+  'daily_feed_kg': 42.18,
+  'feedings_per_day': 4,
+  'survival_pct': 81.0,
+  'cumulative_feed_kg': 2306.09,
+  'estimated_fcr': 1.42,
+  'crop_fcr': 1.43,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 42.18}]},
+ {'phase': 'engorda',
+  'phase_day': 70,
+  'cumulative_day': 115,
+  'stage': 'GROW OUT',
+  'population': 103360,
+  'weight_g': 16.0,
+  'daily_growth_g': 0.4143,
+  'growth_rate_pct_day': 2.6,
+  'biomass_kg': 1653.76,
+  'feed_rate_pct': 2.4,
+  'daily_feed_kg': 39.69,
+  'feedings_per_day': 4,
+  'survival_pct': 80.0,
+  'cumulative_feed_kg': 2345.78,
+  'estimated_fcr': 1.42,
+  'crop_fcr': 1.43,
+  'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 39.69}]}]
 NURSERY_FEED_TIMES = ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00', '00:00', '02:00', '04:00']
 
 
@@ -1214,7 +3075,9 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         return None
 
     days_since_start = max((target_date - lot.start_date).days, 0)
-    stage_today = min(43, max(11, lot.entry_pl_stage + days_since_start))
+    min_stage = NURSERY_PROTOCOL_ROWS[0]['pl_stage']
+    max_stage = NURSERY_PROTOCOL_ROWS[-1]['pl_stage']
+    stage_today = min(max_stage, max(min_stage, lot.entry_pl_stage + days_since_start))
     row = get_nursery_protocol_row(stage_today)
     if not row:
         return None
@@ -1232,10 +3095,8 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     projected_population = int(round((lot.initial_count or 0) * (row['survival_pct'] / 100.0)))
     biomass_kg = round((projected_population * row['individual_weight_g']) / 1000.0, 2)
     base_mixes = [
-        {'label': 'NutriSphera 225', 'grams': scaled(row['nutrisphera_225_g'])},
-        {'label': 'NutriSphera 450', 'grams': scaled(row['nutrisphera_450_g'])},
-        {'label': 'Triturada 1', 'grams': scaled(row['triturada_1_g'])},
-        {'label': 'Triturada 2', 'grams': scaled(row['triturada_2_g'])},
+        {'label': item.get('label', 'Ração berçário'), 'grams': scaled(item.get('grams', 0))}
+        for item in row.get('mixes', [])
     ]
     base_mixes = [item for item in base_mixes if item['grams'] > 0]
     mixes = [
@@ -1257,6 +3118,7 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         f"Data: {target_date.strftime('%d/%m/%Y')}",
         f"Estágio do dia: PL{stage_today}",
         f"População estimada: {projected_population:,} PL".replace(',', '.'),
+        f"Base: planilha 160.000 PL, recalculada proporcionalmente ao lote",
     ]
     if correction_events:
         last_event = correction_events[-1]
@@ -1714,6 +3576,7 @@ def active_lot_allocation_for_unit(unit_id, on_date=None):
             LotUnitAllocation.unit_id == unit_id,
             LotUnitAllocation.start_date <= on_date,
             or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+            or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
             Lot.start_date <= on_date,
             Lot.status == 'ativo',
             or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
@@ -1781,6 +3644,7 @@ def lot_current_units(lot: Lot, on_date=None):
         LotUnitAllocation.lot_id == lot.id,
         LotUnitAllocation.start_date <= on_date,
         or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
     ).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
     return [allocation.unit for allocation in allocations]
 
@@ -1796,6 +3660,7 @@ def active_allocations_on_date(on_date: date):
     return LotUnitAllocation.query.join(Lot, Lot.id == LotUnitAllocation.lot_id).filter(
         LotUnitAllocation.start_date <= on_date,
         or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
         Lot.status == 'ativo',
         Lot.start_date <= on_date,
         or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
@@ -1814,7 +3679,65 @@ def find_active_allocation(lot_id: int, unit_id: int, on_date: date):
         LotUnitAllocation.unit_id == unit_id,
         LotUnitAllocation.start_date <= on_date,
         or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
     ).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
+
+
+def active_allocation_rows(on_date=None):
+    """Active lot positions by unit. Used by the trifasic transfer screen."""
+    on_date = on_date or date.today()
+    return (
+        LotUnitAllocation.query.options(joinedload(LotUnitAllocation.lot), joinedload(LotUnitAllocation.unit))
+        .join(Lot, Lot.id == LotUnitAllocation.lot_id)
+        .join(Unit, Unit.id == LotUnitAllocation.unit_id)
+        .filter(
+            LotUnitAllocation.start_date <= on_date,
+            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+            or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+            Lot.status == 'ativo',
+            Lot.start_date <= on_date,
+            or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
+        )
+        .order_by(Lot.lot_code.asc(), Unit.phase.asc(), Unit.name.asc(), LotUnitAllocation.start_date.asc())
+        .all()
+    )
+
+
+def sync_lot_phase_from_allocations(lot: Lot, on_date=None):
+    """Keeps Lot.phase compatible with the most advanced active phase of its allocations."""
+    if not lot:
+        return
+    on_date = on_date or date.today()
+    phase_rank = {'bercario': 1, 'juvenil': 2, 'engorda': 3}
+    allocations = (
+        LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit))
+        .filter(
+            LotUnitAllocation.lot_id == lot.id,
+            LotUnitAllocation.start_date <= on_date,
+            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+            or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+        )
+        .all()
+    )
+    if not allocations:
+        return
+    most_advanced = max(
+        (allocation.unit.phase for allocation in allocations if allocation.unit and allocation.unit.phase),
+        key=lambda phase: phase_rank.get(phase, 0),
+        default=lot.phase,
+    )
+    if most_advanced:
+        lot.phase = most_advanced
+        preferred = max(
+            allocations,
+            key=lambda allocation: (
+                phase_rank.get(allocation.unit.phase if allocation.unit else '', 0),
+                allocation.start_date or date.min,
+                allocation.id or 0,
+            ),
+        )
+        if preferred and preferred.unit_id:
+            lot.unit_id = preferred.unit_id
 
 
 def calculate_fixed_cost_for_lot(lot: Lot):
@@ -4050,17 +5973,45 @@ def delete_farm_document(document_id):
 def transfers_page():
     edit_id = parse_int(request.args.get('edit_id'))
     edit_transfer = db.session.get(Transfer, edit_id) if edit_id else None
+
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'create')
-        transfer_date = parse_date(request.form['transfer_date'], date.today())
-        src_id = int(request.form['source_unit_id'])
-        source_lot_id = int(request.form['source_lot_id']) if request.form.get('source_lot_id') else None
-        src_lot = db.session.get(Lot, source_lot_id) if source_lot_id else active_lot_for_unit(src_id, on_date=transfer_date)
-        if not src_lot:
-            flash('Selecione um lote de origem válido.', 'danger')
+        transfer_date = parse_date(request.form.get('transfer_date'), date.today())
+        destination_unit_id = parse_int(request.form.get('destination_unit_id'))
+        destination_unit = db.session.get(Unit, destination_unit_id) if destination_unit_id else None
+        transferred_qty = parse_int(request.form.get('transferred_qty')) or 0
+        avg_weight_g = parse_float(request.form.get('avg_weight_g'))
+
+        source_allocation_id = parse_int(request.form.get('source_allocation_id'))
+        source_allocation = db.session.get(LotUnitAllocation, source_allocation_id) if source_allocation_id else None
+
+        if source_allocation:
+            src_id = source_allocation.unit_id
+            src_lot = source_allocation.lot
+        else:
+            src_id = parse_int(request.form.get('source_unit_id'))
+            source_lot_id = parse_int(request.form.get('source_lot_id'))
+            src_lot = db.session.get(Lot, source_lot_id) if source_lot_id else active_lot_for_unit(src_id, on_date=transfer_date)
+            source_allocation = find_active_allocation(src_lot.id, src_id, transfer_date) if src_lot and src_id else None
+
+        if not src_lot or not src_id or (form_mode != 'edit' and not source_allocation):
+            flash('Selecione uma origem ativa com lote e saldo disponível.', 'danger')
             return redirect(url_for('transfers_page'))
-        destination_unit_id = int(request.form['destination_unit_id'])
-        transferred_qty = int(request.form['transferred_qty'])
+        if not destination_unit:
+            flash('Selecione uma unidade de destino válida.', 'danger')
+            return redirect(url_for('transfers_page'))
+        if src_id == destination_unit_id:
+            flash('A origem e o destino precisam ser unidades diferentes.', 'danger')
+            return redirect(url_for('transfers_page'))
+        if transferred_qty <= 0:
+            flash('Informe uma quantidade transferida maior que zero.', 'danger')
+            return redirect(url_for('transfers_page'))
+
+        available_qty = source_allocation.quantity_allocated
+        if available_qty is not None and transferred_qty > available_qty and form_mode != 'edit':
+            flash(f'Quantidade maior que o saldo estimado da origem ({available_qty:,} unidades).'.replace(',', '.'), 'danger')
+            return redirect(url_for('transfers_page'))
+
         if form_mode == 'edit':
             tr = db.session.get(Transfer, parse_int(request.form.get('transfer_id')))
             if not tr:
@@ -4072,31 +6023,65 @@ def transfers_page():
             tr.source_lot_id = src_lot.id
             tr.destination_lot_code = src_lot.lot_code
             tr.transferred_qty = transferred_qty
-            tr.avg_weight_g = parse_float(request.form.get('avg_weight_g'))
+            tr.avg_weight_g = avg_weight_g
             tr.notes = request.form.get('notes')
+            sync_lot_phase_from_allocations(src_lot, transfer_date)
             db.session.commit()
-            flash('Transferência atualizada.', 'success')
+            flash('Transferência atualizada. Observação: a edição altera o histórico; para corrigir saldo, ajuste a movimentação correspondente.', 'success')
             return redirect(url_for('transfers_page'))
-        existing_allocation = LotUnitAllocation.query.filter(LotUnitAllocation.lot_id == src_lot.id, LotUnitAllocation.unit_id == destination_unit_id, LotUnitAllocation.start_date <= transfer_date, or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date)).first()
+
+        existing_allocation = find_active_allocation(src_lot.id, destination_unit_id, transfer_date)
         if not existing_allocation:
-            db.session.add(LotUnitAllocation(lot_id=src_lot.id, unit_id=destination_unit_id, start_date=transfer_date, quantity_allocated=transferred_qty, notes='Transferência bifásica.'))
+            db.session.add(LotUnitAllocation(
+                lot_id=src_lot.id,
+                unit_id=destination_unit_id,
+                start_date=transfer_date,
+                quantity_allocated=transferred_qty,
+                notes='Transferência trifásica entre fases.'
+            ))
         else:
             existing_allocation.quantity_allocated = (existing_allocation.quantity_allocated or 0) + transferred_qty
-        tr = Transfer(transfer_date=transfer_date, source_unit_id=src_id, destination_unit_id=destination_unit_id, source_lot_id=src_lot.id, destination_lot_code=src_lot.lot_code, transferred_qty=transferred_qty, avg_weight_g=parse_float(request.form.get('avg_weight_g')), notes=request.form.get('notes'))
+            if existing_allocation.end_date and existing_allocation.end_date <= transfer_date:
+                existing_allocation.end_date = None
+
+        tr = Transfer(
+            transfer_date=transfer_date,
+            source_unit_id=src_id,
+            destination_unit_id=destination_unit_id,
+            source_lot_id=src_lot.id,
+            destination_lot_code=src_lot.lot_code,
+            transferred_qty=transferred_qty,
+            avg_weight_g=avg_weight_g,
+            notes=request.form.get('notes')
+        )
         db.session.add(tr)
-        allocation = LotUnitAllocation.query.filter(LotUnitAllocation.lot_id == src_lot.id, LotUnitAllocation.unit_id == src_id, LotUnitAllocation.start_date <= transfer_date, or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= transfer_date)).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
-        if allocation:
-            remaining_qty = max((allocation.quantity_allocated or 0) - transferred_qty, 0)
-            if request.form.get('close_source_allocation') == '1' or remaining_qty == 0:
-                allocation.end_date = transfer_date
-            allocation.quantity_allocated = remaining_qty
+
+        remaining_qty = None
+        if source_allocation.quantity_allocated is not None:
+            remaining_qty = max((source_allocation.quantity_allocated or 0) - transferred_qty, 0)
+            source_allocation.quantity_allocated = remaining_qty
+        should_close_source = request.form.get('close_source_allocation') == '1' or remaining_qty == 0
+        if should_close_source:
+            source_allocation.end_date = transfer_date
+
+        sync_lot_phase_from_allocations(src_lot, transfer_date)
         db.session.commit()
-        flash('Transferência registrada. O mesmo lote agora pode seguir em múltiplos viveiros.', 'success')
+        flash('Transferência registrada. O lote agora pode seguir no fluxo Berçário → Juvenil → Engorda, inclusive com divisões parciais.', 'success')
         return redirect(url_for('transfers_page'))
-    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+
+    units = Unit.query.filter_by(active=True).order_by(Unit.phase, Unit.name).all()
     lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
-    rows = Transfer.query.order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).limit(50).all()
-    return render_template('transfers.html', units=units, lots=lots, rows=rows, today=date.today(), edit_transfer=edit_transfer)
+    rows = Transfer.query.options(joinedload(Transfer.source_unit), joinedload(Transfer.destination_unit), joinedload(Transfer.source_lot)).order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).limit(80).all()
+    allocations = active_allocation_rows(date.today())
+    return render_template(
+        'transfers.html',
+        units=units,
+        lots=lots,
+        rows=rows,
+        allocations=allocations,
+        today=date.today(),
+        edit_transfer=edit_transfer,
+    )
 
 
 @app.route('/feed', methods=['GET', 'POST'])
@@ -4826,16 +6811,24 @@ def lot_environment_snapshot(lot: Lot, ref_date=None, days=5):
 
 
 
+
+def is_nursery_lot(lot: Lot):
+    phase = normalize_text(getattr(lot, 'phase', '') or '')
+    unit_phase = normalize_text(getattr(getattr(lot, 'unit', None), 'phase', '') or '')
+    return phase in {'bercario', 'berçario', 'nursery'} or unit_phase in {'bercario', 'berçario', 'nursery'}
+
+
 def is_growout_lot(lot: Lot):
     phase = normalize_text(getattr(lot, 'phase', '') or '')
     unit_phase = normalize_text(getattr(getattr(lot, 'unit', None), 'phase', '') or '')
-    return phase in {'engorda', 'grow out', 'growout'} or unit_phase in {'engorda', 'grow out', 'growout'}
+    return phase in {'engorda', 'grow out', 'growout', 'juvenil', 'raceway'} or unit_phase in {'engorda', 'grow out', 'growout', 'juvenil', 'raceway'}
 
 
 def _interpolate_points(points, x):
     """Interpolação linear simples para curvas internas do sistema."""
     if not points:
         return None
+    points = sorted(points, key=lambda item: item[0])
     if x <= points[0][0]:
         return points[0][1]
     if x >= points[-1][0]:
@@ -4849,59 +6842,167 @@ def _interpolate_points(points, x):
     return points[-1][1]
 
 
-def standard_growout_curve_point(age_days: int | float):
-    """Curva-base da tabela padrão para a fase de engorda.
+def _protocol_age_value(row, first_row):
+    if row.get('phase') == first_row.get('phase') == 'engorda':
+        return max((row.get('phase_day') or 1) - (first_row.get('phase_day') or 1), 0)
+    return max((row.get('cumulative_day') or 0) - (first_row.get('cumulative_day') or 0), 0)
 
-    Dia 0 = entrada na engorda com ~1,5 g. A curva vai até o dia 69/70 com ~16 g,
-    sobrevivência acumulada de 80% e FCR acumulado aproximado de 1,42.
-    """
+
+def _production_protocol_rows_for_lot(lot=None, start_weight_g=None):
+    if lot and is_nursery_lot(lot):
+        return []
+    if start_weight_g is None and lot is not None:
+        start_weight_g = parse_float(getattr(lot, 'estimated_weight_g', None), None)
+    phase_key = normalize_text(getattr(lot, 'phase', '') if lot else '')
+    if phase_key in {'juvenil', 'raceway'}:
+        return PRODUCTION_PROTOCOL_ROWS
+    if start_weight_g is not None and start_weight_g > 0 and start_weight_g < 1.5:
+        return PRODUCTION_PROTOCOL_ROWS
+    return [row for row in PRODUCTION_PROTOCOL_ROWS if row.get('phase') == 'engorda']
+
+
+def _nearest_protocol_row(rows, age_days=None, weight_g=None):
+    if not rows:
+        return None
+    if weight_g is not None:
+        return min(rows, key=lambda row: abs((row.get('weight_g') or 0) - weight_g))
+    first = rows[0]
+    return min(rows, key=lambda row: abs(_protocol_age_value(row, first) - age_days))
+
+
+def _protocol_curve_point(rows, age_days: int | float):
+    if not rows:
+        return None
     age = max(float(age_days or 0), 0.0)
-    max_index = STANDARD_GROWOUT_DAYS - 1
-    clamped_index = min(age, max_index)
-    weight_gain = STANDARD_GROWOUT_FINAL_WEIGHT_G - STANDARD_GROWOUT_START_WEIGHT_G
-    expected_weight = STANDARD_GROWOUT_START_WEIGHT_G + (weight_gain * (clamped_index / max_index))
-    if age > max_index:
-        # Depois da faixa da tabela, mantém avanço conservador para não travar projeções tardias.
-        expected_weight += (age - max_index) * 0.08
-    survival_drop = STANDARD_GROWOUT_INITIAL_SURVIVAL_PCT - STANDARD_GROWOUT_FINAL_SURVIVAL_PCT
-    survival_pct = STANDARD_GROWOUT_INITIAL_SURVIVAL_PCT - (survival_drop * (min(age, max_index) / max_index))
-    fcr = 0.05 + ((STANDARD_GROWOUT_FINAL_FCR - 0.05) * (min(age, max_index) / max_index))
-    rate_index = int(round(min(age, len(STANDARD_GROWOUT_FEED_RATE_PCTS) - 1)))
-    feed_rate_pct = STANDARD_GROWOUT_FEED_RATE_PCTS[rate_index]
+    first = rows[0]
+    max_age = _protocol_age_value(rows[-1], first)
+    clamped_age = min(age, max_age)
+
+    def value(field, default=None):
+        points = [(_protocol_age_value(row, first), row.get(field)) for row in rows if row.get(field) is not None]
+        interpolated = _interpolate_points(points, clamped_age) if points else default
+        return default if interpolated is None else interpolated
+
+    expected_weight = value('weight_g', rows[0].get('weight_g') or 0)
+    survival_pct = value('survival_pct', rows[0].get('survival_pct') or 100)
+    feed_rate_pct = value('feed_rate_pct', rows[0].get('feed_rate_pct') or 3)
+    estimated_fcr = value('estimated_fcr', rows[0].get('estimated_fcr') or 0)
+    base_daily_feed_kg = value('daily_feed_kg', rows[0].get('daily_feed_kg') or 0)
+    current_row = _nearest_protocol_row(rows, age_days=clamped_age) or rows[0]
+    next_row = None
+    for row in rows:
+        if _protocol_age_value(row, first) > clamped_age:
+            next_row = row
+            break
+    if next_row:
+        next_age = _protocol_age_value(next_row, first)
+        daily_gain = ((next_row.get('weight_g') or expected_weight) - expected_weight) / max(next_age - clamped_age, 1)
+    else:
+        daily_gain = current_row.get('daily_growth_g') or 0.08
+    source = 'Tabela operacional 160.000 PL — engorda'
+    if any(row.get('phase') == 'juvenil' for row in rows):
+        source = 'Tabela operacional 160.000 PL — juvenil + engorda'
+    if age > max_age:
+        expected_weight += (age - max_age) * max(daily_gain or 0.08, 0.05)
     return {
         'age_days': int(round(age)),
         'expected_weight_g': round(expected_weight, 2),
-        'daily_gain_g': round(weight_gain / max_index, 3),
-        'survival_pct': round(max(survival_pct, STANDARD_GROWOUT_FINAL_SURVIVAL_PCT), 2),
+        'daily_gain_g': round(max(daily_gain or 0, 0.01), 3),
+        'survival_pct': round(max(min(survival_pct, 100), 0), 2),
         'feed_rate_pct': round(feed_rate_pct, 2),
-        'estimated_fcr': round(fcr, 2),
-        'source': 'Tabela padrão 1,5 g → 16 g / 70 dias',
+        'estimated_fcr': round(estimated_fcr, 2),
+        'base_daily_feed_kg_160k': round(base_daily_feed_kg, 2),
+        'feedings_per_day': current_row.get('feedings_per_day') or 4,
+        'protocol_phase': current_row.get('phase'),
+        'mixes': current_row.get('mixes') or [],
+        'source': source,
     }
+
+
+def _protocol_curve_by_weight(rows, weight_g: float | int | None):
+    if not rows:
+        return None
+    weight = max(parse_float(weight_g, 0) or 0, 0)
+    points = sorted([(row.get('weight_g') or 0, row) for row in rows if row.get('weight_g') is not None], key=lambda item: item[0])
+    if not points:
+        return _protocol_curve_point(rows, 0)
+    if weight <= points[0][0]:
+        age = _protocol_age_value(points[0][1], rows[0])
+    elif weight >= points[-1][0]:
+        age = _protocol_age_value(points[-1][1], rows[0])
+    else:
+        age = 0
+        for idx in range(1, len(points)):
+            w0, row0 = points[idx - 1]
+            w1, row1 = points[idx]
+            if weight <= w1:
+                a0 = _protocol_age_value(row0, rows[0])
+                a1 = _protocol_age_value(row1, rows[0])
+                span = (w1 - w0) or 1
+                age = a0 + ((a1 - a0) * ((weight - w0) / span))
+                break
+    return _protocol_curve_point(rows, age)
+
+
+def production_protocol_curve_for_lot(lot: Lot, age_days: int | float):
+    rows = _production_protocol_rows_for_lot(lot)
+    return _protocol_curve_point(rows, age_days) if rows else None
+
+
+def nursery_protocol_curve_for_lot(lot: Lot, age_days: int | float):
+    if not lot or not lot.entry_pl_stage:
+        return None
+    min_stage = NURSERY_PROTOCOL_ROWS[0]['pl_stage']
+    max_stage = NURSERY_PROTOCOL_ROWS[-1]['pl_stage']
+    stage_today = min(max_stage, max(min_stage, lot.entry_pl_stage + int(max(age_days or 0, 0))))
+    row = get_nursery_protocol_row(stage_today)
+    if not row:
+        return None
+    return {
+        'age_days': int(max(age_days or 0, 0)),
+        'expected_weight_g': round(row['individual_weight_g'], 4),
+        'daily_gain_g': row.get('daily_growth_g') or 0.001,
+        'survival_pct': row.get('survival_pct'),
+        'feed_rate_pct': row.get('feed_rate_pct'),
+        'estimated_fcr': row.get('estimated_fcr'),
+        'source': 'Tabela operacional 160.000 PL — berçário',
+    }
+
+
+def standard_growout_curve_point(age_days: int | float):
+    rows = [row for row in PRODUCTION_PROTOCOL_ROWS if row.get('phase') == 'engorda']
+    return _protocol_curve_point(rows, age_days)
 
 
 def standard_growout_curve_by_weight(weight_g: float | int | None):
     weight = max(parse_float(weight_g, 0) or 0, 0)
-    max_index = STANDARD_GROWOUT_DAYS - 1
-    if weight <= 0:
-        return standard_growout_curve_point(0)
-    if weight <= STANDARD_GROWOUT_START_WEIGHT_G:
-        return standard_growout_curve_point(0)
-    if weight >= STANDARD_GROWOUT_FINAL_WEIGHT_G:
-        return standard_growout_curve_point(max_index)
-    age = ((weight - STANDARD_GROWOUT_START_WEIGHT_G) / (STANDARD_GROWOUT_FINAL_WEIGHT_G - STANDARD_GROWOUT_START_WEIGHT_G)) * max_index
-    return standard_growout_curve_point(age)
+    rows = PRODUCTION_PROTOCOL_ROWS if 0 < weight < 1.5 else [row for row in PRODUCTION_PROTOCOL_ROWS if row.get('phase') == 'engorda']
+    return _protocol_curve_by_weight(rows, weight)
 
 
 def standard_expected_weight_at_age(lot: Lot, age_days: int):
     """Peso esperado inicial, com a tabela como base e deslocamento pelo primeiro dado real do lote."""
+    if is_nursery_lot(lot):
+        base = nursery_protocol_curve_for_lot(lot, age_days)
+        if base:
+            return {
+                'expected_weight_g': base['expected_weight_g'],
+                'confidence': 45,
+                'similar_cases': 0,
+                'source': base['source'],
+                'standard_feed_rate_pct': base.get('feed_rate_pct'),
+                'standard_survival_pct': base.get('survival_pct'),
+                'standard_fcr': base.get('estimated_fcr'),
+            }
+
     if is_growout_lot(lot):
-        base = standard_growout_curve_point(age_days)
+        base = production_protocol_curve_for_lot(lot, age_days) or standard_growout_curve_point(age_days)
         expected = base['expected_weight_g']
         observations = merged_weight_observations(lot.id)
         if observations:
             first = observations[0]
             first_age = max((first['date'] - lot.start_date).days, 0)
-            first_base = standard_growout_curve_point(first_age)['expected_weight_g']
+            first_base = (production_protocol_curve_for_lot(lot, first_age) or standard_growout_curve_point(first_age))['expected_weight_g']
             offset = (first['weight_g'] or first_base) - first_base
             expected = max(0.03, expected + offset)
         return {
@@ -4914,7 +7015,6 @@ def standard_expected_weight_at_age(lot: Lot, age_days: int):
             'standard_fcr': base['estimated_fcr'],
         }
 
-    # Mantém berçário/raçeway no comportamento anterior, sem alterar a alimentação de berçário.
     expected = round(max((lot.estimated_weight_g or 0) + max(historical_growth_rate(lot), 0.08) * max(age_days, 0), 0.03), 2)
     return {
         'expected_weight_g': expected,
@@ -4928,11 +7028,17 @@ def standard_expected_weight_at_age(lot: Lot, age_days: int):
 
 
 def standard_survival_pct_for_lot(lot: Lot, on_date=None):
-    if not lot or not is_growout_lot(lot):
+    if not lot:
         return None
     on_date = on_date or date.today()
     age_days = max((on_date - lot.start_date).days, 0)
-    return standard_growout_curve_point(age_days)['survival_pct']
+    if is_nursery_lot(lot):
+        curve = nursery_protocol_curve_for_lot(lot, age_days)
+        return curve.get('survival_pct') if curve else None
+    if not is_growout_lot(lot):
+        return None
+    curve = production_protocol_curve_for_lot(lot, age_days) or standard_growout_curve_point(age_days)
+    return curve['survival_pct']
 
 
 def modeled_live_count_for_lot(lot: Lot, on_date=None):
@@ -4961,6 +7067,13 @@ def modeled_live_count_for_lot(lot: Lot, on_date=None):
 
 def pellet_hint_for_weight(weight_g):
     weight = parse_float(weight_g, 0) or 0
+    curve = standard_growout_curve_by_weight(weight)
+    if curve and curve.get('mixes'):
+        labels = [item.get('label') for item in curve['mixes'] if item.get('label')]
+        if labels:
+            return ' / '.join(dict.fromkeys(labels))
+    if weight <= 0.8:
+        return 'Crumbled I / II'
     if weight <= 1.5:
         return 'Wean 0,8 / 1,3 mm'
     if weight <= 6.5:
@@ -5054,7 +7167,15 @@ def historical_growth_rate(lot):
         rate = ((last['weight_g'] or 0) - (first['weight_g'] or 0)) / days
         if rate > 0:
             return round(rate, 3)
-    return 0.18 if lot.phase == 'bercario' else 0.24
+    age = max((date.today() - lot.start_date).days, 0) if lot and lot.start_date else 0
+    if is_nursery_lot(lot):
+        curve = nursery_protocol_curve_for_lot(lot, age)
+        return round(curve.get('daily_gain_g') or 0.001, 4) if curve else 0.001
+    if is_growout_lot(lot):
+        curve_now = production_protocol_curve_for_lot(lot, age) or standard_growout_curve_point(age)
+        curve_future = production_protocol_curve_for_lot(lot, age + 7) or standard_growout_curve_point(age + 7)
+        return round(max((curve_future['expected_weight_g'] - curve_now['expected_weight_g']) / 7, 0.03), 3)
+    return 0.08
 
 
 def smart_growth_projection(lot, days_ahead=7):
@@ -5133,6 +7254,8 @@ def feed_profile_for_weight(weight):
         'curve_source': curve['source'],
         'standard_survival_pct': curve['survival_pct'],
         'standard_fcr': curve['estimated_fcr'],
+        'feedings_per_day': curve.get('feedings_per_day') or 4,
+        'base_daily_feed_kg_160k': curve.get('base_daily_feed_kg_160k'),
     }
 
 
@@ -5140,7 +7263,7 @@ def feed_profile_for_lot(lot, weight):
     profile = feed_profile_for_weight(weight)
     if lot and is_growout_lot(lot):
         age_days = max((date.today() - lot.start_date).days, 0)
-        age_curve = standard_growout_curve_point(age_days)
+        age_curve = production_protocol_curve_for_lot(lot, age_days) or standard_growout_curve_point(age_days)
         age_pct = (age_curve['feed_rate_pct'] or (profile['base_pct'] * 100)) / 100
         # Mescla peso real e idade do ciclo para evitar saltos quando a biometria atrasa.
         base_pct = (profile['base_pct'] * 0.7) + (age_pct * 0.3)
@@ -5150,7 +7273,24 @@ def feed_profile_for_lot(lot, weight):
             'max_pct': min(base_pct * 1.16, 0.14),
             'standard_survival_pct': age_curve['survival_pct'],
             'standard_fcr': age_curve['estimated_fcr'],
+            'feedings_per_day': age_curve.get('feedings_per_day') or profile.get('feedings_per_day') or 4,
+            'base_daily_feed_kg_160k': age_curve.get('base_daily_feed_kg_160k'),
+            'curve_source': age_curve.get('source') or profile.get('curve_source'),
         })
+    elif lot and is_nursery_lot(lot):
+        age_days = max((date.today() - lot.start_date).days, 0)
+        age_curve = nursery_protocol_curve_for_lot(lot, age_days)
+        if age_curve:
+            base_pct = (age_curve.get('feed_rate_pct') or (profile['base_pct'] * 100)) / 100
+            profile.update({
+                'base_pct': base_pct,
+                'min_pct': max(base_pct * 0.84, 0.018),
+                'max_pct': min(base_pct * 1.16, 0.40),
+                'standard_survival_pct': age_curve.get('survival_pct'),
+                'standard_fcr': age_curve.get('estimated_fcr'),
+                'feedings_per_day': 12,
+                'curve_source': age_curve.get('source'),
+            })
     return profile
 
 
@@ -5168,7 +7308,7 @@ def learned_feed_profile(lot, weight_g):
             continue
         biomass_kg = row.estimated_biomass_kg
         if not biomass_kg:
-            seed_count = parse_int(row.lot.initial_count, 0) or 0
+            seed_count = modeled_live_count_for_lot(row.lot, on_date=row.manage_date) or parse_int(row.lot.initial_count, 0) or 0
             biomass_kg = (seed_count * (row.average_weight_g or 0)) / 1000 if seed_count and row.average_weight_g else 0
         if not biomass_kg:
             continue
@@ -5192,6 +7332,10 @@ def learned_feed_profile(lot, weight_g):
 
 def feeding_recommendation_for_lot(lot):
     weight = parse_float(current_weight_for_lot(lot), 0) or 0
+    if weight <= 0:
+        age_days = max((date.today() - lot.start_date).days, 0) if lot and lot.start_date else 0
+        baseline = standard_expected_weight_at_age(lot, age_days)
+        weight = parse_float(baseline.get('expected_weight_g'), 0) or 0
     live_count = modeled_live_count_for_lot(lot)
     records_by_lot = {lot.id: DailyManagement.query.filter(DailyManagement.lot_id == lot.id).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()}
     allocations_by_lot = {lot.id: LotUnitAllocation.query.filter(
@@ -5216,7 +7360,8 @@ def feeding_recommendation_for_lot(lot):
     growth_factor = 1.0
     drivers = []
     if profile.get('curve_source'):
-        drivers.append('Curva-base: tabela padrão de engorda')
+        drivers.append(f"Curva-base: {profile.get('curve_source')}")
+        drivers.append('Ração recalculada proporcionalmente à população/biomassa real do lote')
     if biomass_source == 'biometria/manejo lançado':
         drivers.append('Biomassa real lançada priorizada')
     elif profile.get('standard_survival_pct') is not None:
@@ -5242,7 +7387,7 @@ def feeding_recommendation_for_lot(lot):
     final_pct = blended_pct * growth_factor * water_factor
     final_pct = min(max(final_pct, profile['min_pct']), profile['max_pct'])
     suggested = biomass_kg * final_pct
-    feedings_per_day = 4
+    feedings_per_day = int(profile.get('feedings_per_day') or 4)
     feed_per_feeding = suggested / feedings_per_day if feedings_per_day else suggested
     gap_pct = growth_projection.get('gap_pct')
     env_attention = False
