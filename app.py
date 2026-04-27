@@ -7143,11 +7143,94 @@ def standard_survival_pct_for_lot(lot: Lot, on_date=None):
     return curve['survival_pct']
 
 
+def table_final_survival_pct_for_lot(lot: Lot):
+    if not lot:
+        return None
+    if is_nursery_lot(lot):
+        return NURSERY_PROTOCOL_ROWS[-1].get('survival_pct')
+    rows = _production_protocol_rows_for_lot(lot)
+    if rows:
+        return rows[-1].get('survival_pct')
+    return None
+
+
+def learned_survival_profile(lot: Lot):
+    if not lot:
+        return {'survival_pct': None, 'cases': 0, 'confidence': 0}
+    target_phase = normalize_text(lot.phase or '')
+    target_supplier = normalize_text(lot.larva_supplier or '')
+    target_density = lot_density_snapshot(lot) or 0
+    candidates = Lot.query.filter(
+        Lot.status == 'encerrado',
+        Lot.id != lot.id,
+        Lot.initial_count.isnot(None),
+        Lot.initial_count > 0,
+    ).all()
+    scored = []
+    for hist_lot in candidates:
+        summary = lot_financial_summary(hist_lot)
+        survival = summary.get('survival_pct')
+        if survival is None or survival <= 0:
+            continue
+        hist_phase = normalize_text(hist_lot.phase or '')
+        phase_penalty = 0 if hist_phase == target_phase else 1.8
+        supplier_penalty = 0 if target_supplier and normalize_text(hist_lot.larva_supplier or '') == target_supplier else 0.8
+        hist_density = lot_density_snapshot(hist_lot) or target_density
+        density_penalty = abs((hist_density or 0) - (target_density or 0)) / 30.0 if target_density else 0.2
+        distance = phase_penalty + supplier_penalty + density_penalty
+        weight = 1 / (1 + distance)
+        scored.append((distance, weight, survival))
+    if not scored:
+        return {'survival_pct': None, 'cases': 0, 'confidence': 0}
+    top = sorted(scored, key=lambda item: item[0])[:35]
+    total_weight = sum(item[1] for item in top)
+    learned = sum(item[2] * item[1] for item in top) / total_weight if total_weight else None
+    return {
+        'survival_pct': round(learned, 2) if learned is not None else None,
+        'cases': len(top),
+        'confidence': min(92, 28 + len(top) * 3),
+    }
+
+
+def adaptive_survival_profile_for_lot(lot: Lot, on_date=None):
+    standard = standard_survival_pct_for_lot(lot, on_date=on_date)
+    if standard is None:
+        return {'survival_pct': None, 'standard_survival_pct': None, 'learned_final_survival_pct': None, 'cases': 0, 'confidence': 0, 'source': 'sem curva de sobrevivência'}
+    final_standard = table_final_survival_pct_for_lot(lot) or standard
+    learned = learned_survival_profile(lot)
+    if not learned.get('survival_pct') or not learned.get('cases'):
+        return {
+            'survival_pct': round(standard, 2),
+            'standard_survival_pct': round(standard, 2),
+            'learned_final_survival_pct': None,
+            'cases': 0,
+            'confidence': 45,
+            'source': 'sobrevivência da tabela-base',
+        }
+    standard_loss_now = max(100 - standard, 0)
+    standard_loss_final = max(100 - final_standard, 0.1)
+    learned_final = max(min(learned['survival_pct'], 100), 0)
+    learned_loss_final = max(100 - learned_final, 0)
+    mortality_factor = learned_loss_final / standard_loss_final
+    learned_at_age = 100 - (standard_loss_now * mortality_factor)
+    learned_at_age = max(min(learned_at_age, 100), 30)
+    historical_weight = min(0.55, 0.18 + learned['cases'] * 0.035)
+    adaptive = (standard * (1 - historical_weight)) + (learned_at_age * historical_weight)
+    return {
+        'survival_pct': round(max(min(adaptive, 100), 0), 2),
+        'standard_survival_pct': round(standard, 2),
+        'learned_final_survival_pct': round(learned_final, 2),
+        'cases': learned['cases'],
+        'confidence': learned['confidence'],
+        'source': 'tabela-base calibrada por sobrevivência real da fazenda',
+    }
+
+
 def modeled_live_count_for_lot(lot: Lot, on_date=None):
     """Contagem viva usada em projeções/sugestão quando ainda não há despesca real.
 
     Usa mortalidade lançada, mas evita superestimar biomassa quando há pouca mortalidade visível,
-    aplicando a sobrevivência padrão da curva como teto inicial. Biomassa real lançada em biometria
+    aplicando a sobrevivência da tabela-base calibrada pelo histórico real como teto inicial. Biomassa real lançada em biometria
     continua tendo prioridade nas sugestões de ração.
     """
     on_date = on_date or date.today()
@@ -7160,11 +7243,12 @@ def modeled_live_count_for_lot(lot: Lot, on_date=None):
     mortality = total_mortality_for_lot(lot.id, up_to_date=on_date)
     harvested = lot_total_harvested_units(lot.id)
     mortality_adjusted = max(base_count - mortality - harvested, 0)
-    standard_survival = standard_survival_pct_for_lot(lot, on_date=on_date)
-    if standard_survival is None or harvested > 0 or not base_count:
+    survival_profile = adaptive_survival_profile_for_lot(lot, on_date=on_date)
+    modeled_survival = survival_profile.get('survival_pct')
+    if modeled_survival is None or harvested > 0 or not base_count:
         return mortality_adjusted
-    standard_adjusted = int(round(base_count * (standard_survival / 100)))
-    return max(min(mortality_adjusted, standard_adjusted), 0)
+    modeled_adjusted = int(round(base_count * (modeled_survival / 100)))
+    return max(min(mortality_adjusted, modeled_adjusted), 0)
 
 
 def pellet_hint_for_weight(weight_g):
@@ -7454,6 +7538,7 @@ def feeding_recommendation_for_lot(lot):
     else:
         biomass_kg = (live_count * weight) / 1000 if weight > 0 and live_count > 0 else 0
     profile = feed_profile_for_lot(lot, weight)
+    survival_model = adaptive_survival_profile_for_lot(lot)
     growth_projection = smart_growth_projection(lot, 7)
     learned = learned_feed_profile(lot, weight)
     learned_pct = learned['feed_pct'] if learned['feed_pct'] is not None else profile['base_pct']
@@ -7466,6 +7551,10 @@ def feeding_recommendation_for_lot(lot):
         drivers.append('Ração recalculada proporcionalmente à população/biomassa real do lote')
     if biomass_source == 'biometria/manejo lançado':
         drivers.append('Biomassa real lançada priorizada')
+    elif survival_model.get('survival_pct') is not None:
+        drivers.append(f"Sobrevivência usada na biomassa viva: {survival_model['survival_pct']}%")
+        if survival_model.get('cases'):
+            drivers.append(f"Sobrevivência calibrada com {survival_model['cases']} ciclo(s) encerrado(s)")
     elif profile.get('standard_survival_pct') is not None:
         drivers.append(f"Sobrevivência inicial estimada: {profile['standard_survival_pct']}%")
     if growth_projection.get('gap_pct') is not None:
@@ -7519,6 +7608,10 @@ def feeding_recommendation_for_lot(lot):
         'biomass_source': biomass_source,
         'live_count': live_count,
         'standard_survival_pct': profile.get('standard_survival_pct'),
+        'adaptive_survival_pct': survival_model.get('survival_pct'),
+        'learned_final_survival_pct': survival_model.get('learned_final_survival_pct'),
+        'survival_model_source': survival_model.get('source'),
+        'survival_cases': survival_model.get('cases'),
         'standard_fcr': profile.get('standard_fcr'),
         'base_pct_biomass': round(profile['base_pct'] * 100, 2),
         'learned_pct_biomass': round((learned_pct or profile['base_pct']) * 100, 2),
@@ -7551,7 +7644,8 @@ def build_growth_analysis(lot):
     if not lot:
         return {'points': [], 'summary': None}
     points = []
-    for obs in merged_weight_observations(lot.id):
+    observations = merged_weight_observations(lot.id)
+    for obs in observations:
         days = max((obs['date'] - lot.start_date).days, 0)
         curve = adaptive_expected_weight_at_age(lot, days)
         real_weight = round(obs['weight_g'] or 0, 2)
@@ -7568,6 +7662,9 @@ def build_growth_analysis(lot):
         })
     projection_7 = smart_growth_projection(lot, 7)
     projection_14 = smart_growth_projection(lot, 14)
+    current_age = max((date.today() - lot.start_date).days, 0)
+    curve_today = adaptive_expected_weight_at_age(lot, current_age)
+    current_weight = parse_float(current_weight_for_lot(lot), None)
     summary = None
     if points:
         last = points[-1]
@@ -7582,6 +7679,25 @@ def build_growth_analysis(lot):
             'model_confidence': projection_7['model_confidence'],
             'similar_cases': projection_7['similar_cases'],
             'drivers': projection_7['drivers'],
+            'summary_source': 'biometria/manejo real + curva-base',
+        }
+    else:
+        displayed_weight = round(current_weight or curve_today['expected_weight_g'] or 0, 2)
+        has_manual_weight = current_weight is not None and current_weight > 0
+        deviation_g = round(displayed_weight - curve_today['expected_weight_g'], 2) if has_manual_weight else None
+        deviation_pct = round((deviation_g / curve_today['expected_weight_g']) * 100, 2) if deviation_g is not None and curve_today['expected_weight_g'] else None
+        summary = {
+            'current_weight_g': displayed_weight,
+            'expected_weight_g': curve_today['expected_weight_g'],
+            'deviation_g': deviation_g,
+            'deviation_pct': deviation_pct,
+            'projection_7d_g': projection_7['projected_weight_g'],
+            'projection_14d_g': projection_14['projected_weight_g'],
+            'daily_gain_g': projection_7['daily_gain_g'],
+            'model_confidence': projection_7['model_confidence'],
+            'similar_cases': projection_7['similar_cases'],
+            'drivers': projection_7['drivers'] + ['Sem biometria real ainda: usando a tabela-base como trilho inicial'],
+            'summary_source': 'curva-base da tabela até entrar biometria real',
         }
     return {'points': points, 'summary': summary}
 
@@ -7889,10 +8005,13 @@ def feeding_planner_page():
     rows.sort(key=lambda item: (item['rec'].get('growth_gap_pct') is None, item['rec'].get('growth_gap_pct', 999)))
     total_suggested = sum((row['rec'].get('suggested_feed_kg') or 0) for row in rows)
     attention_lots = sum(1 for row in rows if row['rec'].get('attention_level') in {'danger', 'warning'})
+    survival_values = [row['rec'].get('adaptive_survival_pct') for row in rows if row['rec'].get('adaptive_survival_pct') is not None]
     model_summary = {
         'active_lots': len(rows),
         'avg_confidence': round(sum((row['rec'].get('model_confidence') or 0) for row in rows) / len(rows), 1) if rows else 0,
         'historical_cases': sum((row['rec'].get('historical_cases') or 0) for row in rows),
+        'survival_cases': sum((row['rec'].get('survival_cases') or 0) for row in rows),
+        'avg_survival_pct': round(sum(survival_values) / len(survival_values), 1) if survival_values else None,
         'total_suggested_feed_kg': round(total_suggested, 2),
         'attention_lots': attention_lots,
     }
