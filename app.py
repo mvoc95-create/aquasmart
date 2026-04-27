@@ -224,6 +224,7 @@ class NurseryFeeding(db.Model):
     lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
     quantity_kg = db.Column(db.Float, nullable=False, default=0)
     intestinal_score = db.Column(db.Float)
+    score_adjustment_pct = db.Column(db.Float)
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -261,6 +262,7 @@ class DailyManagement(db.Model):
     feed_product_id = db.Column(db.Integer, db.ForeignKey('feed_product.id'))
     feed_offered_kg = db.Column(db.Float, default=0)
     feed_consumed_kg = db.Column(db.Float, default=0)
+    tray_score = db.Column(db.Float)
     feed_unit_cost = db.Column(db.Float)
     feed_total_cost = db.Column(db.Float, default=0)
     mortality_qty = db.Column(db.Integer, default=0)
@@ -971,24 +973,45 @@ def grams_to_kg(value):
     return round((value or 0) / 1000.0, 3)
 
 
-def nursery_score_factor(score):
+def nursery_score_adjustment_pct(score):
+    """Sugestão padrão de ajuste da ração com base no score intestinal."""
     if score is None:
-        return 1.0
+        return 0.0
     try:
         score = float(score)
     except (TypeError, ValueError):
-        return 1.0
+        return 0.0
     if 0 <= score <= 1.0:
-        return 1.30
+        return 30.0
     if score <= 2.0:
-        return 1.20
+        return 20.0
     if score <= 3.0:
-        return 1.10
+        return 10.0
     if score <= 3.5:
-        return 1.00
+        return 0.0
     if score <= 4.0:
-        return 0.90
-    return 1.0
+        return -10.0
+    return 0.0
+
+
+def nursery_adjustment_pct_factor(adjustment_pct):
+    try:
+        adjustment_pct = float(adjustment_pct or 0)
+    except (TypeError, ValueError):
+        adjustment_pct = 0.0
+    return 1.0 + (adjustment_pct / 100.0)
+
+
+def nursery_score_factor(score):
+    return nursery_adjustment_pct_factor(nursery_score_adjustment_pct(score))
+
+
+def nursery_record_adjustment_pct(record):
+    if record is None:
+        return 0.0
+    if record.score_adjustment_pct is not None:
+        return float(record.score_adjustment_pct)
+    return nursery_score_adjustment_pct(record.intestinal_score)
 
 
 def nursery_score_factor_label(factor):
@@ -1000,6 +1023,18 @@ def nursery_score_factor_label(factor):
     return 'sem ajuste'
 
 
+def nursery_adjustment_pct_label(adjustment_pct):
+    try:
+        adjustment_pct = float(adjustment_pct or 0)
+    except (TypeError, ValueError):
+        adjustment_pct = 0.0
+    if adjustment_pct > 0:
+        return f'+{adjustment_pct:g}%'
+    if adjustment_pct < 0:
+        return f'{adjustment_pct:g}%'
+    return 'sem ajuste'
+
+
 def nursery_cumulative_adjustments(lot_id: int | None, target_date: date):
     if not lot_id or not target_date:
         return {'factor': 1.0, 'events': []}
@@ -1007,17 +1042,23 @@ def nursery_cumulative_adjustments(lot_id: int | None, target_date: date):
     records = NurseryFeeding.query.filter(
         NurseryFeeding.lot_id == lot_id,
         NurseryFeeding.feed_date < target_date,
-        NurseryFeeding.intestinal_score.isnot(None),
+        or_(
+            NurseryFeeding.intestinal_score.isnot(None),
+            NurseryFeeding.score_adjustment_pct.isnot(None),
+        ),
     ).order_by(NurseryFeeding.feed_date.asc(), NurseryFeeding.id.asc()).all()
 
     cumulative_factor = 1.0
     events = []
     for record in records:
-        daily_factor = nursery_score_factor(record.intestinal_score)
+        daily_adjustment_pct = nursery_record_adjustment_pct(record)
+        daily_factor = nursery_adjustment_pct_factor(daily_adjustment_pct)
         cumulative_factor *= daily_factor
         events.append({
             'date': record.feed_date,
             'score': record.intestinal_score,
+            'adjustment_pct': daily_adjustment_pct,
+            'adjustment_label': nursery_adjustment_pct_label(daily_adjustment_pct),
             'factor': daily_factor,
             'factor_label': nursery_score_factor_label(daily_factor),
             'cumulative_factor': cumulative_factor,
@@ -1044,6 +1085,8 @@ def build_nursery_management_note_block(entry, mix_label=None):
         lines.append(f'Produto do mix: {mix_label}')
     if entry.intestinal_score is not None:
         lines.append(f'Score intestinal: {entry.intestinal_score}')
+    if entry.score_adjustment_pct is not None:
+        lines.append(f'Ajuste de ração para o próximo dia: {nursery_adjustment_pct_label(entry.score_adjustment_pct)}')
     if (entry.notes or '').strip():
         lines.append(f'Observações do berçário: {(entry.notes or '').strip()}')
     lines.append('[/Integração berçário]')
@@ -1218,7 +1261,7 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     if correction_events:
         last_event = correction_events[-1]
         message_lines.append(f"Correção acumulada ativa: {correction_label} sobre o protocolo base")
-        message_lines.append(f"Último score usado: {float(last_event['score']):.1f} em {last_event['date'].strftime('%d/%m/%Y')} ({last_event['factor_label']})".replace('.', ','))
+        message_lines.append(f"Último score usado: {float(last_event['score']):.1f} em {last_event['date'].strftime('%d/%m/%Y')} ({last_event.get('adjustment_label', last_event['factor_label'])})".replace('.', ','))
     elif correction_factor != 1.0:
         message_lines.append(f"Correção acumulada ativa: {correction_label} sobre o protocolo base")
     message_lines.extend([
@@ -1562,6 +1605,10 @@ def run_lightweight_migrations():
         add_column_if_missing('sale', sale_columns, 'average_weight_g', 'ALTER TABLE sale ADD COLUMN average_weight_g FLOAT', 'ALTER TABLE sale ADD COLUMN average_weight_g DOUBLE PRECISION')
         add_column_if_missing('sale', sale_columns, 'harvested_units', 'ALTER TABLE sale ADD COLUMN harvested_units INTEGER', 'ALTER TABLE sale ADD COLUMN harvested_units INTEGER')
 
+    if 'nursery_feeding' in tables:
+        nursery_feeding_columns = get_columns('nursery_feeding')
+        add_column_if_missing('nursery_feeding', nursery_feeding_columns, 'score_adjustment_pct', 'ALTER TABLE nursery_feeding ADD COLUMN score_adjustment_pct FLOAT', 'ALTER TABLE nursery_feeding ADD COLUMN score_adjustment_pct DOUBLE PRECISION')
+
     if 'water_monitoring' in tables:
         water_columns = get_columns('water_monitoring')
         add_column_if_missing('water_monitoring', water_columns, 'monitor_time', 'ALTER TABLE water_monitoring ADD COLUMN monitor_time TIME')
@@ -1602,6 +1649,7 @@ def run_lightweight_migrations():
         add_column_if_missing('daily_management', daily_management_columns, 'feed_product_id', 'ALTER TABLE daily_management ADD COLUMN feed_product_id INTEGER', 'ALTER TABLE daily_management ADD COLUMN feed_product_id INTEGER')
         add_column_if_missing('daily_management', daily_management_columns, 'feed_unit_cost', 'ALTER TABLE daily_management ADD COLUMN feed_unit_cost FLOAT', 'ALTER TABLE daily_management ADD COLUMN feed_unit_cost DOUBLE PRECISION')
         add_column_if_missing('daily_management', daily_management_columns, 'feed_total_cost', 'ALTER TABLE daily_management ADD COLUMN feed_total_cost FLOAT DEFAULT 0', 'ALTER TABLE daily_management ADD COLUMN feed_total_cost DOUBLE PRECISION DEFAULT 0')
+        add_column_if_missing('daily_management', daily_management_columns, 'tray_score', 'ALTER TABLE daily_management ADD COLUMN tray_score FLOAT', 'ALTER TABLE daily_management ADD COLUMN tray_score DOUBLE PRECISION')
         add_column_if_missing('daily_management', daily_management_columns, 'created_at', f"ALTER TABLE daily_management ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE daily_management ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         add_column_if_missing('daily_management', daily_management_columns, 'updated_at', f"ALTER TABLE daily_management ADD COLUMN updated_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE daily_management ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
 
@@ -3381,9 +3429,9 @@ def management_page():
         lot = active_lot_for_unit(unit_id, on_date=manage_date)
         feed_product = selected_feed_product_from_form()
         feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
-        feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
-        if feed_consumed_kg > feed_offered_kg and feed_offered_kg > 0:
-            flash('A ração consumida não pode ser maior que a ofertada.', 'danger')
+        tray_score = parse_float(request.form.get('tray_score'))
+        if tray_score is not None and not 0 <= tray_score <= 4:
+            flash('O score de bandeja deve ficar entre 0 e 4.', 'danger')
             return redirect(url_for('management_page', unit_id=unit_id))
         validation_error = validate_feed_usage(feed_product, feed_offered_kg)
         if validation_error:
@@ -3401,7 +3449,7 @@ def management_page():
             lot_id=lot.id if lot else None,
             feed_product_id=feed_product.id if feed_product else None,
             feed_offered_kg=feed_offered_kg,
-            feed_consumed_kg=feed_consumed_kg,
+            tray_score=tray_score,
             mortality_qty=parse_int(request.form.get('mortality_qty'), 0) or 0,
             average_weight_g=parse_float(request.form.get('average_weight_g')),
             estimated_biomass_kg=parse_float(request.form.get('estimated_biomass_kg')),
@@ -3481,7 +3529,7 @@ def previous_management_data():
             'manage_date': previous_record.manage_date.isoformat(),
             'feed_product_id': previous_record.feed_product_id,
             'feed_offered_kg': previous_record.feed_offered_kg,
-            'feed_consumed_kg': previous_record.feed_consumed_kg,
+            'tray_score': previous_record.tray_score,
             'mortality_qty': previous_record.mortality_qty,
             'average_weight_g': previous_record.average_weight_g,
             'estimated_biomass_kg': previous_record.estimated_biomass_kg,
@@ -3544,11 +3592,11 @@ def edit_management_record(record_id):
     lot = active_lot_for_unit(unit_id, on_date=new_manage_date)
     feed_product = selected_feed_product_from_form()
     feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
-    feed_consumed_kg = parse_float(request.form.get('feed_consumed_kg'), 0) or 0
+    tray_score = parse_float(request.form.get('tray_score'))
     existing_movement = get_management_feed_movement(record_id)
 
-    if feed_consumed_kg > feed_offered_kg and feed_offered_kg > 0:
-        flash('A ração consumida não pode ser maior que a ofertada.', 'danger')
+    if tray_score is not None and not 0 <= tray_score <= 4:
+        flash('O score de bandeja deve ficar entre 0 e 4.', 'danger')
         return redirect(request.referrer or url_for('management_page'))
 
     validation_error = validate_feed_usage(feed_product, feed_offered_kg, existing_movement=existing_movement)
@@ -3566,7 +3614,7 @@ def edit_management_record(record_id):
     rec.lot_id = lot.id if lot else None
     rec.feed_product_id = feed_product.id if feed_product else None
     rec.feed_offered_kg = feed_offered_kg
-    rec.feed_consumed_kg = feed_consumed_kg
+    rec.tray_score = tray_score
     rec.mortality_qty = parse_int(request.form.get('mortality_qty'), 0) or 0
     rec.average_weight_g = parse_float(request.form.get('average_weight_g'))
     rec.estimated_biomass_kg = parse_float(request.form.get('estimated_biomass_kg'))
@@ -3642,7 +3690,7 @@ def chart_parameter_options():
         'temperature': {'group': 'water', 'field': 'temperature_c', 'label': 'Temperatura', 'unit': '°C', 'title': 'Temperatura x tempo', 'threshold_key': 'temperature_c'},
         'ph': {'group': 'water', 'field': 'ph', 'label': 'pH', 'unit': '', 'title': 'pH x tempo', 'threshold_key': 'ph'},
         'feed_offered': {'group': 'management', 'field': 'feed_offered_kg', 'label': 'Ração ofertada', 'unit': 'kg', 'title': 'Ração ofertada x tempo', 'threshold_key': None},
-        'feed_consumed': {'group': 'management', 'field': 'feed_consumed_kg', 'label': 'Ração consumida', 'unit': 'kg', 'title': 'Ração consumida x tempo', 'threshold_key': None},
+        'tray_score': {'group': 'management', 'field': 'tray_score', 'label': 'Score de bandeja', 'unit': '0–4', 'title': 'Score de bandeja x tempo', 'threshold_key': None},
         'mortality': {'group': 'management', 'field': 'mortality_qty', 'label': 'Mortalidade', 'unit': 'un', 'title': 'Mortalidade x tempo', 'threshold_key': None},
         'average_weight': {'group': 'management', 'field': 'average_weight_g', 'label': 'Peso médio', 'unit': 'g', 'title': 'Peso médio x tempo', 'threshold_key': None},
     }
@@ -3668,7 +3716,7 @@ def build_chart_meta():
         },
         'management': {
             'feed_offered': {'label': 'Ração ofertada', 'unit': 'kg'},
-            'feed_consumed': {'label': 'Ração consumida', 'unit': 'kg'},
+            'tray_score': {'label': 'Score de bandeja', 'unit': '0–4'},
             'mortality': {'label': 'Mortalidade', 'unit': 'un'},
             'average_weight': {'label': 'Peso médio', 'unit': 'g'},
         }
@@ -4386,6 +4434,9 @@ def nursery_feed_page():
         entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
         submitted_quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
         entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
+        entry.score_adjustment_pct = parse_float(request.form.get('score_adjustment_pct'))
+        if entry.score_adjustment_pct is None and entry.intestinal_score is not None:
+            entry.score_adjustment_pct = nursery_score_adjustment_pct(entry.intestinal_score)
         entry.quantity_kg = submitted_quantity_kg
         entry.notes = request.form.get('notes')
         entry.updated_at = datetime.utcnow()
