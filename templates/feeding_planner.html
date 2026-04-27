@@ -7,7 +7,7 @@
     <div>
       <p class="panel-kicker">Resumo do dia</p>
       <h2>Plano de alimentação dos lotes ativos</h2>
-      <p class="muted-line">A sugestão parte da planilha-base de 160.000 camarões e vai sendo corrigida pela biometria, manejo e histórico real da fazenda.</p>
+      <p class="muted-line">A sugestão parte da tabela-base de 160.000 PL, calcula a oferta como % da biomassa viva estimada e vai sendo calibrada pela biometria, manejo, sobrevivência real e histórico da fazenda.</p>
     </div>
   </div>
   <div class="feeding-summary-grid">
@@ -29,7 +29,7 @@
     <article class="feeding-summary-card">
       <span>Confiança média</span>
       <strong>{{ model_summary.avg_confidence }}%</strong>
-      <small>{{ model_summary.historical_cases }} dados históricos usados</small>
+      <small>{{ model_summary.historical_cases }} dados de crescimento · {{ model_summary.survival_cases }} ciclos de sobrevivência</small>
     </article>
   </div>
 </section>
@@ -71,6 +71,7 @@
       <div class="feed-range-box">
         <span>Faixa segura para ajuste</span>
         <strong>{{ row.rec.min_feed_kg }} a {{ row.rec.max_feed_kg }} kg/dia</strong>
+        <small>Calculada sobre {{ row.rec.live_count }} camarões vivos estimados.</small>
       </div>
 
       <p class="feed-action-hint">{{ row.rec.action_hint }}</p>
@@ -80,8 +81,10 @@
         <div class="feed-details-grid">
           <div><span>Peso esperado</span><strong>{{ row.rec.expected_weight_g or '—' }} g</strong></div>
           <div><span>Desvio da curva</span><strong>{{ row.rec.growth_gap_pct if row.rec.growth_gap_pct is not none else '—' }}{% if row.rec.growth_gap_pct is not none %}%{% endif %}</strong></div>
-          <div><span>Sobrevivência base</span><strong>{{ row.rec.standard_survival_pct or '—' }}{% if row.rec.standard_survival_pct %}%{% endif %}</strong></div>
+          <div><span>Sobrevivência tabela</span><strong>{{ row.rec.standard_survival_pct or '—' }}{% if row.rec.standard_survival_pct %}%{% endif %}</strong></div>
+          <div><span>Sobrevivência usada</span><strong>{{ row.rec.adaptive_survival_pct or '—' }}{% if row.rec.adaptive_survival_pct %}%{% endif %}</strong></div>
           <div><span>FCR base</span><strong>{{ row.rec.standard_fcr or '—' }}</strong></div>
+          <div><span>Calibração</span><strong>{{ row.rec.survival_cases or 0 }} ciclo(s)</strong></div>
           <div><span>Peso em 7 dias</span><strong>{{ row.rec.projected_weight_7d_g }} g</strong></div>
           <div><span>Origem biomassa</span><strong>{{ row.rec.biomass_source or '—' }}</strong></div>
         </div>
@@ -121,7 +124,7 @@
             <td>{{ row.rec.current_weight_g }} g</td>
             <td>{{ row.rec.expected_weight_g or '—' }} g</td>
             <td>{% if row.rec.growth_gap_pct is not none %}<span class="pill {{ 'pill-danger' if row.rec.growth_gap_pct < -5 else 'pill-success' if row.rec.growth_gap_pct > 5 else 'pill-neutral' }}">{{ row.rec.growth_gap_pct }}%</span>{% else %}—{% endif %}</td>
-            <td>{{ row.rec.biomass_kg }} kg<br><small>{{ row.rec.biomass_source or '—' }}</small></td>
+            <td>{{ row.rec.biomass_kg }} kg<br><small>{{ row.rec.biomass_source or '—' }} · {{ row.rec.live_count }} vivos · sobrev. {{ row.rec.adaptive_survival_pct or '—' }}{% if row.rec.adaptive_survival_pct %}%{% endif %}</small></td>
             <td>{{ row.rec.base_pct_biomass }}%</td>
             <td>{{ row.rec.learned_pct_biomass }}%</td>
             <td><strong>{{ row.rec.feed_pct_biomass }}%</strong></td>

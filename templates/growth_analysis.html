@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block page_title %}Crescimento real x esperado{% endblock %}
-{% block page_subtitle %}A curva esperada começa na planilha-base de 160.000 camarões de engorda e vai sendo corrigida pelo histórico real da fazenda conforme os ciclos avançam.{% endblock %}
+{% block page_subtitle %}A curva esperada começa na tabela-base de berçário, juvenil e engorda, e vai sendo corrigida pelo histórico real da fazenda conforme entram biometria, manejo e ciclos encerrados.{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-head compact-between">
@@ -12,14 +12,14 @@
   <div class="kpi-grid">
     <article class="kpi-card"><span>Peso real atual</span><strong>{{ summary.current_weight_g }} g</strong></article>
     <article class="kpi-card"><span>Peso esperado</span><strong>{{ summary.expected_weight_g }} g</strong></article>
-    <article class="kpi-card"><span>Desvio</span><strong>{{ summary.deviation_g }} g{% if summary.deviation_pct is not none %} ({{ summary.deviation_pct }}%){% endif %}</strong></article>
+    <article class="kpi-card"><span>Desvio</span><strong>{% if summary.deviation_g is not none %}{{ summary.deviation_g }} g{% if summary.deviation_pct is not none %} ({{ summary.deviation_pct }}%){% endif %}{% else %}—{% endif %}</strong></article>
     <article class="kpi-card"><span>Projeção em 7 dias</span><strong>{{ summary.projection_7d_g }} g</strong></article>
     <article class="kpi-card"><span>Projeção em 14 dias</span><strong>{{ summary.projection_14d_g }} g</strong></article>
     <article class="kpi-card"><span>Confiança do modelo</span><strong>{{ summary.model_confidence }}%</strong></article>
   </div>
   {% endif %}
 
-  {% if projection_21 %}<div class="hero-inline-note">Peso estimado em 21 dias: <strong>{{ projection_21.projected_weight_g }} g</strong> · ganho diário combinado: <strong>{{ projection_21.daily_gain_g }} g/dia</strong> · casos parecidos usados: <strong>{{ projection_21.similar_cases }}</strong>.</div>{% endif %}
+  {% if projection_21 %}<div class="hero-inline-note">Peso estimado em 21 dias: <strong>{{ projection_21.projected_weight_g }} g</strong> · ganho diário combinado: <strong>{{ projection_21.daily_gain_g }} g/dia</strong> · casos parecidos usados: <strong>{{ projection_21.similar_cases }}</strong>{% if summary and summary.summary_source %} · origem: <strong>{{ summary.summary_source }}</strong>{% endif %}.</div>{% endif %}
 
   <div class="table-wrap">
     <table>
