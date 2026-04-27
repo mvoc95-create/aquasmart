@@ -329,13 +329,15 @@ button:hover{transform:translateY(-1px)}
 .nursery-main-grid{margin-bottom:0}
 .nursery-entry-panel{margin-bottom:0}
 .nursery-entry-form{grid-template-columns:repeat(2,minmax(0,1fr))}
+.score-adjustment-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.score-adjustment-input{font-weight:800}
 .message-preview{width:100%;min-height:180px;padding:14px 15px;border-radius:16px;border:1px solid var(--line);background:#fff;color:var(--text);line-height:1.5;font-family:inherit;white-space:pre-wrap}
 .message-preview-compact{min-height:150px}
 .nursery-copy-row{margin:12px 0}
 .nursery-collapse{margin-top:1rem}
 .nursery-collapse .reference-collapse-summary h2{font-size:18px}
 @media (max-width:960px){
-  .compact-grid,.nursery-entry-form{grid-template-columns:1fr}
+  .compact-grid,.nursery-entry-form,.score-adjustment-row{grid-template-columns:1fr}
   .summary-chip{min-width:unset;flex:1 1 180px}
 }
 
