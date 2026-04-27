@@ -362,7 +362,14 @@ class FeedProduct(db.Model):
 
     @property
     def full_name(self):
-        parts = [part.strip() for part in [self.brand, self.feed_type] if part and part.strip()]
+        generic_types = {'geral', 'bercario', 'bercário'}
+        brand = (self.brand or '').strip()
+        feed_type = (self.feed_type or '').strip()
+        parts = []
+        if brand:
+            parts.append(brand)
+        if feed_type and normalize_text(feed_type) not in generic_types:
+            parts.append(feed_type)
         return ' · '.join(parts) if parts else f'Ração #{self.id}'
 
     @property
@@ -2990,7 +2997,7 @@ def nursery_feed_alias_tokens(label: str):
     replacements = {
         'nutrisphera': 'nutrisfera',
         'bercario': 'bercario',
-        'bercario': 'bercario',
+        'bercário': 'bercario',
     }
     tokens = set(normalized.split())
     expanded = set(tokens)
@@ -3002,48 +3009,153 @@ def nursery_feed_alias_tokens(label: str):
     return expanded
 
 
+def nursery_protocol_product_names():
+    names = set()
+    for row in NURSERY_PROTOCOL_ROWS:
+        for item in row.get('mixes', []):
+            name = (item.get('label') or '').strip()
+            if name:
+                names.add(normalize_text(name))
+    names.add(normalize_text('Ração berçário'))
+    return names
+
+
+def is_auto_nursery_protocol_product(product):
+    if not product:
+        return False
+    brand_norm = normalize_text(product.brand or '')
+    feed_type_norm = normalize_text(product.feed_type or '')
+    if brand_norm in nursery_protocol_product_names():
+        return True
+    if brand_norm.startswith('mem ') or brand_norm == 'mem':
+        return True
+    if feed_type_norm in {'bercario', 'bercário'} and (
+        brand_norm in nursery_protocol_product_names() or brand_norm.startswith('mem ') or brand_norm == 'racao bercario'
+    ):
+        return True
+    return False
+
+
+def numeric_ranges_from_text(text_value: str):
+    normalized = normalize_text(text_value or '')
+    ranges = []
+    for start, end in re.findall(r'(\d+(?:[\.,]\d+)?)\s*[-–—]\s*(\d+(?:[\.,]\d+)?)', normalized):
+        try:
+            a = float(start.replace(',', '.'))
+            b = float(end.replace(',', '.'))
+        except ValueError:
+            continue
+        ranges.append((min(a, b), max(a, b)))
+    return ranges
+
+
+def numeric_values_from_text(text_value: str):
+    normalized = normalize_text(text_value or '')
+    values = []
+    for value in re.findall(r'\d+(?:[\.,]\d+)?', normalized):
+        try:
+            values.append(float(value.replace(',', '.')))
+        except ValueError:
+            pass
+    return values
+
+
+def product_matches_nursery_range(label: str, product_text: str):
+    ranges = numeric_ranges_from_text(label)
+    if not ranges:
+        return False
+    values = numeric_values_from_text(product_text)
+    return any(start <= value <= end for start, end in ranges for value in values)
+
+
+def nursery_product_stock(product_id):
+    if not product_id:
+        return 0
+    try:
+        return available_stock_for_product(product_id)
+    except Exception:
+        return 0
+
+
 def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, create_missing=True):
     label = (label or '').strip()
     normalized_label = normalize_text(label)
     if not normalized_label:
         return None
-    label_tokens = nursery_feed_alias_tokens(label)
-    numeric_tokens = {token for token in label_tokens if token.isdigit()}
 
+    label_tokens = nursery_feed_alias_tokens(label)
+    numeric_tokens = {token for token in label_tokens if token.replace('.', '', 1).isdigit()}
+    protocol_label = normalized_label in nursery_protocol_product_names() or normalized_label.startswith('mem ')
+    nursery_candidates = []
     best_product = None
     best_score = -1
+
     for product in FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all():
         if exclude_product_id is not None and product.id == exclude_product_id:
             continue
+
         product_text = f'{product.brand} {product.feed_type} {product.technical_summary or ""}'
         product_tokens = nursery_feed_alias_tokens(product_text)
-        product_numbers = {token for token in product_tokens if token.isdigit()}
+        product_numbers = {token for token in product_tokens if token.replace('.', '', 1).isdigit()}
+        product_is_nursery = 'bercario' in product_tokens or 'bercário' in product_tokens or is_auto_nursery_protocol_product(product)
 
-        if numeric_tokens and product_numbers and not numeric_tokens.intersection(product_numbers):
-            continue
+        if product_is_nursery and not is_auto_nursery_protocol_product(product):
+            nursery_candidates.append(product)
 
         score = len(label_tokens.intersection(product_tokens))
-        if numeric_tokens and numeric_tokens.issubset(product_numbers):
-            score += 3
+
+        if normalized_label == normalize_text(product_text) or normalized_label == normalize_text(product.full_name):
+            score += 8
+
+        if product_matches_nursery_range(label, product_text):
+            score += 7
+
+        if numeric_tokens and product_numbers and numeric_tokens.intersection(product_numbers):
+            score += 4
+
         if 'nutrisfera' in label_tokens and 'nutrisfera' in product_tokens:
-            score += 3
+            score += 4
+
         if 'triturada' in label_tokens.intersection(product_tokens) or 'triturado' in label_tokens.intersection(product_tokens):
             score += 2
-        if normalized_label == normalize_text(product_text):
+
+        if protocol_label and product_is_nursery and not is_auto_nursery_protocol_product(product):
             score += 5
+
+        if protocol_label and not product_is_nursery:
+            score -= 5
+
+        if product.active:
+            score += 1
+
+        if nursery_product_stock(product.id) > 0:
+            score += 1
 
         if score > best_score:
             best_score = score
             best_product = product
 
-    if best_product and best_score >= 3:
+    if best_product and best_score >= (5 if protocol_label else 3):
         return best_product
+
+    nursery_candidates = sorted(
+        nursery_candidates,
+        key=lambda product: (
+            product.active is False,
+            -nursery_product_stock(product.id),
+            product.brand.lower(),
+            product.feed_type.lower(),
+        ),
+    )
+    if protocol_label and nursery_candidates:
+        return nursery_candidates[0]
 
     if not create_missing:
         return None
 
     # Cria só quando realmente não encontrou produto compatível.
-    product = FeedProduct(brand=label, feed_type='Berçário', active=True)
+    # Não adiciona "· Berçário" no nome, para não sujar o histórico de manejo.
+    product = FeedProduct(brand=label, feed_type='', active=True, notes='Criado automaticamente pelo protocolo de berçário.')
     db.session.add(product)
     db.session.flush()
     return product
@@ -3563,6 +3675,7 @@ def run_lightweight_migrations():
     backfill_lot_allocations_and_status()
     sync_transfer_phase_history()
     sync_feed_products_from_legacy_movements()
+    normalize_auto_nursery_feed_product_names()
 
 
 def init_db():
@@ -3978,6 +4091,35 @@ def sale_financial_summary(sale: Sale):
         'survival_pct': survival_pct,
         'fcr_real': fcr_real,
     }
+
+
+def normalize_auto_nursery_feed_product_names():
+    auto_products = FeedProduct.query.all()
+    for product in auto_products:
+        if normalize_text(product.feed_type or '') in {'bercario', 'bercário', 'geral'} and is_auto_nursery_protocol_product(product):
+            product.feed_type = ''
+
+    db.session.flush()
+
+    for product in list(FeedProduct.query.all()):
+        if not is_auto_nursery_protocol_product(product):
+            continue
+        canonical = find_or_create_nursery_feed_product(product.brand, exclude_product_id=product.id, create_missing=False)
+        if canonical and canonical.id != product.id:
+            for movement in FeedInventory.query.filter_by(feed_product_id=product.id).all():
+                movement.feed_product_id = canonical.id
+                movement.feed_name = canonical.full_name
+            for record in DailyManagement.query.filter_by(feed_product_id=product.id).all():
+                record.feed_product_id = canonical.id
+            product.active = False
+            product.notes = ((product.notes or '').strip() + '\nSubstituído automaticamente por produto de berçário cadastrado no estoque.').strip()
+
+    for movement in FeedInventory.query.filter(FeedInventory.feed_name.isnot(None)).all():
+        cleaned_name = re.sub(r'\s*·\s*(Berçário|Bercario|Geral)\s*$', '', movement.feed_name or '', flags=re.IGNORECASE).strip()
+        if cleaned_name and cleaned_name != movement.feed_name:
+            movement.feed_name = cleaned_name
+
+    db.session.commit()
 
 
 def sync_feed_products_from_legacy_movements():
