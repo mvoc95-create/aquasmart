@@ -63,9 +63,9 @@
 
   {% if edit_transfer %}
     <label>Origem
-      <select name="source_unit_id">
+      <select name="source_unit_id" id="source_unit_id">
         {% for u in units %}
-        <option value="{{u.id}}" {% if edit_transfer and edit_transfer.source_unit_id==u.id %}selected{% endif %}>{{u.name}} · {{ u.phase|phase_label }}</option>
+        <option value="{{u.id}}" data-phase="{{ u.phase }}" {% if edit_transfer and edit_transfer.source_unit_id==u.id %}selected{% endif %}>{{u.name}} · {{ u.phase|phase_label }}</option>
         {% endfor %}
       </select>
     </label>
@@ -78,19 +78,35 @@
     </label>
   {% else %}
     <label class="full">Origem com saldo ativo
-      <select name="source_allocation_id" required>
+      <select name="source_allocation_id" id="source_allocation_id" required>
         <option value="">Selecione o lote/unidade de origem</option>
         {% for a in allocations %}
-        <option value="{{ a.id }}">{{ a.lot.lot_code if a.lot else 'Lote' }} · {{ a.unit.name if a.unit else 'Unidade' }} · {{ a.unit.phase|phase_label if a.unit else '' }} · saldo {{ '{:,.0f}'.format(a.quantity_allocated or 0).replace(',', '.') }}</option>
+        <option value="{{ a.id }}" data-phase="{{ a.unit.phase if a.unit else '' }}">{{ a.lot.lot_code if a.lot else 'Lote' }} · {{ a.unit.name if a.unit else 'Unidade' }} · {{ a.unit.phase|phase_label if a.unit else '' }} · saldo {{ '{:,.0f}'.format(a.quantity_allocated or 0).replace(',', '.') }}</option>
         {% endfor %}
       </select>
     </label>
   {% endif %}
 
   <label>Destino
-    <select name="destination_unit_id" required>
+    <select name="destination_unit_id" id="destination_unit_id" required>
       {% for u in units %}
-      <option value="{{u.id}}" {% if edit_transfer and edit_transfer.destination_unit_id==u.id %}selected{% endif %}>{{u.name}} · {{ u.phase|phase_label }}</option>
+      <option value="{{u.id}}" data-phase="{{ u.phase }}" {% if edit_transfer and edit_transfer.destination_unit_id==u.id %}selected{% endif %}>{{u.name}} · {{ u.phase|phase_label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Fase de origem
+    <select name="source_phase" id="source_phase" required>
+      {% for value, label in phase_choices %}
+      <option value="{{ value }}" {% if edit_transfer and (edit_transfer.source_phase or (edit_transfer.source_unit.phase if edit_transfer.source_unit else '')) == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Fase de destino
+    <select name="destination_phase" id="destination_phase" required>
+      {% for value, label in phase_choices %}
+      <option value="{{ value }}" {% if edit_transfer and (edit_transfer.destination_phase or (edit_transfer.destination_unit.phase if edit_transfer.destination_unit else '')) == value %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
   </label>
@@ -151,7 +167,7 @@
         <td>{{ r.source_lot.lot_code if r.source_lot else '—' }}</td>
         <td>{{ r.source_unit.name if r.source_unit else '—' }}</td>
         <td>{{ r.destination_unit.name if r.destination_unit else '—' }}</td>
-        <td>{{ r.source_unit.phase|phase_label if r.source_unit else '—' }} → {{ r.destination_unit.phase|phase_label if r.destination_unit else '—' }}</td>
+        <td>{{ (r.source_phase or (r.source_unit.phase if r.source_unit else ''))|phase_label if (r.source_phase or r.source_unit) else '—' }} → {{ (r.destination_phase or (r.destination_unit.phase if r.destination_unit else ''))|phase_label if (r.destination_phase or r.destination_unit) else '—' }}</td>
         <td>{{ '{:,.0f}'.format(r.transferred_qty or 0).replace(',', '.') }}</td>
         <td>{{ r.avg_weight_g if r.avg_weight_g is not none else '—' }}</td>
         <td><a class="link-button small-button" href="{{ url_for('transfers_page', edit_id=r.id) }}">Editar</a></td>
@@ -164,4 +180,31 @@
 </div>
 </section>
 </div>
+<script>
+(function () {
+  function setPhaseFromSelect(selectId, phaseId) {
+    const select = document.getElementById(selectId);
+    const phase = document.getElementById(phaseId);
+    if (!select || !phase) return;
+    const opt = select.options[select.selectedIndex];
+    const value = opt ? opt.dataset.phase : '';
+    if (value) phase.value = value;
+  }
+  const sourceAllocation = document.getElementById('source_allocation_id');
+  const sourceUnit = document.getElementById('source_unit_id');
+  const destinationUnit = document.getElementById('destination_unit_id');
+  if (sourceAllocation) {
+    sourceAllocation.addEventListener('change', function () { setPhaseFromSelect('source_allocation_id', 'source_phase'); });
+    setPhaseFromSelect('source_allocation_id', 'source_phase');
+  }
+  if (sourceUnit) {
+    sourceUnit.addEventListener('change', function () { setPhaseFromSelect('source_unit_id', 'source_phase'); });
+    setPhaseFromSelect('source_unit_id', 'source_phase');
+  }
+  if (destinationUnit) {
+    destinationUnit.addEventListener('change', function () { setPhaseFromSelect('destination_unit_id', 'destination_phase'); });
+    setPhaseFromSelect('destination_unit_id', 'destination_phase');
+  }
+})();
+</script>
 {% endblock %}
