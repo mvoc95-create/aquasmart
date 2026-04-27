@@ -183,7 +183,7 @@
   <div class="panel-head"><div><p class="panel-kicker">Base do cálculo</p><h2>Manejos usados na média recente</h2></div></div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Data</th><th>Unidade</th><th>Lote</th><th>Ração</th><th>Ração ofertada (kg)</th><th>Ração consumida (kg)</th><th>Custo estimado</th></tr></thead>
+      <thead><tr><th>Data</th><th>Unidade</th><th>Lote</th><th>Ração</th><th>Ração ofertada (kg)</th><th>Score de bandeja</th><th>Custo estimado</th></tr></thead>
       <tbody>
         {% for item in rows %}
         <tr>
@@ -192,7 +192,7 @@
           <td>{{ item.lot.lot_code if item.lot else 'Sem lote' }}</td>
           <td>{{ item.feed_product.full_name if item.feed_product else '—' }}</td>
           <td>{{ item.feed_offered_kg }}</td>
-          <td>{{ item.feed_consumed_kg }}</td>
+          <td>{{ item.tray_score if item.tray_score is not none else '—' }}</td>
           <td>{{ item.feed_total_cost|money if item.feed_total_cost else '—' }}</td>
         </tr>
         {% else %}
