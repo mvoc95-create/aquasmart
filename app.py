@@ -339,6 +339,8 @@ class Transfer(db.Model):
     destination_unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'), nullable=False)
     source_lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'), nullable=False)
     destination_lot_code = db.Column(db.String(50), nullable=False)
+    source_phase = db.Column(db.String(30))
+    destination_phase = db.Column(db.String(30))
     transferred_qty = db.Column(db.Integer, nullable=False)
     avg_weight_g = db.Column(db.Float)
     notes = db.Column(db.Text)
@@ -3462,6 +3464,11 @@ def run_lightweight_migrations():
         allocation_columns = get_columns('lot_unit_allocation')
         add_column_if_missing('lot_unit_allocation', allocation_columns, 'quantity_allocated', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER')
 
+    if 'transfer' in tables:
+        transfer_columns = get_columns('transfer')
+        add_column_if_missing('transfer', transfer_columns, 'source_phase', 'ALTER TABLE transfer ADD COLUMN source_phase VARCHAR(30)', 'ALTER TABLE transfer ADD COLUMN source_phase VARCHAR(30)')
+        add_column_if_missing('transfer', transfer_columns, 'destination_phase', 'ALTER TABLE transfer ADD COLUMN destination_phase VARCHAR(30)', 'ALTER TABLE transfer ADD COLUMN destination_phase VARCHAR(30)')
+
     if 'sale' in tables:
         sale_columns = get_columns('sale')
         add_column_if_missing('sale', sale_columns, 'average_weight_g', 'ALTER TABLE sale ADD COLUMN average_weight_g FLOAT', 'ALTER TABLE sale ADD COLUMN average_weight_g DOUBLE PRECISION')
@@ -3554,6 +3561,7 @@ def run_lightweight_migrations():
         add_column_if_missing('management_supply_usage', management_supply_columns, 'updated_at', f"ALTER TABLE management_supply_usage ADD COLUMN updated_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE management_supply_usage ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
 
     backfill_lot_allocations_and_status()
+    sync_transfer_phase_history()
     sync_feed_products_from_legacy_movements()
 
 
@@ -3624,6 +3632,80 @@ def backfill_lot_allocations_and_status():
                 lot.closed_reason = 'encerrado_manual'
     if created:
         db.session.flush()
+
+
+
+def sync_transfer_phase_history():
+    """Backfills historical transfer phases so the timeline does not depend on later unit edits."""
+    changed = False
+    for transfer in Transfer.query.options(joinedload(Transfer.source_unit), joinedload(Transfer.destination_unit)).all():
+        if not transfer.source_phase and transfer.source_unit and transfer.source_unit.phase:
+            transfer.source_phase = transfer.source_unit.phase
+            changed = True
+        if not transfer.destination_phase and transfer.destination_unit and transfer.destination_unit.phase:
+            transfer.destination_phase = transfer.destination_unit.phase
+            changed = True
+    if changed:
+        db.session.flush()
+
+
+def sync_lot_allocations_after_lot_edit(lot: Lot, old_unit_id=None, old_initial_count=None, old_start_date=None):
+    """Keeps the live allocation map consistent after editing the core lot fields.
+
+    Lot is the registration/master record. LotUnitAllocation is the operational map used by
+    "Alocações atuais", transfers, fixed-cost apportionment and density. Before this sync,
+    editing lot.initial_count/unit/start_date did not update the allocation map.
+    """
+    if not lot:
+        return
+
+    transfer_count = Transfer.query.filter_by(source_lot_id=lot.id).count()
+    allocations = LotUnitAllocation.query.filter_by(lot_id=lot.id).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
+    desired_end_date = lot.end_date if lot.status == 'encerrado' else None
+    desired_qty = 0 if lot.status == 'encerrado' else (lot.initial_count or 0)
+
+    if transfer_count == 0:
+        # No movement history yet: the initial allocation must mirror the lot registration.
+        primary = allocations[0] if allocations else None
+        if not primary:
+            primary = LotUnitAllocation(lot_id=lot.id)
+            db.session.add(primary)
+        primary.unit_id = lot.unit_id
+        primary.start_date = lot.start_date
+        primary.end_date = desired_end_date
+        primary.quantity_allocated = desired_qty
+        primary.notes = 'Alocação inicial do lote.'
+        for extra in allocations[1:]:
+            db.session.delete(extra)
+        return
+
+    # With transfer history we preserve the movement log, but still fix the original allocation
+    # metadata. If the original allocation is still the only live saldo, its quantity is safe to update.
+    primary = next((a for a in allocations if a.notes and 'Alocação inicial' in a.notes), None) or (allocations[0] if allocations else None)
+    if not primary:
+        db.session.add(LotUnitAllocation(
+            lot_id=lot.id,
+            unit_id=lot.unit_id,
+            start_date=lot.start_date,
+            end_date=desired_end_date,
+            quantity_allocated=desired_qty,
+            notes='Alocação inicial do lote.'
+        ))
+        return
+
+    if primary.start_date == old_start_date or (primary.notes and 'Alocação inicial' in primary.notes):
+        primary.start_date = lot.start_date
+    if primary.unit_id == old_unit_id or (primary.notes and 'Alocação inicial' in primary.notes):
+        primary.unit_id = lot.unit_id
+
+    today = date.today()
+    active_allocations = [
+        a for a in allocations
+        if a.start_date <= today and (a.end_date is None or a.end_date >= today) and (a.quantity_allocated is None or a.quantity_allocated > 0)
+    ]
+    if len(active_allocations) == 1 and active_allocations[0].id == primary.id:
+        primary.quantity_allocated = desired_qty
+        primary.end_date = desired_end_date
 
 
 def close_lot(lot: Lot, close_date: date, reason: str = 'encerrado_manual'):
@@ -3823,6 +3905,7 @@ def build_allocation_rows(lot: Lot, on_date=None):
         LotUnitAllocation.lot_id == lot.id,
         LotUnitAllocation.start_date <= on_date,
         or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
     ).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
     rows = []
     for allocation in allocations:
@@ -5077,6 +5160,9 @@ def lots_page():
         if form_mode == 'edit_lot' and not lot:
             flash('Lote não encontrado para edição.', 'warning')
             return redirect(url_for('lots_page'))
+        old_unit_id = lot.unit_id if form_mode == 'edit_lot' else None
+        old_initial_count = lot.initial_count if form_mode == 'edit_lot' else None
+        old_start_date = lot.start_date if form_mode == 'edit_lot' else None
         lot.lot_code = (request.form['lot_code'] or '').strip().upper()
         lot.phase = request.form['phase']
         lot.start_date = parse_date(request.form['start_date'])
@@ -5093,6 +5179,8 @@ def lots_page():
             db.session.add(lot)
             db.session.flush()
             db.session.add(LotUnitAllocation(lot_id=lot.id, unit_id=lot.unit_id, start_date=lot.start_date, quantity_allocated=lot.initial_count, notes='Alocação inicial do lote.'))
+        else:
+            sync_lot_allocations_after_lot_edit(lot, old_unit_id, old_initial_count, old_start_date)
         db.session.commit()
         flash('Lote salvo com sucesso.' if form_mode == 'edit_lot' else 'Lote cadastrado.', 'success')
         return redirect(url_for('lots_page'))
@@ -5981,6 +6069,8 @@ def transfers_page():
         destination_unit = db.session.get(Unit, destination_unit_id) if destination_unit_id else None
         transferred_qty = parse_int(request.form.get('transferred_qty')) or 0
         avg_weight_g = parse_float(request.form.get('avg_weight_g'))
+        requested_source_phase = (request.form.get('source_phase') or '').strip()
+        requested_destination_phase = (request.form.get('destination_phase') or '').strip()
 
         source_allocation_id = parse_int(request.form.get('source_allocation_id'))
         source_allocation = db.session.get(LotUnitAllocation, source_allocation_id) if source_allocation_id else None
@@ -6007,7 +6097,14 @@ def transfers_page():
             flash('Informe uma quantidade transferida maior que zero.', 'danger')
             return redirect(url_for('transfers_page'))
 
-        available_qty = source_allocation.quantity_allocated
+        valid_phases = {'bercario', 'juvenil', 'engorda'}
+        source_phase = requested_source_phase or (source_allocation.unit.phase if source_allocation and source_allocation.unit else None) or (src_lot.phase if src_lot else None)
+        destination_phase = requested_destination_phase or (destination_unit.phase if destination_unit else None)
+        if source_phase not in valid_phases or destination_phase not in valid_phases:
+            flash('Informe corretamente a fase de origem e a fase de destino.', 'danger')
+            return redirect(url_for('transfers_page'))
+
+        available_qty = source_allocation.quantity_allocated if source_allocation else None
         if available_qty is not None and transferred_qty > available_qty and form_mode != 'edit':
             flash(f'Quantidade maior que o saldo estimado da origem ({available_qty:,} unidades).'.replace(',', '.'), 'danger')
             return redirect(url_for('transfers_page'))
@@ -6022,6 +6119,8 @@ def transfers_page():
             tr.destination_unit_id = destination_unit_id
             tr.source_lot_id = src_lot.id
             tr.destination_lot_code = src_lot.lot_code
+            tr.source_phase = source_phase
+            tr.destination_phase = destination_phase
             tr.transferred_qty = transferred_qty
             tr.avg_weight_g = avg_weight_g
             tr.notes = request.form.get('notes')
@@ -6050,6 +6149,8 @@ def transfers_page():
             destination_unit_id=destination_unit_id,
             source_lot_id=src_lot.id,
             destination_lot_code=src_lot.lot_code,
+            source_phase=source_phase,
+            destination_phase=destination_phase,
             transferred_qty=transferred_qty,
             avg_weight_g=avg_weight_g,
             notes=request.form.get('notes')
@@ -6081,6 +6182,7 @@ def transfers_page():
         allocations=allocations,
         today=date.today(),
         edit_transfer=edit_transfer,
+        phase_choices=[('bercario', 'Berçário'), ('juvenil', 'Juvenil'), ('engorda', 'Engorda')],
     )
 
 
