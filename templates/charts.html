@@ -72,11 +72,70 @@
 const chartData = {{ chart_data|tojson }};
 const canvas = document.getElementById('main-chart');
 const palette = ['#2563eb', '#0f766e', '#7c3aed', '#ea580c', '#16a34a', '#dc2626', '#0891b2', '#9333ea', '#ca8a04', '#1d4ed8'];
+
+function buildYAxisConfig(chartData, values) {
+  const numericValues = values
+    .map(value => Number(value))
+    .filter(value => Number.isFinite(value));
+
+  const thresholdValues = [];
+  if (chartData.threshold) {
+    if (chartData.threshold.min !== null && chartData.threshold.min !== undefined) {
+      thresholdValues.push(Number(chartData.threshold.min));
+    }
+    if (chartData.threshold.max !== null && chartData.threshold.max !== undefined) {
+      thresholdValues.push(Number(chartData.threshold.max));
+    }
+  }
+
+  const allValues = [...numericValues, ...thresholdValues];
+  const highestValue = allValues.length ? Math.max(...allValues) : 0;
+  const parameterKey = chartData.parameter?.key || '';
+
+  const presetMap = {
+    od: { min: 0, stepSize: 0.2 },
+    salinity: { min: 0, stepSize: 1 },
+    temperature: { min: 0, stepSize: 1 },
+    feed_offered: { min: 0 },
+    mortality: { min: 0 },
+    average_weight: { min: 0 },
+    tray_score: { min: 0, max: 4, stepSize: 0.2 },
+    ph: { min: 0, max: 14, stepSize: 0.2 },
+  };
+
+  const preset = presetMap[parameterKey] || {};
+  const computedMax = preset.max ?? (highestValue > 0 ? Number((highestValue * 1.15).toFixed(2)) : 1);
+  const ticksConfig = {};
+
+  if (preset.stepSize) {
+    ticksConfig.stepSize = preset.stepSize;
+    ticksConfig.callback = function(value) {
+      return Number(value).toLocaleString('pt-BR', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1,
+      });
+    };
+  }
+
+  return {
+    beginAtZero: preset.min === 0,
+    min: preset.min,
+    suggestedMax: computedMax,
+    grace: '5%',
+    ticks: ticksConfig,
+    title: {
+      display: true,
+      text: `${chartData.parameter.label}${chartData.parameter.unit ? ` (${chartData.parameter.unit})` : ''}`,
+    }
+  };
+}
+
 if (canvas && chartData.point_count > 0) {
   const labels = chartData.points.map(point => point.label);
   const values = chartData.points.map(point => point.value);
   const style = chartData.chart_style || 'bar';
   const datasets = [];
+  const yAxisConfig = buildYAxisConfig(chartData, values);
 
   if (style === 'pie' || style === 'doughnut') {
     datasets.push({
@@ -169,13 +228,7 @@ if (canvas && chartData.point_count > 0) {
             minRotation: 45,
           }
         },
-        y: {
-          beginAtZero: false,
-          title: {
-            display: true,
-            text: `${chartData.parameter.label}${chartData.parameter.unit ? ` (${chartData.parameter.unit})` : ''}`,
-          }
-        }
+        y: yAxisConfig
       }
     }
   });
