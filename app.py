@@ -362,13 +362,26 @@ class FeedProduct(db.Model):
 
     @property
     def full_name(self):
-        generic_types = {'geral', 'bercario', 'bercário'}
-        brand = (self.brand or '').strip()
-        feed_type = (self.feed_type or '').strip()
+        generic_types = {'', 'geral', 'bercario', 'bercário'}
+        brand = re.sub(r'\s+', ' ', (self.brand or '').strip())
+        feed_type = re.sub(r'\s+', ' ', (self.feed_type or '').strip())
+        normalized_brand = normalize_text(brand)
+        normalized_type = normalize_text(feed_type)
+
+        # Evita nomes duplicados como:
+        # "AQUAVITA 35 ... · AQUAVITA 35 ..." quando marca e tipo foram
+        # cadastrados iguais ou quando um campo já contém o outro.
         parts = []
         if brand:
             parts.append(brand)
-        if feed_type and normalize_text(feed_type) not in generic_types:
+        should_add_type = (
+            feed_type
+            and normalized_type not in generic_types
+            and normalized_type != normalized_brand
+            and normalized_type not in normalized_brand
+            and normalized_brand not in normalized_type
+        )
+        if should_add_type:
             parts.append(feed_type)
         return ' · '.join(parts) if parts else f'Ração #{self.id}'
 
@@ -385,7 +398,7 @@ class FeedProduct(db.Model):
 class FeedInventory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     movement_date = db.Column(db.Date, nullable=False)
-    feed_name = db.Column(db.String(80), nullable=False)
+    feed_name = db.Column(db.String(255), nullable=False)
     feed_product_id = db.Column(db.Integer, db.ForeignKey('feed_product.id'))
     movement_type = db.Column(db.String(20), nullable=False)  # entrada / saida
     quantity_kg = db.Column(db.Float, nullable=False)
@@ -3678,6 +3691,11 @@ def run_lightweight_migrations():
 
     if 'feed_inventory' in tables:
         feed_inventory_columns = get_columns('feed_inventory')
+        # Versões antigas criavam feed_name como VARCHAR(80). No PostgreSQL isso
+        # derruba a tela /feed quando o nome comercial da ração é maior.
+        # SQLite não precisa alterar, pois não aplica o limite do VARCHAR.
+        if dialect != 'sqlite' and 'feed_name' in feed_inventory_columns:
+            run_sql('', 'ALTER TABLE feed_inventory ALTER COLUMN feed_name TYPE VARCHAR(255)')
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'feed_product_id', 'ALTER TABLE feed_inventory ADD COLUMN feed_product_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN feed_product_id INTEGER')
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'source_type', "ALTER TABLE feed_inventory ADD COLUMN source_type VARCHAR(30) DEFAULT 'manual'", "ALTER TABLE feed_inventory ADD COLUMN source_type VARCHAR(30) DEFAULT 'manual'")
         add_column_if_missing('feed_inventory', feed_inventory_columns, 'source_ref_id', 'ALTER TABLE feed_inventory ADD COLUMN source_ref_id INTEGER', 'ALTER TABLE feed_inventory ADD COLUMN source_ref_id INTEGER')
@@ -4146,7 +4164,7 @@ def normalize_auto_nursery_feed_product_names():
         if canonical and canonical.id != product.id:
             for movement in FeedInventory.query.filter_by(feed_product_id=product.id).all():
                 movement.feed_product_id = canonical.id
-                movement.feed_name = canonical.full_name
+                movement.feed_name = feed_inventory_name(canonical)
             for record in DailyManagement.query.filter_by(feed_product_id=product.id).all():
                 record.feed_product_id = canonical.id
             product.active = False
@@ -4193,6 +4211,18 @@ def feed_product_label(product):
     if not product:
         return 'Sem ração vinculada'
     return product.full_name
+
+
+def feed_inventory_name(feed_product) -> str:
+    """Snapshot seguro do nome da ração para o histórico de estoque.
+
+    O produto vinculado pelo feed_product_id continua sendo a fonte principal.
+    Este campo é mantido para compatibilidade com movimentos antigos e relatórios,
+    então limitamos o texto para nunca estourar o VARCHAR do PostgreSQL.
+    """
+    value = feed_product.full_name if feed_product else 'Ração'
+    value = re.sub(r'\s+', ' ', (value or '').strip()) or 'Ração'
+    return value[:255]
 
 
 def movement_origin_label(value: str) -> str:
@@ -4332,7 +4362,7 @@ def sync_management_feed_movement(management_record: DailyManagement, feed_produ
     movement = existing_movement or FeedInventory(source_type='manejo', source_ref_id=management_record.id)
     movement.movement_date = management_record.manage_date
     movement.feed_product_id = feed_product.id
-    movement.feed_name = feed_product.full_name
+    movement.feed_name = feed_inventory_name(feed_product)
     movement.movement_type = 'saida'
     movement.quantity_kg = offered_kg
     movement.unit_cost = unit_cost
@@ -6412,7 +6442,7 @@ def feed_page():
             flash('Movimentação não encontrada.', 'warning')
             return redirect(url_for('feed_page'))
         row.movement_date = parse_date(request.form['movement_date'], date.today())
-        row.feed_name = feed_product.full_name
+        row.feed_name = feed_inventory_name(feed_product)
         row.feed_product_id = feed_product.id
         row.movement_type = movement_type
         row.quantity_kg = quantity_kg
@@ -6461,7 +6491,7 @@ def delete_feed_product(product_id):
         if canonical:
             for movement in FeedInventory.query.filter_by(feed_product_id=product.id).all():
                 movement.feed_product_id = canonical.id
-                movement.feed_name = canonical.full_name
+                movement.feed_name = feed_inventory_name(canonical)
             for record in DailyManagement.query.filter_by(feed_product_id=product.id).all():
                 record.feed_product_id = canonical.id
             db.session.delete(product)
