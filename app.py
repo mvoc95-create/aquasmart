@@ -8339,7 +8339,7 @@ def biometrics_page():
         weekly_gain = None
         if last and last.average_weight_g is not None:
             days = max((sample_date - last.sample_date).days, 1)
-            weekly_gain = round(((average_weight_g - last.average_weight_g) / days) * 7, 2)
+            weekly_gain = round(((average_weight_g - last.average_weight_g) / days) * 7, 3)
         row = BiometricsSample(sample_date=sample_date, lot_id=lot_id, unit_id=unit_id, sample_size=sample_size, average_weight_g=average_weight_g, cv_pct=cv_pct, estimated_biomass_kg=estimated_biomass_kg, weekly_gain_g=weekly_gain, notes=notes or None)
         db.session.add(row)
         sync_biometrics_to_management(lot, unit_id, sample_date, average_weight_g, estimated_biomass_kg, notes)
@@ -8357,7 +8357,7 @@ def biometrics_page():
         enriched_rows.append({
             'row': row,
             'expected_weight_g': expected['expected_weight_g'],
-            'deviation_g': round((row.average_weight_g or 0) - expected['expected_weight_g'], 2),
+            'deviation_g': round((row.average_weight_g or 0) - expected['expected_weight_g'], 3),
             'deviation_pct': round((((row.average_weight_g or 0) - expected['expected_weight_g']) / expected['expected_weight_g']) * 100, 2) if expected['expected_weight_g'] else None,
             'linked_management': bool(linked_management),
         })
