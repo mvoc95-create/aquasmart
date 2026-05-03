@@ -8319,8 +8319,32 @@ def sync_biometrics_to_management(lot, unit_id, sample_date, average_weight_g, e
 def biometrics_page():
     lots = Lot.query.order_by(Lot.start_date.desc()).all()
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+
+    def unit_lot_options_payload():
+        allocations = (
+            LotUnitAllocation.query.options(joinedload(LotUnitAllocation.lot))
+            .join(Lot, Lot.id == LotUnitAllocation.lot_id)
+            .filter(
+                Lot.status == 'ativo',
+                or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+            )
+            .order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc())
+            .all()
+        )
+        payload = {}
+        for allocation in allocations:
+            if not allocation.lot:
+                continue
+            payload.setdefault(str(allocation.unit_id), []).append({
+                'lot_id': allocation.lot_id,
+                'lot_code': allocation.lot.lot_code,
+                'start_date': allocation.start_date.isoformat() if allocation.start_date else '',
+                'end_date': allocation.end_date.isoformat() if allocation.end_date else '',
+            })
+        return payload
+
     if request.method == 'POST':
-        lot_id = parse_int(request.form.get('lot_id'))
+        submitted_lot_id = parse_int(request.form.get('lot_id'))
         unit_id = parse_int(request.form.get('unit_id'))
         sample_date = parse_date(request.form.get('sample_date'), default=date.today())
         average_weight_g = parse_float(request.form.get('average_weight_g'))
@@ -8328,10 +8352,22 @@ def biometrics_page():
         cv_pct = parse_float(request.form.get('cv_pct'))
         estimated_biomass_kg = parse_float(request.form.get('estimated_biomass_kg'))
         notes = (request.form.get('notes') or '').strip()
-        lot = db.session.get(Lot, lot_id)
+
+        active_lot = active_lot_for_unit(unit_id, on_date=sample_date) if unit_id else None
+        lot = active_lot or db.session.get(Lot, submitted_lot_id)
+        if lot:
+            lot_id = lot.id
+            if not unit_id:
+                current_units = lot_current_units(lot, on_date=sample_date)
+                if len(current_units) == 1:
+                    unit_id = current_units[0].id
+        else:
+            lot_id = submitted_lot_id
+
         if not lot or average_weight_g is None:
-            flash('Informe lote e peso médio para salvar a biometria.', 'warning')
+            flash('Informe viveiro com lote ativo e peso médio para salvar a biometria.', 'warning')
             return redirect(url_for('biometrics_page'))
+
         if not estimated_biomass_kg:
             live_count = current_live_count_for_lot(lot)
             estimated_biomass_kg = round((live_count * average_weight_g) / 1000, 2) if live_count and average_weight_g else None
@@ -8345,8 +8381,14 @@ def biometrics_page():
         sync_biometrics_to_management(lot, unit_id, sample_date, average_weight_g, estimated_biomass_kg, notes)
         db.session.commit()
         flash('Biometria registrada e sincronizada com o manejo diário.', 'success')
-        return redirect(url_for('biometrics_page'))
-    rows = BiometricsSample.query.options(joinedload(BiometricsSample.lot), joinedload(BiometricsSample.unit)).order_by(BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()).all()
+        return redirect(url_for('biometrics_page', history_unit_id=unit_id) if unit_id else url_for('biometrics_page'))
+
+    history_unit_id = parse_int(request.args.get('history_unit_id'))
+    rows_query = BiometricsSample.query.options(joinedload(BiometricsSample.lot), joinedload(BiometricsSample.unit))
+    if history_unit_id:
+        rows_query = rows_query.filter(BiometricsSample.unit_id == history_unit_id)
+    rows = rows_query.order_by(BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()).limit(60).all()
+
     enriched_rows = []
     for row in rows:
         if not row.lot:
@@ -8370,7 +8412,16 @@ def biometrics_page():
             'latest': latest,
             'summary': analysis['summary'],
         })
-    return render_template('biometrics.html', lots=lots, units=units, rows=enriched_rows, active_summaries=active_summaries, today=date.today())
+    return render_template(
+        'biometrics.html',
+        lots=lots,
+        units=units,
+        rows=enriched_rows,
+        active_summaries=active_summaries,
+        today=date.today(),
+        history_unit_id=history_unit_id,
+        unit_lot_options=unit_lot_options_payload(),
+    )
 
 
 @app.route('/growth-analysis')
