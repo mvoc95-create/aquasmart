@@ -604,7 +604,52 @@ def batch_monitor_slots():
 
 
 def water_sheet_supported_times(sheet_type: str):
-    return ['07:00', '16:00'] if sheet_type == 'day' else ['18:00', '00:00', '02:00', '04:00']
+    return ['07:00', '16:00', '18:00'] if sheet_type == 'day' else ['18:00', '00:00', '02:00', '04:00']
+
+
+def water_sheet_type_label(sheet_type: str) -> str:
+    return 'diurna' if sheet_type == 'day' else 'noturna'
+
+
+def detect_water_sheet_type_with_openai(file_bytes: bytes, filename: str, content_type: str):
+    if OpenAI is None:
+        raise RuntimeError('A biblioteca OpenAI não está instalada no ambiente.')
+    api_key = os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        raise RuntimeError('Defina OPENAI_API_KEY para habilitar a leitura automática por foto.')
+
+    mime_type = content_type or 'image/jpeg'
+    model = os.getenv('OPENAI_VISION_MODEL', 'gpt-5.4-mini')
+    client = OpenAI(api_key=api_key)
+    encoded = base64.b64encode(file_bytes).decode('utf-8')
+    prompt = (
+        'Analise a imagem de uma ficha de monitoramento de água e devolva apenas JSON válido no formato '
+        '{"sheet_type":"day"} ou {"sheet_type":"night"}.\n\n'
+        'Regras de classificação:\n'
+        '1. Se o cabeçalho/título da ficha disser NOITE, classifique como night.\n'
+        '2. Se o cabeçalho/título da ficha disser DIA, classifique como day, mesmo que exista uma coluna 18:00.\n'
+        '3. A presença isolada da coluna 18:00 não torna a ficha noturna.\n'
+        '4. Se a ficha tiver colunas 00:00, 02:00 ou 04:00, isso indica ficha night.\n'
+        '5. Em caso de conflito, priorize o título visível da ficha (DIA/NOITE) e depois o conjunto completo de colunas.\n'
+        '6. Não explique nada fora do JSON.'
+    )
+
+    response = client.responses.create(
+        model=model,
+        input=[{
+            'role': 'user',
+            'content': [
+                {'type': 'input_text', 'text': prompt},
+                {'type': 'input_image', 'image_url': f'data:{mime_type};base64,{encoded}'},
+            ],
+        }],
+    )
+    raw_text = getattr(response, 'output_text', '') or ''
+    payload = extract_json_object(raw_text)
+    detected = (payload.get('sheet_type') or '').strip().lower()
+    if detected not in {'day', 'night'}:
+        raise ValueError('Não consegui identificar se a ficha é diurna ou noturna.')
+    return detected
 
 
 def water_sheet_time_to_date(base_date: date, sheet_type: str, slot_label: str) -> date:
@@ -670,7 +715,7 @@ def match_unit_from_sheet_row(row_name: str, units):
 
 
 def build_water_sheet_prompt(sheet_type: str, sheet_date: date, units):
-    period_label = 'diurna' if sheet_type == 'day' else 'noturna'
+    period_label = water_sheet_type_label(sheet_type)
     allowed_times = ', '.join(water_sheet_supported_times(sheet_type))
     unit_labels = ', '.join(unit.name for unit in units)
     return (
@@ -682,11 +727,13 @@ def build_water_sheet_prompt(sheet_type: str, sheet_date: date, units):
         "Regras:\n"
         "1. Extraia somente linhas que realmente tenham números preenchidos.\n"
         "2. Preserve os horários exatamente como aparecem: HH:MM.\n"
-        "3. Para cada leitura, informe: row_name, time, dissolved_oxygen, temperature_c, ph, ammonia, nitrite.\n"
-        "4. Use null para campos em branco.\n"
-        "5. Não invente dados.\n"
-        "6. Se tiver dúvida em algum número, prefira null.\n"
-        "7. Responda no formato: {\"readings\":[...]}\n"
+        "3. Para ficha diurna, aceite 07:00, 16:00 e 18:00. Para ficha noturna, aceite 18:00, 00:00, 02:00 e 04:00.\n"
+        "4. A presença isolada da coluna 18:00 não muda o tipo da ficha; siga o cabeçalho DIA/NOITE e o conjunto de colunas.\n"
+        "5. Para cada leitura, informe: row_name, time, dissolved_oxygen, temperature_c, ph, ammonia, nitrite.\n"
+        "6. Use null para campos em branco.\n"
+        "7. Não invente dados.\n"
+        "8. Se tiver dúvida em algum número, prefira null.\n"
+        "9. Responda no formato: {\"readings\":[...]}\n"
     )
 
 
@@ -5406,10 +5453,10 @@ def lots_page():
 @requires_permission('water_manage')
 def import_water_sheet():
     upload = request.files.get('sheet_image')
-    sheet_type = request.form.get('sheet_type', 'day')
+    requested_sheet_type = (request.form.get('sheet_type', 'auto') or 'auto').strip().lower()
     sheet_date = parse_date(request.form.get('sheet_date'), date.today())
 
-    if sheet_type not in {'day', 'night'}:
+    if requested_sheet_type not in {'auto', 'day', 'night'}:
         flash('Tipo de ficha inválido.', 'danger')
         return redirect(url_for('water_page'))
 
@@ -5420,15 +5467,23 @@ def import_water_sheet():
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     try:
         file_bytes = upload.read()
+        detected_sheet_type = requested_sheet_type
+        if requested_sheet_type == 'auto':
+            detected_sheet_type = detect_water_sheet_type_with_openai(
+                file_bytes=file_bytes,
+                filename=upload.filename,
+                content_type=upload.mimetype,
+            )
+
         readings = extract_water_sheet_data_with_openai(
             file_bytes=file_bytes,
             filename=upload.filename,
             content_type=upload.mimetype,
-            sheet_type=sheet_type,
+            sheet_type=detected_sheet_type,
             sheet_date=sheet_date,
             units=units,
         )
-        preview_rows, warnings = build_water_import_preview(readings, units, sheet_type, sheet_date)
+        preview_rows, warnings = build_water_import_preview(readings, units, detected_sheet_type, sheet_date)
     except Exception as exc:
         flash(f'Não consegui ler a ficha automaticamente: {exc}', 'danger')
         return redirect(url_for('water_page'))
@@ -5437,8 +5492,11 @@ def import_water_sheet():
         flash('Não encontrei leituras válidas na ficha para montar a prévia.', 'warning')
         return redirect(url_for('water_page'))
 
-    store_pending_water_import(sheet_type, sheet_date, preview_rows, warnings)
-    flash('Prévia da importação gerada. Confira os dados antes de confirmar.', 'success')
+    store_pending_water_import(detected_sheet_type, sheet_date, preview_rows, warnings)
+    flash(
+        f'Prévia da importação gerada. Ficha identificada como {water_sheet_type_label(detected_sheet_type)}. Confira os dados antes de confirmar.',
+        'success'
+    )
     return redirect(url_for('water_page', show_import_preview=1))
 
 
