@@ -46,11 +46,12 @@
 
 <section class="panel">
   <div class="panel-head"><div><p class="panel-kicker">Importação por foto com IA</p><h2>Ler ficha automaticamente</h2></div></div>
-  <p class="empty-state compact-state">Envie a foto da ficha e a IA devolve os dados estruturados. Na ficha <strong>noturna</strong>, os horários de <strong>00:00, 02:00 e 04:00</strong> entram automaticamente no <strong>dia seguinte</strong>. A foto não é salva no banco.</p>
+  <p class="empty-state compact-state">Envie a foto da ficha e a IA devolve os dados estruturados. Agora o sistema pode <strong>identificar automaticamente</strong> se a ficha é <strong>diurna</strong> ou <strong>noturna</strong>. A coluna <strong>18:00</strong> sozinha não define ficha noturna: o sistema usa o cabeçalho <strong>DIA/NOITE</strong> e o conjunto de colunas. Na ficha <strong>noturna</strong>, os horários de <strong>00:00, 02:00 e 04:00</strong> entram automaticamente no <strong>dia seguinte</strong>. A foto não é salva no banco.</p>
   <form method="post" action="{{ url_for('import_water_sheet') }}" enctype="multipart/form-data" class="form-grid">
     <label>Tipo da ficha
       <select name="sheet_type" required>
-        <option value="day">Diurna (07:00 e 16:00)</option>
+        <option value="auto" selected>Automático (recomendado)</option>
+        <option value="day">Diurna (07:00, 16:00 e 18:00)</option>
         <option value="night">Noturna (18:00, 00:00, 02:00 e 04:00)</option>
       </select>
     </label>
