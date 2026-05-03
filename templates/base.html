@@ -37,7 +37,7 @@
         </a>
         {% endif %}
 
-        <details class="nav-group" {% if current_endpoint in ['water_page', 'management_page', 'nursery_feed_page', 'transfers_page'] %}open{% endif %}>
+        <details class="nav-group" {% if current_endpoint in ['water_page', 'management_page', 'nursery_feed_page', 'biometrics_page', 'transfers_page'] %}open{% endif %}>
           <summary class="nav-group-summary">
             <span class="nav-group-label"><i class="fa-solid fa-wave-square"></i><span>Operação</span></span>
             <i class="fa-solid fa-chevron-right nav-group-chevron"></i>
@@ -49,6 +49,7 @@
             {% if current_user.is_authenticated and current_user.has_permission('management_manage') %}
             <a class="nav-sublink {{ 'active' if current_endpoint == 'management_page' else '' }}" href="{{ url_for('management_page') }}">Manejo diário</a>
             <a class="nav-sublink {{ 'active' if current_endpoint == 'nursery_feed_page' else '' }}" href="{{ url_for('nursery_feed_page') }}">Alimentação berçário</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'biometrics_page' else '' }}" href="{{ url_for('biometrics_page') }}">Biometrias</a>
             {% endif %}
             {% if current_user.is_authenticated and current_user.has_permission('transfers_manage') %}
             <a class="nav-sublink {{ 'active' if current_endpoint == 'transfers_page' else '' }}" href="{{ url_for('transfers_page') }}">Transferências</a>
@@ -105,7 +106,7 @@
           </div>
         </details>
 
-        <details class="nav-group" {% if current_endpoint in ['feeding_planner_page', 'biometrics_page', 'growth_analysis_page', 'pl_suppliers_page', 'harvest_decision_page', 'finance_page', 'assistant_page'] %}open{% endif %}>
+        <details class="nav-group" {% if current_endpoint in ['feeding_planner_page', 'growth_analysis_page', 'pl_suppliers_page', 'harvest_decision_page', 'finance_page', 'assistant_page'] %}open{% endif %}>
           <summary class="nav-group-summary">
             <span class="nav-group-label"><i class="fa-solid fa-brain"></i><span>Inteligência</span></span>
             <i class="fa-solid fa-chevron-right nav-group-chevron"></i>
@@ -113,7 +114,6 @@
           <div class="nav-submenu">
             {% if current_user.is_authenticated and current_user.has_permission('dashboard') %}
             <a class="nav-sublink {{ 'active' if current_endpoint == 'feeding_planner_page' else '' }}" href="{{ url_for('feeding_planner_page') }}">Arraçoamento sugerido</a>
-            <a class="nav-sublink {{ 'active' if current_endpoint == 'biometrics_page' else '' }}" href="{{ url_for('biometrics_page') }}">Biometrias</a>
             <a class="nav-sublink {{ 'active' if current_endpoint == 'growth_analysis_page' else '' }}" href="{{ url_for('growth_analysis_page') }}">Crescimento real x esperado</a>
             <a class="nav-sublink {{ 'active' if current_endpoint == 'pl_suppliers_page' else '' }}" href="{{ url_for('pl_suppliers_page') }}">Fornecedores de PL</a>
             <a class="nav-sublink {{ 'active' if current_endpoint == 'harvest_decision_page' else '' }}" href="{{ url_for('harvest_decision_page') }}">Ponto de despesca</a>

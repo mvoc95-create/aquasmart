@@ -1,14 +1,15 @@
 {% extends 'base.html' %}
 {% block page_title %}Biometrias{% endblock %}
-{% block page_subtitle %}Biometria intertravada com o manejo diário: ao salvar, o peso e a biomassa atualizam a inteligência do lote.{% endblock %}
+{% block page_subtitle %}Biometria operacional: escolha o viveiro, o sistema puxa o lote ativo e sincroniza peso/biomassa com o manejo diário.{% endblock %}
 {% block content %}
 <div class="grid-2 intelligence-layout">
   <section class="panel">
     <div class="panel-head"><div><p class="panel-kicker">Entrada</p><h2>Registrar biometria</h2></div></div>
     <form method="post" class="form-grid">
-      <label>Data<input type="date" name="sample_date" value="{{ today.isoformat() }}" required></label>
-      <label>Lote<select name="lot_id" required><option value="">Selecione</option>{% for lot in lots %}<option value="{{ lot.id }}">{{ lot.lot_code }}</option>{% endfor %}</select></label>
-      <label>Viveiro<select name="unit_id"><option value="">Selecione</option>{% for unit in units %}<option value="{{ unit.id }}">{{ unit.name }}</option>{% endfor %}</select></label>
+      <label>Data<input type="date" name="sample_date" value="{{ today.isoformat() }}" required id="biometry-sample-date"></label>
+      <label>Viveiro<select name="unit_id" required id="biometry-unit-select"><option value="">Selecione</option>{% for unit in units %}<option value="{{ unit.id }}">{{ unit.name }}</option>{% endfor %}</select></label>
+      <label>Lote<select name="lot_id" required id="biometry-lot-select"><option value="">Selecione um viveiro primeiro</option>{% for lot in lots %}<option value="{{ lot.id }}">{{ lot.lot_code }}</option>{% endfor %}</select></label>
+      <p class="inline-hint full" id="biometry-lot-hint">Ao escolher o viveiro, o lote ativo daquela unidade será selecionado automaticamente.</p>
       <label>Amostra (un.)<input type="number" name="sample_size" value="100"></label>
       <label>Peso médio (g)<input type="number" step="0.001" name="average_weight_g" placeholder="Ex.: 0,125 ou 0.125" required></label>
       <label>CV (%)<input type="number" step="0.01" name="cv_pct"></label>
@@ -42,6 +43,21 @@
 
 <section class="panel">
   <div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Biometrias registradas</h2></div></div>
+  <form method="get" class="form-grid compact-filter-form">
+    <label>Filtrar histórico por viveiro
+      <select name="history_unit_id">
+        <option value="">Todos os viveiros</option>
+        {% for unit in units %}
+        <option value="{{ unit.id }}" {% if history_unit_id|string == unit.id|string %}selected{% endif %}>{{ unit.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="form-actions">
+      <button type="submit">Filtrar</button>
+      {% if history_unit_id %}<a class="button ghost-button" href="{{ url_for('biometrics_page') }}">Limpar</a>{% endif %}
+    </div>
+  </form>
+  <p class="empty-state compact-state">Exibindo as últimas 60 biometrias{% if history_unit_id %} do viveiro selecionado{% endif %}.</p>
   <div class="table-wrap">
     <table>
       <thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Amostra</th><th>Peso médio</th><th>Peso esperado</th><th>Desvio</th><th>CV</th><th>Biomassa</th><th>Ganho semanal</th><th>Sync manejo</th></tr></thead>
@@ -65,4 +81,51 @@
     </table>
   </div>
 </section>
+
+<script>
+  (function () {
+    const unitLots = {{ unit_lot_options|tojson }};
+    const unitSelect = document.getElementById('biometry-unit-select');
+    const lotSelect = document.getElementById('biometry-lot-select');
+    const dateInput = document.getElementById('biometry-sample-date');
+    const hint = document.getElementById('biometry-lot-hint');
+
+    function selectedDateValue() {
+      return dateInput && dateInput.value ? dateInput.value : '{{ today.isoformat() }}';
+    }
+
+    function allocationMatchesDate(allocation, dateValue) {
+      if (!allocation) return false;
+      if (allocation.start_date && allocation.start_date > dateValue) return false;
+      if (allocation.end_date && allocation.end_date < dateValue) return false;
+      return true;
+    }
+
+    function refreshLotFromUnit() {
+      if (!unitSelect || !lotSelect) return;
+      const unitId = unitSelect.value;
+      const dateValue = selectedDateValue();
+      const allocations = unitLots[unitId] || [];
+      const selectedAllocation = allocations.find(item => allocationMatchesDate(item, dateValue)) || allocations[0];
+
+      if (selectedAllocation) {
+        lotSelect.value = String(selectedAllocation.lot_id);
+        lotSelect.disabled = false;
+        if (hint) {
+          hint.textContent = 'Lote puxado automaticamente: ' + selectedAllocation.lot_code + '.';
+        }
+      } else {
+        lotSelect.value = '';
+        lotSelect.disabled = false;
+        if (hint) {
+          hint.textContent = unitId ? 'Não encontrei lote ativo para este viveiro na data selecionada.' : 'Ao escolher o viveiro, o lote ativo daquela unidade será selecionado automaticamente.';
+        }
+      }
+    }
+
+    if (unitSelect) unitSelect.addEventListener('change', refreshLotFromUnit);
+    if (dateInput) dateInput.addEventListener('change', refreshLotFromUnit);
+    refreshLotFromUnit();
+  })();
+</script>
 {% endblock %}
