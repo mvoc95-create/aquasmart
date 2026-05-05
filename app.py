@@ -3334,8 +3334,19 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     ]
     if correction_events:
         last_event = correction_events[-1]
+        last_score = last_event.get('score')
+        last_date = last_event.get('date')
+        last_date_label = last_date.strftime('%d/%m/%Y') if hasattr(last_date, 'strftime') else str(last_date or 'data não informada')
+        last_adjustment_label = last_event.get('adjustment_label') or last_event.get('factor_label') or 'sem ajuste'
         message_lines.append(f"Correção acumulada ativa: {correction_label} sobre o protocolo base")
-        message_lines.append(f"Último score usado: {float(last_event['score']):.1f} em {last_event['date'].strftime('%d/%m/%Y')} ({last_event.get('adjustment_label', last_event['factor_label'])})".replace('.', ','))
+        if last_score is not None:
+            try:
+                last_score_label = f"{float(last_score):.1f}".replace('.', ',')
+            except (TypeError, ValueError):
+                last_score_label = str(last_score)
+            message_lines.append(f"Último score usado: {last_score_label} em {last_date_label} ({last_adjustment_label})")
+        else:
+            message_lines.append(f"Último ajuste usado: {last_adjustment_label} em {last_date_label} (sem score informado)")
     elif correction_factor != 1.0:
         message_lines.append(f"Correção acumulada ativa: {correction_label} sobre o protocolo base")
     message_lines.extend([
