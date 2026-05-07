@@ -276,6 +276,32 @@ class DailyManagement(db.Model):
     feed_product = db.relationship('FeedProduct')
 
 
+
+
+class OperationalTask(db.Model):
+    """Agenda operacional diária para o Painel TV e para a aba Rotina do Dia."""
+    id = db.Column(db.Integer, primary_key=True)
+    operation_date = db.Column(db.Date, nullable=False)
+    scheduled_time = db.Column(db.Time)
+    category = db.Column(db.String(30), nullable=False, default='rotina')
+    priority = db.Column(db.String(20), nullable=False, default='media')
+    priority_order = db.Column(db.Integer, nullable=False, default=3)
+    title = db.Column(db.String(160), nullable=False)
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'))
+    feed_product_id = db.Column(db.Integer, db.ForeignKey('feed_product.id'))
+    supply_product_id = db.Column(db.Integer, db.ForeignKey('supply_product.id'))
+    ration_label = db.Column(db.String(120))
+    quantity = db.Column(db.Float)
+    measure_unit = db.Column(db.String(20), default='kg')
+    frequency = db.Column(db.String(40))
+    notes = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    unit = db.relationship('Unit')
+    feed_product = db.relationship('FeedProduct')
+    supply_product = db.relationship('SupplyProduct')
+
 class ProtocolDocument(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(160), nullable=False)
@@ -3643,7 +3669,7 @@ def run_lightweight_migrations():
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
 
-    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, SupplyProduct, SupplyInventory, ManagementSupplyUsage, LotUnitAllocation, FixedCost, NurseryFeeding):
+    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, SupplyProduct, SupplyInventory, ManagementSupplyUsage, LotUnitAllocation, FixedCost, NurseryFeeding, OperationalTask):
         table_name = model.__table__.name
         if table_name not in tables:
             model.__table__.create(bind=db.engine)
@@ -3780,6 +3806,11 @@ def run_lightweight_migrations():
         add_column_if_missing('supply_inventory', supply_inventory_columns, 'created_by_id', 'ALTER TABLE supply_inventory ADD COLUMN created_by_id INTEGER', 'ALTER TABLE supply_inventory ADD COLUMN created_by_id INTEGER')
         add_column_if_missing('supply_inventory', supply_inventory_columns, 'created_at', f"ALTER TABLE supply_inventory ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE supply_inventory ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
 
+
+    if 'operational_task' in tables:
+        operational_task_columns = get_columns('operational_task')
+        add_column_if_missing('operational_task', operational_task_columns, 'supply_product_id', 'ALTER TABLE operational_task ADD COLUMN supply_product_id INTEGER', 'ALTER TABLE operational_task ADD COLUMN supply_product_id INTEGER')
+
     if 'management_supply_usage' in tables:
         management_supply_columns = get_columns('management_supply_usage')
         add_column_if_missing('management_supply_usage', management_supply_columns, 'notes', 'ALTER TABLE management_supply_usage ADD COLUMN notes TEXT')
@@ -3790,6 +3821,7 @@ def run_lightweight_migrations():
     sync_transfer_phase_history()
     sync_feed_products_from_legacy_movements()
     normalize_auto_nursery_feed_product_names()
+    cleanup_ghost_feed_products()
 
 
 def init_db():
@@ -4236,33 +4268,117 @@ def normalize_auto_nursery_feed_product_names():
     db.session.commit()
 
 
+def feed_product_alias_keys(product):
+    """Chaves de comparação para evitar duplicar produtos do estoque.
+
+    A migração antiga criava produto a partir do nome salvo no movimento
+    (feed_inventory.feed_name). O problema era comparar esse nome contra
+    "marca + tipo"; assim, uma ração real como "AQUAVITA 35 + IRCA 30..."
+    virava um novo produto fantasma com tipo "Geral" quando uma saída de
+    manejo era lançada ou quando a aplicação reiniciava.
+    """
+    keys = set()
+    if not product:
+        return keys
+    for value in (
+        product.full_name,
+        product.brand,
+        f'{product.brand} {product.feed_type}',
+        f'{product.full_name} {product.technical_summary}',
+    ):
+        normalized = normalize_text(value or '')
+        if normalized:
+            keys.add(normalized)
+    return keys
+
+
+def build_feed_product_alias_map():
+    aliases = {}
+    products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.id.asc()).all()
+    for product in products:
+        for key in feed_product_alias_keys(product):
+            aliases.setdefault(key, product)
+    return aliases
+
+
 def sync_feed_products_from_legacy_movements():
-    existing_products = {
-        normalize_text(f'{product.brand} {product.feed_type}'): product
-        for product in FeedProduct.query.all()
-    }
+    """Vincula movimentos antigos ao produto correto sem criar fantasmas.
 
-    legacy_names = [name for (name,) in db.session.query(FeedInventory.feed_name).filter(FeedInventory.feed_name.isnot(None)).distinct().all() if name]
+    Só cria produto quando o movimento é realmente legado, isto é, quando
+    ainda não tem feed_product_id. Movimentos novos do manejo diário já são
+    vinculados por ID e não devem gerar novos itens no estoque consolidado.
+    """
+    existing_products = build_feed_product_alias_map()
+
+    legacy_movements = FeedInventory.query.filter(
+        FeedInventory.feed_product_id.is_(None),
+        FeedInventory.feed_name.isnot(None),
+    ).all()
+
     created = 0
-    for feed_name in legacy_names:
+    for movement in legacy_movements:
+        feed_name = (movement.feed_name or '').strip()
         normalized = normalize_text(feed_name)
-        if not normalized or normalized in existing_products:
+        if not normalized:
             continue
-        product = FeedProduct(brand=feed_name.strip(), feed_type='Geral', active=True)
-        db.session.add(product)
-        db.session.flush()
-        existing_products[normalized] = product
-        created += 1
+        product = existing_products.get(normalized)
+        if not product:
+            product = FeedProduct(brand=feed_name[:120], feed_type='Geral', active=True, notes='Criado automaticamente para vincular movimentação antiga de estoque.')
+            db.session.add(product)
+            db.session.flush()
+            for key in feed_product_alias_keys(product):
+                existing_products.setdefault(key, product)
+            created += 1
+        movement.feed_product_id = product.id
 
-    if created:
-        db.session.flush()
+    if created or legacy_movements:
+        db.session.commit()
 
-    for movement in FeedInventory.query.filter(FeedInventory.feed_product_id.is_(None), FeedInventory.feed_name.isnot(None)).all():
-        product = existing_products.get(normalize_text(movement.feed_name))
-        if product:
-            movement.feed_product_id = product.id
 
-    db.session.commit()
+def cleanup_ghost_feed_products():
+    """Remove ou mescla rações fantasma criadas pela migração anterior.
+
+    Critério seguro: produtos com tipo "Geral" ou vazio, cujo nome/marca já
+    corresponde a uma ração real existente. Se houver referências, elas são
+    movidas para o produto canônico; se não houver, o item fantasma é excluído.
+    """
+    products = FeedProduct.query.order_by(FeedProduct.id.asc()).all()
+    alias_map = {}
+    for product in products:
+        # Preferimos produto não genérico como canônico.
+        type_norm = normalize_text(product.feed_type or '')
+        priority = 0 if type_norm not in {'', 'geral'} else 1
+        for key in feed_product_alias_keys(product):
+            current = alias_map.get(key)
+            if current is None:
+                alias_map[key] = product
+                continue
+            current_priority = 0 if normalize_text(current.feed_type or '') not in {'', 'geral'} else 1
+            if (priority, product.id) < (current_priority, current.id):
+                alias_map[key] = product
+
+    changed = False
+    for product in list(FeedProduct.query.order_by(FeedProduct.id.asc()).all()):
+        type_norm = normalize_text(product.feed_type or '')
+        if type_norm not in {'', 'geral'}:
+            continue
+        canonical = None
+        for key in feed_product_alias_keys(product):
+            candidate = alias_map.get(key)
+            if candidate and candidate.id != product.id:
+                canonical = candidate
+                break
+        if not canonical:
+            continue
+
+        FeedInventory.query.filter_by(feed_product_id=product.id).update({'feed_product_id': canonical.id, 'feed_name': feed_inventory_name(canonical)}, synchronize_session=False)
+        DailyManagement.query.filter_by(feed_product_id=product.id).update({'feed_product_id': canonical.id}, synchronize_session=False)
+        OperationalTask.query.filter_by(feed_product_id=product.id).update({'feed_product_id': canonical.id}, synchronize_session=False)
+        db.session.delete(product)
+        changed = True
+
+    if changed:
+        db.session.commit()
 
 
 def feed_product_label(product):
@@ -5707,6 +5823,297 @@ def water_page():
         reference_summary=build_reference_summary(),
         pending_water_import=get_pending_water_import(),
     )
+
+
+
+
+OPERATION_CATEGORY_LABELS = {
+    'alimentacao': 'Alimentação viveiros',
+    'bercario': 'Alimentação berçário',
+    'aditivo': 'Aditivo de água',
+    'troca_agua': 'Troca de água',
+    'rotina': 'Rotina operacional',
+}
+
+OPERATION_PRIORITY_LABELS = {
+    'critica': 'Crítica',
+    'alta': 'Alta',
+    'media': 'Média',
+    'baixa': 'Baixa',
+}
+
+OPERATION_PRIORITY_ORDER = {
+    'critica': 1,
+    'alta': 2,
+    'media': 3,
+    'baixa': 4,
+}
+
+
+def normalize_operation_priority(value):
+    value = (value or 'media').strip().lower()
+    return value if value in OPERATION_PRIORITY_ORDER else 'media'
+
+
+def operation_category_label(value):
+    return OPERATION_CATEGORY_LABELS.get(value or 'rotina', 'Rotina operacional')
+
+
+def operation_priority_label(value):
+    return OPERATION_PRIORITY_LABELS.get(normalize_operation_priority(value), 'Média')
+
+
+def weekday_label_pt(value):
+    labels = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo']
+    return labels[value.weekday()] if value else ''
+
+
+def format_decimal_pt(value, decimals=1):
+    if value is None:
+        return ''
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if abs(number - round(number)) < 0.00001:
+        return str(int(round(number)))
+    return f"{number:.{decimals}f}".replace('.', ',')
+
+
+def feed_label_for_task(task):
+    if task.ration_label:
+        return task.ration_label
+    if task.feed_product:
+        parts = [task.feed_product.full_name]
+        if task.feed_product.technical_summary:
+            parts.append(task.feed_product.technical_summary)
+        return ' · '.join([p for p in parts if p]) or 'Ração'
+    return 'Ração não vinculada'
+
+
+def supply_label_for_task(task):
+    if getattr(task, 'supply_product', None):
+        return task.supply_product.full_name
+    if task.ration_label:
+        return task.ration_label
+    return task.title or 'Insumo não vinculado'
+
+
+def clear_product_links_by_category(task):
+    # A programação é planejamento/TV. O estoque só deve baixar no manejo real.
+    if task.category in ('alimentacao', 'bercario'):
+        task.supply_product_id = None
+    elif task.category in ('aditivo', 'troca_agua'):
+        task.feed_product_id = None
+
+
+def quantity_label_for_task(task):
+    if task.quantity is None:
+        return ''
+    unit = task.measure_unit or 'kg'
+    return f"{format_decimal_pt(task.quantity)} {unit}"
+
+
+def task_display_unit(task):
+    return task.unit.name if task.unit else 'Geral'
+
+
+def task_payload(task):
+    return {
+        'id': task.id,
+        'time': task.scheduled_time.strftime('%H:%M') if task.scheduled_time else '--:--',
+        'category': task.category,
+        'category_label': operation_category_label(task.category),
+        'priority': task.priority,
+        'priority_label': operation_priority_label(task.priority),
+        'priority_order': task.priority_order or OPERATION_PRIORITY_ORDER.get(task.priority, 3),
+        'title': supply_label_for_task(task) if task.category in ('aditivo', 'troca_agua') else task.title,
+        'unit': task_display_unit(task),
+        'feed_label': feed_label_for_task(task),
+        'supply_label': supply_label_for_task(task),
+        'quantity_label': quantity_label_for_task(task),
+        'frequency': task.frequency or '',
+        'notes': task.notes or '',
+    }
+
+
+def group_tv_feeding_rows(tasks):
+    grouped = defaultdict(list)
+    for task in tasks:
+        grouped[task.scheduled_time.strftime('%H:%M') if task.scheduled_time else '--:--'].append(task)
+    rows = []
+    for time_label in sorted(grouped.keys()):
+        entries = grouped[time_label]
+        by_feed = defaultdict(list)
+        for task in entries:
+            by_feed[feed_label_for_task(task)].append(task)
+        for feed_label, feed_tasks in by_feed.items():
+            rows.append({
+                'time': time_label,
+                'category': feed_tasks[0].category,
+                'feed_label': feed_label,
+                'items': [f"{task_display_unit(t)} {quantity_label_for_task(t)}".strip() for t in feed_tasks],
+            })
+    return rows
+
+
+def build_tv_dashboard_data(target_date):
+    tasks = (
+        OperationalTask.query
+        .options(joinedload(OperationalTask.unit), joinedload(OperationalTask.feed_product), joinedload(OperationalTask.supply_product))
+        .filter(OperationalTask.operation_date == target_date, OperationalTask.active.is_(True))
+        .order_by(OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.priority_order.asc(), OperationalTask.id.asc())
+        .all()
+    )
+    feeding_tasks = [t for t in tasks if t.category in ('alimentacao', 'bercario')]
+    additive_tasks = [t for t in tasks if t.category in ('aditivo', 'troca_agua')]
+    routine_tasks = [t for t in tasks if t.category == 'rotina']
+    priority_routines = sorted(routine_tasks, key=lambda t: (t.priority_order or 3, t.scheduled_time or time(23, 59), t.id))
+    priority_current = priority_routines[0] if priority_routines else None
+    total_feed = sum(t.quantity or 0 for t in feeding_tasks if (t.measure_unit or 'kg').lower() == 'kg')
+    return {
+        'tasks': tasks,
+        'feeding_rows': group_tv_feeding_rows(feeding_tasks),
+        'additives': [task_payload(t) for t in additive_tasks],
+        'priority_routines': [task_payload(t) for t in priority_routines],
+        'priority_current': task_payload(priority_current) if priority_current else None,
+        'total_feed_kg': round(total_feed, 1),
+        'water_changes': len([t for t in additive_tasks if t.category == 'troca_agua']),
+        'additive_count': len([t for t in additive_tasks if t.category == 'aditivo']),
+        'routine_count': len(routine_tasks),
+    }
+
+@app.context_processor
+def inject_operation_helpers():
+    return {
+        'operation_category_label': operation_category_label,
+        'operation_priority_label': operation_priority_label,
+        'operation_category_labels': OPERATION_CATEGORY_LABELS,
+        'operation_priority_labels': OPERATION_PRIORITY_LABELS,
+        'format_decimal_pt': format_decimal_pt,
+        'weekday_label_pt': weekday_label_pt,
+    }
+
+
+@app.route('/operation-schedule', methods=['GET', 'POST'])
+@login_required
+@requires_permission('management_manage')
+def operation_schedule_page():
+    selected_date = parse_date(request.values.get('operation_date'), date.today())
+    if request.method == 'POST':
+        category = request.form.get('category') or 'rotina'
+        priority = normalize_operation_priority(request.form.get('priority'))
+        title = (request.form.get('title') or '').strip()
+        feed_product_id = request.form.get('feed_product_id', type=int)
+        supply_product_id = request.form.get('supply_product_id', type=int)
+        selected_feed = db.session.get(FeedProduct, feed_product_id) if feed_product_id else None
+        selected_supply = db.session.get(SupplyProduct, supply_product_id) if supply_product_id else None
+        if category in ('alimentacao', 'bercario'):
+            supply_product_id = None
+            selected_supply = None
+        elif category in ('aditivo', 'troca_agua'):
+            feed_product_id = None
+            selected_feed = None
+        ration_label = (request.form.get('ration_label') or '').strip()
+        unit_id = request.form.get('unit_id', type=int)
+        if not title:
+            if category in ('alimentacao', 'bercario'):
+                title = f"Alimentação {request.form.get('scheduled_time') or ''}".strip()
+            elif category == 'troca_agua':
+                title = 'Troca de água'
+            elif category == 'aditivo':
+                title = ration_label or (selected_supply.full_name if selected_supply else 'Aditivo de água')
+            else:
+                flash('Informe o nome da rotina.', 'danger')
+                return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+        task = OperationalTask(
+            operation_date=selected_date,
+            scheduled_time=parse_time(request.form.get('scheduled_time')),
+            category=category,
+            priority=priority,
+            priority_order=OPERATION_PRIORITY_ORDER[priority],
+            title=title,
+            unit_id=unit_id,
+            feed_product_id=feed_product_id,
+            supply_product_id=supply_product_id,
+            ration_label=ration_label or None,
+            quantity=parse_float(request.form.get('quantity')),
+            measure_unit=(request.form.get('measure_unit') or 'kg').strip(),
+            frequency=(request.form.get('frequency') or '').strip(),
+            notes=(request.form.get('notes') or '').strip(),
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add(task)
+        db.session.commit()
+        flash('Item adicionado à rotina operacional do dia.', 'success')
+        return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+    feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
+    supply_products = SupplyProduct.query.order_by(SupplyProduct.active.desc(), SupplyProduct.name.asc()).all()
+    tasks = (
+        OperationalTask.query
+        .options(joinedload(OperationalTask.unit), joinedload(OperationalTask.feed_product), joinedload(OperationalTask.supply_product))
+        .filter(OperationalTask.operation_date == selected_date)
+        .order_by(OperationalTask.category.asc(), OperationalTask.priority_order.asc(), OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.id.asc())
+        .all()
+    )
+    return render_template('operation_schedule.html', selected_date=selected_date, units=units, feed_products=feed_products, supply_products=supply_products, tasks=tasks)
+
+
+@app.post('/operation-schedule/<int:task_id>/edit')
+@login_required
+@requires_permission('management_manage')
+def edit_operation_task(task_id):
+    task = db.session.get(OperationalTask, task_id)
+    if not task:
+        flash('Item da rotina não encontrado.', 'warning')
+        return redirect(url_for('operation_schedule_page'))
+    priority = normalize_operation_priority(request.form.get('priority'))
+    task.operation_date = parse_date(request.form.get('operation_date'), task.operation_date)
+    task.scheduled_time = parse_time(request.form.get('scheduled_time'))
+    task.category = request.form.get('category') or task.category
+    task.priority = priority
+    task.priority_order = OPERATION_PRIORITY_ORDER[priority]
+    task.title = (request.form.get('title') or task.title).strip()
+    task.unit_id = request.form.get('unit_id', type=int)
+    task.feed_product_id = request.form.get('feed_product_id', type=int)
+    task.supply_product_id = request.form.get('supply_product_id', type=int)
+    clear_product_links_by_category(task)
+    task.ration_label = (request.form.get('ration_label') or '').strip() or None
+    task.quantity = parse_float(request.form.get('quantity'))
+    task.measure_unit = (request.form.get('measure_unit') or 'kg').strip()
+    task.frequency = (request.form.get('frequency') or '').strip()
+    task.notes = (request.form.get('notes') or '').strip()
+    task.active = bool(request.form.get('active'))
+    task.updated_at = datetime.utcnow()
+    db.session.commit()
+    flash('Item da rotina atualizado.', 'success')
+    return redirect(url_for('operation_schedule_page', operation_date=task.operation_date.isoformat()))
+
+
+@app.post('/operation-schedule/<int:task_id>/delete')
+@login_required
+@requires_permission('management_manage')
+def delete_operation_task(task_id):
+    task = db.session.get(OperationalTask, task_id)
+    if not task:
+        flash('Item da rotina não encontrado.', 'warning')
+        return redirect(url_for('operation_schedule_page'))
+    operation_date = task.operation_date
+    db.session.delete(task)
+    db.session.commit()
+    flash('Item removido da rotina operacional.', 'success')
+    return redirect(url_for('operation_schedule_page', operation_date=operation_date.isoformat()))
+
+
+@app.route('/painel-tv')
+@login_required
+@requires_permission('dashboard')
+def tv_panel_page():
+    selected_date = parse_date(request.args.get('operation_date'), date.today())
+    tv_data = build_tv_dashboard_data(selected_date)
+    return render_template('tv_panel.html', selected_date=selected_date, tv_data=tv_data, now=datetime.now())
 
 
 @app.route('/management', methods=['GET', 'POST'])
