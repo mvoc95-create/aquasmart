@@ -5863,6 +5863,185 @@ def operation_priority_label(value):
     return OPERATION_PRIORITY_LABELS.get(normalize_operation_priority(value), 'Média')
 
 
+def operation_task_source_marker(task_id):
+    return f'Origem Rotina ID: {task_id}'
+
+
+def operation_task_completed_record(task):
+    if not task or not task.unit_id:
+        return None
+    return DailyManagement.query.filter(
+        DailyManagement.manage_date == task.operation_date,
+        DailyManagement.unit_id == task.unit_id,
+        DailyManagement.notes.contains(operation_task_source_marker(task.id)),
+    ).order_by(DailyManagement.id.desc()).first()
+
+
+def build_operation_management_note(task):
+    lines = [
+        '[Integração rotina operacional]',
+        'Lançamento automático pela conclusão da Rotina do Dia.',
+        f'Origem Rotina ID: {task.id}',
+        f'Categoria: {operation_category_label(task.category)}',
+        f'Prioridade: {operation_priority_label(task.priority)}',
+        f'Ação: {task.title}',
+    ]
+    if task.scheduled_time:
+        lines.append(f'Horário programado: {task.scheduled_time.strftime("%H:%M")}')
+    if task.ration_label:
+        lines.append(f'Rótulo TV: {task.ration_label}')
+    if task.notes:
+        lines.append(f'Observações da rotina: {task.notes}')
+    lines.append('[/Integração rotina operacional]')
+    return '\n'.join(lines)
+
+
+def completed_operation_task_ids(target_date):
+    records = DailyManagement.query.filter(
+        DailyManagement.manage_date == target_date,
+        DailyManagement.notes.contains('[Integração rotina operacional]'),
+    ).all()
+    ids = set()
+    for record in records:
+        for match in re.findall(r'Origem Rotina ID:\s*(\d+)', record.notes or ''):
+            ids.add(int(match))
+    return ids
+
+
+def complete_operation_task_into_management(task):
+    if not task or not task.active:
+        return 'skipped', 'Item inativo.'
+    if operation_task_completed_record(task):
+        return 'skipped', 'Já estava lançado no manejo.'
+    if not task.unit_id:
+        return 'skipped', 'Item sem viveiro/berçário vinculado.'
+
+    lot = active_lot_for_unit(task.unit_id, on_date=task.operation_date)
+    notes = build_operation_management_note(task)
+
+    if task.category in ('alimentacao', 'bercario'):
+        quantity = task.quantity or 0
+        measure = (task.measure_unit or 'kg').lower()
+        if measure != 'kg':
+            return 'skipped', 'Alimentação só pode ser lançada automaticamente em kg.'
+        if quantity <= 0:
+            return 'skipped', 'Quantidade de ração zerada.'
+        if not task.feed_product:
+            return 'skipped', 'Ração não vinculada ao estoque.'
+        validation_error = validate_feed_usage(task.feed_product, quantity)
+        if validation_error:
+            return 'error', validation_error
+        management = DailyManagement(
+            manage_date=task.operation_date,
+            unit_id=task.unit_id,
+            lot_id=lot.id if lot else None,
+            feed_product_id=task.feed_product_id,
+            feed_offered_kg=quantity,
+            feed_consumed_kg=quantity,
+            mortality_qty=0,
+            notes=notes,
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add(management)
+        db.session.flush()
+        sync_management_feed_movement(management, task.feed_product, quantity)
+        return 'created', 'Ração lançada no manejo.'
+
+    if task.category in ('aditivo', 'troca_agua'):
+        quantity = task.quantity or 0
+        if quantity <= 0 or not task.supply_product:
+            return 'skipped', 'Insumo/aditivo sem produto ou quantidade.'
+        entries = [{'product': task.supply_product, 'quantity': quantity, 'notes': notes}]
+        validation_error = validate_supply_usage(entries)
+        if validation_error:
+            return 'error', validation_error
+        management = DailyManagement(
+            manage_date=task.operation_date,
+            unit_id=task.unit_id,
+            lot_id=lot.id if lot else None,
+            feed_offered_kg=0,
+            feed_consumed_kg=0,
+            mortality_qty=0,
+            notes=notes,
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add(management)
+        db.session.flush()
+        sync_management_supply_usages(management, entries)
+        return 'created', 'Insumo lançado no manejo.'
+
+    # Rotinas sem consumo de estoque entram no manejo apenas como registro operacional,
+    # desde que estejam vinculadas a uma unidade.
+    management = DailyManagement(
+        manage_date=task.operation_date,
+        unit_id=task.unit_id,
+        lot_id=lot.id if lot else None,
+        feed_offered_kg=0,
+        feed_consumed_kg=0,
+        mortality_qty=0,
+        notes=notes,
+        updated_at=datetime.utcnow(),
+    )
+    db.session.add(management)
+    return 'created', 'Rotina operacional lançada no manejo.'
+
+
+def import_nursery_feed_plan_to_operation_schedule(target_date):
+    plans = build_nursery_digest_for_date(target_date)
+    created = 0
+    skipped = 0
+    for plan in plans:
+        unit = plan.get('unit')
+        if not unit:
+            skipped += 1
+            continue
+        total_day_g = sum(int(item.get('grams') or 0) for item in plan.get('mixes', []))
+        if total_day_g <= 0:
+            skipped += 1
+            continue
+        for schedule_item in plan.get('schedule', []):
+            scheduled = parse_time(schedule_item.get('time'))
+            portion_g = int(schedule_item.get('grams') or 0)
+            if portion_g <= 0:
+                continue
+            for mix in plan.get('mixes', []):
+                label = mix.get('label') or 'Ração berçário'
+                mix_total_g = int(mix.get('grams') or 0)
+                portion_mix_kg = round(((portion_g * mix_total_g) / total_day_g) / 1000, 3)
+                if portion_mix_kg <= 0:
+                    continue
+                existing = OperationalTask.query.filter_by(
+                    operation_date=target_date,
+                    scheduled_time=scheduled,
+                    category='bercario',
+                    unit_id=unit.id,
+                    ration_label=label,
+                ).first()
+                if existing:
+                    skipped += 1
+                    continue
+                product = find_or_create_nursery_feed_product(label, create_missing=False)
+                task = OperationalTask(
+                    operation_date=target_date,
+                    scheduled_time=scheduled,
+                    category='bercario',
+                    priority='alta',
+                    priority_order=OPERATION_PRIORITY_ORDER['alta'],
+                    title=f'Alimentação berçário {unit.name}',
+                    unit_id=unit.id,
+                    feed_product_id=product.id if product else None,
+                    ration_label=product.full_name if product else label,
+                    quantity=portion_mix_kg,
+                    measure_unit='kg',
+                    frequency=f"{len(plan.get('schedule', []))}x ao dia",
+                    notes='Importado da aba Alimentação berçário para o Painel TV.',
+                    updated_at=datetime.utcnow(),
+                )
+                db.session.add(task)
+                created += 1
+    return created, skipped
+
+
 def weekday_label_pt(value):
     labels = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo']
     return labels[value.weekday()] if value else ''
@@ -6058,7 +6237,68 @@ def operation_schedule_page():
         .order_by(OperationalTask.category.asc(), OperationalTask.priority_order.asc(), OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.id.asc())
         .all()
     )
-    return render_template('operation_schedule.html', selected_date=selected_date, units=units, feed_products=feed_products, supply_products=supply_products, tasks=tasks)
+    completed_task_ids = completed_operation_task_ids(selected_date)
+    return render_template(
+        'operation_schedule.html',
+        selected_date=selected_date,
+        units=units,
+        feed_products=feed_products,
+        supply_products=supply_products,
+        tasks=tasks,
+        completed_task_ids=completed_task_ids,
+    )
+
+
+@app.post('/operation-schedule/import-nursery')
+@login_required
+@requires_permission('management_manage')
+def import_nursery_to_operation_schedule():
+    selected_date = parse_date(request.form.get('operation_date'), date.today())
+    created, skipped = import_nursery_feed_plan_to_operation_schedule(selected_date)
+    db.session.commit()
+    if created:
+        flash(f'Ração do berçário importada para a Rotina do Dia: {created} item(ns) criado(s).', 'success')
+    else:
+        flash('Nenhuma ração nova de berçário foi importada. Verifique se há berçários/lotes ativos ou se os itens já existem.', 'warning')
+    if skipped:
+        flash(f'{skipped} item(ns) foram ignorados por já existirem ou não terem dados suficientes.', 'info')
+    return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+
+@app.post('/operation-schedule/complete-day')
+@login_required
+@requires_permission('management_manage')
+def complete_operation_schedule_day():
+    selected_date = parse_date(request.form.get('operation_date'), date.today())
+    tasks = (
+        OperationalTask.query
+        .options(joinedload(OperationalTask.unit), joinedload(OperationalTask.feed_product), joinedload(OperationalTask.supply_product))
+        .filter(OperationalTask.operation_date == selected_date, OperationalTask.active.is_(True))
+        .order_by(OperationalTask.priority_order.asc(), OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.id.asc())
+        .all()
+    )
+    created = skipped = errors = 0
+    error_messages = []
+    for task in tasks:
+        status, message = complete_operation_task_into_management(task)
+        if status == 'created':
+            created += 1
+        elif status == 'error':
+            errors += 1
+            error_messages.append(f'{task.title}: {message}')
+        else:
+            skipped += 1
+    if errors:
+        db.session.rollback()
+        flash('Não lancei a rotina no manejo porque existem pendências de estoque/vínculo.', 'danger')
+        for msg in error_messages[:5]:
+            flash(msg, 'danger')
+    else:
+        db.session.commit()
+        flash(f'Rotina concluída: {created} item(ns) lançado(s) no Manejo Diário.', 'success')
+        if skipped:
+            flash(f'{skipped} item(ns) foram ignorados por já estarem lançados, não terem unidade ou não consumirem estoque.', 'info')
+    return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
 
 
 @app.post('/operation-schedule/<int:task_id>/edit')
