@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>Painel TV · AquaSmart</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+</head>
+<body class="tv-panel-page">
+  <aside class="tv-brand-rail">
+    <img src="{{ url_for('static', filename='logo-aqua-smart.png') }}" alt="AquaSmart">
+    <strong>Painel TV</strong>
+    <span></span>
+    <div class="tv-brand-bottom"><i class="fa-solid fa-droplet"></i><b>AQUASMART</b><small>Gestão inteligente<br>para fazendas<br>de camarão</small></div>
+  </aside>
+
+  <main class="tv-dashboard">
+    <header class="tv-header">
+      <h1>Painel Operacional do Dia</h1>
+      <div class="tv-header-info">
+        <div><i class="fa-solid fa-calendar-days"></i><strong>{{ selected_date.strftime('%d/%m/%Y') }}</strong><small>{{ weekday_label_pt(selected_date) }}</small></div>
+        <div><i class="fa-solid fa-user-helmet-safety"></i><strong>Turno</strong><small>{{ 'Manhã' if now.hour < 12 else ('Tarde' if now.hour < 18 else 'Noite') }}</small></div>
+        <div><i class="fa-regular fa-clock"></i><strong>{{ now.strftime('%H:%M') }}</strong><small>Hora atual</small></div>
+      </div>
+    </header>
+
+    <section class="tv-kpis">
+      <div class="tv-kpi"><i class="fa-solid fa-sack-xmark green"></i><span>Ração Total do Dia</span><strong>{{ format_decimal_pt(tv_data.total_feed_kg) }} kg</strong><small>Programada</small></div>
+      <div class="tv-kpi"><i class="fa-solid fa-droplet blue"></i><span>Troca d’água</span><strong>{{ tv_data.water_changes }}</strong><small>Programada(s)</small></div>
+      <div class="tv-kpi"><i class="fa-solid fa-bottle-water blue"></i><span>Aditivos</span><strong>{{ tv_data.additive_count }}</strong><small>Programado(s)</small></div>
+      <div class="tv-kpi"><i class="fa-solid fa-clipboard-list green"></i><span>Rotinas</span><strong>{{ tv_data.routine_count }}</strong><small>Por prioridade</small></div>
+    </section>
+
+    <section class="tv-grid-main">
+      <div class="tv-card tv-feed-card">
+        <h2>ALIMENTAÇÃO POR HORÁRIO</h2>
+        <div class="tv-feed-list">
+          {% for row in tv_data.feeding_rows %}
+          <div class="tv-feed-row">
+            <strong class="tv-time">{{ row.time }}</strong>
+            <span class="tv-feed-chip {{ 'nursery' if row.category == 'bercario' else 'growout' }}">{{ row.feed_label }}</span>
+            <p>{{ row.items|join('  |  ') }}</p>
+          </div>
+          {% else %}
+          <div class="tv-empty">Nenhuma alimentação programada para hoje.</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="tv-side-stack">
+        <div class="tv-card">
+          <h2>ADITIVOS E TROCA DE ÁGUA</h2>
+          <table class="tv-simple-table">
+            <thead><tr><th>Hora</th><th>Viveiro</th><th>Ação</th><th>Qtd.</th></tr></thead>
+            <tbody>
+              {% for item in tv_data.additives %}
+              <tr><td>{{ item.time }}</td><td>{{ item.unit }}</td><td>{{ item.title }}</td><td>{{ item.quantity_label }}</td></tr>
+              {% else %}<tr><td colspan="4">Sem aditivos ou troca d’água programados.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tv-card tv-priority-card">
+          <h2>ROTINAS POR PRIORIDADE</h2>
+          <div class="tv-priority-list">
+            {% for item in tv_data.priority_routines %}
+            <div class="tv-priority-row">
+              <b>{{ loop.index }}</b>
+              <span class="priority-chip priority-{{ item.priority }}">{{ item.priority_label }}</span>
+              <strong>{{ item.title }}</strong>
+              <em>{{ item.time }}</em>
+            </div>
+            {% else %}
+            <div class="tv-empty">Nenhuma rotina cadastrada.</div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tv-current-priority">
+      <i class="fa-solid fa-bullseye"></i>
+      <div><span>PRIORIDADE ATUAL</span><strong>{{ tv_data.priority_current.title if tv_data.priority_current else 'Sem prioridade cadastrada' }}</strong><small>{{ tv_data.priority_current.priority_label ~ ' · ' ~ tv_data.priority_current.time if tv_data.priority_current else 'Cadastre uma rotina na aba Rotina do Dia.' }}</small></div>
+    </section>
+
+    <footer class="tv-footer">Painel TV <b>•</b> Atualização automática <b>•</b> Somente visualização</footer>
+  </main>
+</body>
+</html>
