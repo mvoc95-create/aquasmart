@@ -8,40 +8,38 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 </head>
-<body class="tv-panel-page">
-  <aside class="tv-brand-rail">
-    <img src="{{ url_for('static', filename='logo-aqua-smart.png') }}" alt="AquaSmart">
-    <strong>Painel TV</strong>
-    <span></span>
-    <div class="tv-brand-bottom"><i class="fa-solid fa-droplet"></i><b>AQUASMART</b><small>Gestão inteligente<br>para fazendas<br>de camarão</small></div>
-  </aside>
+<body class="tv-panel-page tv-panel-wide">
+  <header class="tv-topbar">
+    <div class="tv-topbar-brand">
+      <img src="{{ url_for('static', filename='logo-aqua-smart.png') }}" alt="Aqua Smart">
+      <strong>Aqua Smart</strong>
+      <span></span>
+      <div><b>Painel TV</b><small>Programação operacional do dia</small></div>
+    </div>
+    <div class="tv-topbar-meta">
+      <div><i class="fa-regular fa-calendar-days"></i><strong>{{ selected_date.strftime('%d/%m/%Y') }}</strong></div>
+      <div><i class="fa-regular fa-clock"></i><strong>{{ now.strftime('%H:%M') }}</strong></div>
+    </div>
+  </header>
 
-  <main class="tv-dashboard">
-    <header class="tv-header">
-      <h1>Painel Operacional do Dia</h1>
-      <div class="tv-header-info">
-        <div><i class="fa-solid fa-calendar-days"></i><strong>{{ selected_date.strftime('%d/%m/%Y') }}</strong><small>{{ weekday_label_pt(selected_date) }}</small></div>
-        <div><i class="fa-solid fa-user-helmet-safety"></i><strong>Turno</strong><small>{{ 'Manhã' if now.hour < 12 else ('Tarde' if now.hour < 18 else 'Noite') }}</small></div>
-        <div><i class="fa-regular fa-clock"></i><strong>{{ now.strftime('%H:%M') }}</strong><small>Hora atual</small></div>
-      </div>
-    </header>
-
-    <section class="tv-kpis">
-      <div class="tv-kpi"><i class="fa-solid fa-sack-xmark green"></i><span>Ração Total do Dia</span><strong>{{ format_decimal_pt(tv_data.total_feed_kg) }} kg</strong><small>Programada</small></div>
-      <div class="tv-kpi"><i class="fa-solid fa-droplet blue"></i><span>Troca d’água</span><strong>{{ tv_data.water_changes }}</strong><small>Programada(s)</small></div>
-      <div class="tv-kpi"><i class="fa-solid fa-bottle-water blue"></i><span>Aditivos</span><strong>{{ tv_data.additive_count }}</strong><small>Programado(s)</small></div>
-      <div class="tv-kpi"><i class="fa-solid fa-clipboard-list green"></i><span>Rotinas</span><strong>{{ tv_data.routine_count }}</strong><small>Por prioridade</small></div>
+  <main class="tv-dashboard tv-dashboard-wide">
+    <section class="tv-kpis tv-kpis-wide">
+      <div class="tv-kpi tv-kpi-soft green"><i class="fa-solid fa-bowl-food"></i><span>Ração total do dia</span><strong>{{ format_decimal_pt(tv_data.total_feed_kg) }} <small>kg</small></strong></div>
+      <div class="tv-kpi tv-kpi-soft blue"><i class="fa-solid fa-shrimp"></i><span>Berçário</span><strong>{{ format_integer_pt(tv_data.nursery_total_g) }} <small>g</small></strong></div>
+      <div class="tv-kpi tv-kpi-soft purple"><i class="fa-solid fa-flask"></i><span>Insumos/Aditivos</span><strong>{{ tv_data.additive_count }} <small>aplicações</small></strong></div>
+      <div class="tv-kpi tv-kpi-soft orange"><i class="fa-solid fa-triangle-exclamation"></i><span>Pendentes</span><strong>{{ tv_data.pending_count }}</strong></div>
     </section>
 
-    <section class="tv-grid-main">
-      <div class="tv-card tv-feed-card">
-        <h2>ALIMENTAÇÃO POR HORÁRIO</h2>
-        <div class="tv-feed-list">
+    <section class="tv-columns">
+      <div class="tv-card tv-feed-card-v2">
+        <h2><i class="fa-regular fa-calendar-days"></i> Alimentação por horário</h2>
+        <div class="tv-time-blocks">
           {% for row in tv_data.feeding_rows %}
-          <div class="tv-feed-row">
-            <strong class="tv-time">{{ row.time }}</strong>
-            <span class="tv-feed-chip {{ 'nursery' if row.category == 'bercario' else 'growout' }}">{{ row.feed_label }}</span>
-            <p>{{ row.item_labels|join('  |  ') }}</p>
+          <div class="tv-time-block">
+            <div class="tv-time-badge"><i class="fa-regular fa-clock"></i><strong>{{ row.time }}</strong></div>
+            <div class="tv-time-items">
+              {% for item in row.item_labels %}<p>• {{ item }}</p>{% endfor %}
+            </div>
           </div>
           {% else %}
           <div class="tv-empty">Nenhuma alimentação programada para hoje.</div>
@@ -49,43 +47,44 @@
         </div>
       </div>
 
-      <div class="tv-side-stack">
-        <div class="tv-card">
-          <h2>ADITIVOS E TROCA DE ÁGUA</h2>
-          <table class="tv-simple-table">
-            <thead><tr><th>Hora</th><th>Viveiro</th><th>Ação</th><th>Qtd.</th></tr></thead>
-            <tbody>
-              {% for item in tv_data.additives %}
-              <tr><td>{{ item.time }}</td><td>{{ item.unit }}</td><td>{{ item.title }}</td><td>{{ item.quantity_label }}</td></tr>
-              {% else %}<tr><td colspan="4">Sem aditivos ou troca d’água programados.</td></tr>{% endfor %}
-            </tbody>
-          </table>
-        </div>
-
-        <div class="tv-card tv-priority-card">
-          <h2>ROTINAS POR PRIORIDADE</h2>
-          <div class="tv-priority-list">
-            {% for item in tv_data.priority_routines %}
-            <div class="tv-priority-row">
-              <b>{{ loop.index }}</b>
-              <span class="priority-chip priority-{{ item.priority }}">{{ item.priority_label }}</span>
-              <strong>{{ item.title }}</strong>
-              <em>{{ item.time }}</em>
-            </div>
-            {% else %}
-            <div class="tv-empty">Nenhuma rotina cadastrada.</div>
-            {% endfor %}
+      <div class="tv-card tv-additives-card-v2">
+        <h2><i class="fa-solid fa-flask"></i> Insumos e aplicações</h2>
+        <div class="tv-additive-list">
+          {% for item in tv_data.additives %}
+          <div class="tv-additive-row">
+            <strong><i class="fa-regular fa-clock"></i> {{ item.time }}</strong>
+            <b>{{ item.unit }}</b>
+            <span>{{ item.title }}</span>
+            <em>{{ item.quantity_label }}</em>
           </div>
+          {% else %}
+          <div class="tv-empty">Sem aditivos ou troca d’água programados.</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="tv-card tv-priority-card-v2">
+        <h2><i class="fa-solid fa-flag"></i> Prioridades do dia</h2>
+        <div class="tv-priority-list-v2">
+          {% for item in tv_data.priority_routines %}
+          <div class="tv-priority-row-v2">
+            <b>{{ loop.index }}</b>
+            <span class="priority-chip priority-{{ item.priority }}">{{ item.priority_label }}</span>
+            <strong>{{ item.title }}</strong>
+            <em><i class="fa-regular fa-clock"></i> {{ item.time }}</em>
+          </div>
+          {% else %}
+          <div class="tv-empty">Nenhuma prioridade cadastrada.</div>
+          {% endfor %}
         </div>
       </div>
     </section>
 
-    <section class="tv-current-priority">
-      <i class="fa-solid fa-bullseye"></i>
-      <div><span>PRIORIDADE ATUAL</span><strong>{{ tv_data.priority_current.title if tv_data.priority_current else 'Sem prioridade cadastrada' }}</strong><small>{{ tv_data.priority_current.priority_label ~ ' · ' ~ tv_data.priority_current.time if tv_data.priority_current else 'Cadastre uma rotina na aba Rotina do Dia.' }}</small></div>
-    </section>
-
-    <footer class="tv-footer">Painel TV <b>•</b> Atualização automática <b>•</b> Somente visualização</footer>
+    <footer class="tv-bottom-status">
+      <div class="green"><i class="fa-solid fa-check"></i><span>Concluídas</span><strong>{{ tv_data.completed_count }}</strong></div>
+      <div class="blue"><i class="fa-solid fa-spinner"></i><span>Em andamento</span><strong>{{ tv_data.in_progress_count }}</strong></div>
+      <div class="orange"><i class="fa-solid fa-exclamation"></i><span>Pendentes</span><strong>{{ tv_data.pending_count }}</strong></div>
+    </footer>
   </main>
 </body>
 </html>

@@ -1,205 +1,279 @@
 {% extends 'base.html' %}
 {% block page_title %}Rotina do Dia{% endblock %}
-{% block page_subtitle %}Monte a programação que aparece no Painel TV e, no fim do dia, lance o realizado no Manejo Diário.{% endblock %}
+{% block page_subtitle %}Cadastre a programação em lote por viveiro, acompanhe no Painel TV e lance no Manejo Diário quando concluir.{% endblock %}
 
 {% block content %}
-<section class="section-card routine-hero-panel">
+<section class="section-card routine-hero-panel routine-planner-hero">
   <div class="routine-hero-grid">
     <div>
-      <p class="panel-kicker">Dashboard operacional</p>
-      <h2>Programação de {{ selected_date.strftime('%d/%m/%Y') }}</h2>
-      <p class="muted-line">Esta tela é o centro de cadastro. O Painel TV continua sendo somente visualização para a equipe.</p>
+      <p class="panel-kicker">Programação operacional da fazenda</p>
+      <h2>Rotina de {{ selected_date.strftime('%d/%m/%Y') }}</h2>
+      <p class="muted-line">O Painel TV puxa daqui: ração, berçário, insumos/aditivos, trocas de água e prioridades.</p>
     </div>
-    <div class="routine-actions">
-      <a class="secondary-link-button" href="{{ url_for('tv_panel_page', operation_date=selected_date.isoformat()) }}" target="_blank"><i class="fa-solid fa-tv"></i> Abrir Painel TV</a>
-      <form method="post" action="{{ url_for('import_nursery_to_operation_schedule') }}">
-        <input type="hidden" name="operation_date" value="{{ selected_date.isoformat() }}">
-        <button class="secondary-button" type="submit"><i class="fa-solid fa-shrimp"></i> Puxar ração do berçário</button>
-      </form>
-      <form method="post" action="{{ url_for('complete_operation_schedule_day') }}" onsubmit="return confirm('Lançar os itens ativos da Rotina do Dia no Manejo Diário? O estoque será baixado apenas para itens vinculados ao estoque.')">
-        <input type="hidden" name="operation_date" value="{{ selected_date.isoformat() }}">
-        <button class="link-button" type="submit"><i class="fa-solid fa-circle-check"></i> Concluir dia e lançar no manejo</button>
-      </form>
-    </div>
+    <form method="get" class="routine-date-row compact-date-row">
+      <label>Data
+        <input type="date" name="operation_date" value="{{ selected_date.isoformat() }}">
+      </label>
+      <button class="secondary-button" type="submit"><i class="fa-solid fa-calendar-day"></i> Carregar</button>
+    </form>
   </div>
 
-  <form method="get" class="routine-date-row">
-    <label>Data da rotina
-      <input type="date" name="operation_date" value="{{ selected_date.isoformat() }}">
-    </label>
-    <button class="secondary-button" type="submit"><i class="fa-solid fa-calendar-day"></i> Carregar data</button>
-  </form>
+  <div class="routine-actions routine-actions-bar">
+    <a class="secondary-link-button" href="{{ url_for('tv_panel_page', operation_date=selected_date.isoformat()) }}" target="_blank"><i class="fa-solid fa-tv"></i> Abrir Painel TV</a>
+    <form method="post" action="{{ url_for('import_nursery_to_operation_schedule') }}">
+      <input type="hidden" name="operation_date" value="{{ selected_date.isoformat() }}">
+      <button class="secondary-button" type="submit"><i class="fa-solid fa-shrimp"></i> Puxar alimentação do berçário</button>
+    </form>
+    <a class="secondary-link-button" href="#cadastro-lote-dia"><i class="fa-solid fa-square-plus"></i> Cadastrar rotina do dia em lote</a>
+    <a class="secondary-link-button" href="#cadastro-semana"><i class="fa-solid fa-calendar-week"></i> Cadastrar rotina da semana</a>
+    <form method="post" action="{{ url_for('complete_operation_schedule_day') }}" onsubmit="return confirm('Concluir o dia e lançar os itens pendentes no Manejo Diário? O estoque será baixado apenas para itens vinculados.')">
+      <input type="hidden" name="operation_date" value="{{ selected_date.isoformat() }}">
+      <button class="link-button" type="submit"><i class="fa-solid fa-circle-check"></i> Concluir dia e lançar manejos</button>
+    </form>
+  </div>
 </section>
 
-<section class="routine-summary-grid">
-  <div class="summary-chip"><strong>{{ tasks|selectattr('category','equalto','alimentacao')|list|length }}</strong><span>alimentações viveiros</span></div>
-  <div class="summary-chip"><strong>{{ tasks|selectattr('category','equalto','bercario')|list|length }}</strong><span>alimentações berçário</span></div>
-  <div class="summary-chip"><strong>{{ tasks|selectattr('category','equalto','aditivo')|list|length }}</strong><span>aditivos</span></div>
-  <div class="summary-chip"><strong>{{ tasks|selectattr('category','equalto','troca_agua')|list|length }}</strong><span>trocas d’água</span></div>
-  <div class="summary-chip"><strong>{{ completed_task_ids|length }}</strong><span>já lançados no manejo</span></div>
+<section class="routine-summary-grid routine-summary-kpis">
+  <div class="summary-chip kpi-green"><i class="fa-solid fa-bowl-food"></i><strong>{{ tasks|selectattr('category','equalto','alimentacao')|list|length }}</strong><span>Alimentação</span></div>
+  <div class="summary-chip kpi-blue"><i class="fa-solid fa-shrimp"></i><strong>{{ tasks|selectattr('category','equalto','bercario')|list|length }}</strong><span>Berçário</span></div>
+  <div class="summary-chip kpi-purple"><i class="fa-solid fa-flask"></i><strong>{{ tasks|selectattr('category','equalto','aditivo')|list|length }}</strong><span>Insumos/Aditivos</span></div>
+  <div class="summary-chip kpi-orange"><i class="fa-solid fa-triangle-exclamation"></i><strong>{{ (tasks|length) - (completed_task_ids|length) }}</strong><span>Pendentes</span></div>
+  <div class="summary-chip {{ 'kpi-green' if not stock_warnings else 'kpi-orange' }}"><i class="fa-solid fa-boxes-stacked"></i><strong>{{ 'OK' if not stock_warnings else stock_warnings|length }}</strong><span>{{ 'Estoque vinculado' if not stock_warnings else 'Pendências de estoque' }}</span></div>
 </section>
 
-<section class="routine-layout">
-  <div class="section-card routine-form-card">
+{% if stock_warnings %}
+<section class="section-card stock-warning-panel">
+  <div class="section-head compact">
+    <div>
+      <p class="panel-kicker">Atenção antes de concluir</p>
+      <h2>Pendências de estoque ou vínculo</h2>
+    </div>
+  </div>
+  <div class="warning-list">
+    {% for warning in stock_warnings[:8] %}<span><i class="fa-solid fa-triangle-exclamation"></i> {{ warning }}</span>{% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="routine-layout routine-batch-layout">
+  <div class="section-card routine-form-card" id="cadastro-lote-dia">
     <div class="section-head compact">
       <div>
-        <p class="panel-kicker">Cadastro rápido</p>
-        <h2>Novo item da rotina</h2>
+        <p class="panel-kicker">Cadastro em lote do dia</p>
+        <h2>Vários viveiros em uma única rotina</h2>
       </div>
     </div>
 
-    <form method="post" class="routine-form">
+    <form method="post" action="{{ url_for('batch_day_operation_schedule') }}" class="routine-form batch-routine-form">
       <input type="hidden" name="operation_date" value="{{ selected_date.isoformat() }}">
-
-      <div class="routine-form-block">
-        <h3><i class="fa-solid fa-layer-group"></i> 1. Classificação</h3>
-        <div class="form-grid">
-          <label>Tipo
-            <select name="category" required>
-              {% for key, label in operation_category_labels.items() %}
-              <option value="{{ key }}">{{ label }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <label>Prioridade
-            <select name="priority">
-              <option value="critica">Crítica</option>
-              <option value="alta">Alta</option>
-              <option value="media" selected>Média</option>
-              <option value="baixa">Baixa</option>
-            </select>
-          </label>
-          <label>Horário
-            <input type="time" name="scheduled_time">
-          </label>
-          <label>Unidade / viveiro / berçário
-            <select name="unit_id">
-              <option value="">Geral</option>
-              {% for unit in units %}<option value="{{ unit.id }}">{{ unit.name }}</option>{% endfor %}
-            </select>
-          </label>
-        </div>
+      <div class="form-grid batch-header-grid">
+        <label>Tipo da rotina
+          <select name="category" required>
+            {% for key, label in operation_category_labels.items() %}
+            <option value="{{ key }}" {% if key == 'alimentacao' %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Horário
+          <input type="time" name="scheduled_time" value="08:00">
+        </label>
+        <label>Prioridade
+          <select name="priority">
+            <option value="critica">Crítica</option>
+            <option value="alta" selected>Alta</option>
+            <option value="media">Média</option>
+            <option value="baixa">Baixa</option>
+          </select>
+        </label>
+        <label>Frequência
+          <input type="text" name="frequency" placeholder="Ex.: 4x ao dia" value="4x ao dia">
+        </label>
+        <label>Unidade
+          <select name="measure_unit">
+            <option value="kg" selected>kg</option>
+            <option value="g">g</option>
+            <option value="L">L</option>
+            <option value="mL">mL</option>
+            <option value="%">%</option>
+          </select>
+        </label>
       </div>
 
-      <div class="routine-form-block">
-        <h3><i class="fa-solid fa-boxes-stacked"></i> 2. Produto vinculado ao estoque</h3>
-        <div class="form-grid">
-          <label>Ração do estoque
-            <select name="feed_product_id">
-              <option value="">Usar apenas em alimentação/berçário</option>
-              {% for feed in feed_products %}<option value="{{ feed.id }}">{{ feed.full_name }}{% if feed.technical_summary %} · {{ feed.technical_summary }}{% endif %}</option>{% endfor %}
-            </select>
-            <small class="helper-text">Para ração, a baixa só acontece quando o dia for concluído ou no Manejo Diário.</small>
-          </label>
-          <label>Insumo/aditivo do estoque
-            <select name="supply_product_id">
-              <option value="">Usar apenas em aditivos/troca d’água</option>
-              {% for supply in supply_products %}<option value="{{ supply.id }}">{{ supply.full_name }}{% if supply.technical_summary %} · {{ supply.technical_summary }}{% endif %}</option>{% endfor %}
-            </select>
-            <small class="helper-text">Para probiótico, calcário, sal, melaço, bicarbonato etc.</small>
-          </label>
-        </div>
+      <div class="form-grid product-grid">
+        <label>Ração do estoque
+          <select name="feed_product_id">
+            <option value="">Não usar ração</option>
+            {% for feed in feed_products %}<option value="{{ feed.id }}">{{ feed_product_option_label(feed, feed_stock_map) }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Insumo/aditivo do estoque
+          <select name="supply_product_id">
+            <option value="">Não usar insumo</option>
+            {% for supply in supply_products %}<option value="{{ supply.id }}">{{ supply_product_option_label(supply, supply_stock_map) }}</option>{% endfor %}
+          </select>
+        </label>
       </div>
 
-      <div class="routine-form-block">
-        <h3><i class="fa-solid fa-tv"></i> 3. Como aparecerá no Painel TV</h3>
-        <div class="form-grid">
-          <label class="full">Título / ação
-            <input type="text" name="title" placeholder="Ex.: Revisar aeradores, Aplicar probiótico, Alimentação V1">
-          </label>
-          <label>Rótulo claro da ração/produto
-            <input type="text" name="ration_label" placeholder="Ex.: 35% ENGORDA, 45% INICIAL, Probiótico">
-          </label>
-          <label>Quantidade
-            <input type="number" step="0.001" name="quantity" placeholder="Ex.: 10.5">
-          </label>
-          <label>Unidade
-            <select name="measure_unit">
-              <option value="kg">kg</option>
-              <option value="L">L</option>
-              <option value="%">%</option>
-              <option value="g">g</option>
-              <option value="mL">mL</option>
-            </select>
-          </label>
-          <label>Frequência
-            <input type="text" name="frequency" placeholder="Ex.: 4x ao dia, 6x ao dia">
-          </label>
-          <label class="full">Observações
-            <textarea name="notes" rows="3" placeholder="Detalhes internos do manejo ou orientação para equipe."></textarea>
-          </label>
+      <div class="form-grid">
+        <label>Título geral / ação
+          <input type="text" name="title" placeholder="Ex.: Alimentação viveiros, Aplicar probiótico, Conferir aeradores">
+        </label>
+        <label>Rótulo claro para TV
+          <input type="text" name="ration_label" placeholder="Ex.: Ração 35% Engorda, Probiótico, Mineral">
+        </label>
+        <label class="full">Observação geral
+          <textarea name="notes" rows="2" placeholder="Ex.: verificar bandeja e ajustar quantidade conforme consumo e comportamento dos camarões."></textarea>
+        </label>
+      </div>
+
+      <div class="batch-units-box">
+        <div class="batch-units-head">
+          <h3><i class="fa-solid fa-water"></i> Selecionar viveiros/berçários</h3>
+          <small>Marque as unidades e informe a quantidade por unidade. Rotina operacional simples pode ficar sem quantidade.</small>
+        </div>
+        <div class="batch-units-table">
+          <div class="batch-units-row batch-units-row-head"><span>Unidade</span><span>Fase</span><span>Selecionar</span><span>Quantidade</span></div>
+          {% for unit in units %}
+          <div class="batch-units-row">
+            <strong>{{ unit.name }}</strong>
+            <span>{{ unit.phase|capitalize }}</span>
+            <label class="checkbox-center"><input type="checkbox" name="unit_ids" value="{{ unit.id }}"></label>
+            <input type="number" step="0.001" name="quantity_{{ unit.id }}" placeholder="0,000">
+          </div>
+          {% endfor %}
         </div>
       </div>
 
       <div class="form-actions full">
-        <button type="submit"><i class="fa-solid fa-plus"></i> Adicionar item à rotina</button>
+        <button type="submit"><i class="fa-solid fa-circle-plus"></i> Criar rotina em lote</button>
       </div>
     </form>
   </div>
 
-  <aside class="routine-help-stack">
-    <div class="section-card panel-soft">
-      <p class="panel-kicker">Fluxo recomendado</p>
-      <h2>Como usar no dia a dia</h2>
-      <ol class="routine-steps">
-        <li><strong>Manhã:</strong> cadastre ou puxe a ração do berçário.</li>
-        <li><strong>Durante o dia:</strong> a equipe acompanha tudo no Painel TV.</li>
-        <li><strong>Final do dia:</strong> clique em concluir para lançar no Manejo Diário.</li>
-      </ol>
-    </div>
-    <div class="section-card panel-soft">
-      <p class="panel-kicker">Prioridades</p>
-      <div class="status-legend compact-legend">
-        <div class="legend-item"><span class="priority-chip priority-critica">Crítica</span><small>Primeiro lugar no Painel TV.</small></div>
-        <div class="legend-item"><span class="priority-chip priority-alta">Alta</span><small>Acima das médias e baixas.</small></div>
-        <div class="legend-item"><span class="priority-chip priority-media">Média</span><small>Rotina normal.</small></div>
-        <div class="legend-item"><span class="priority-chip priority-baixa">Baixa</span><small>Menor urgência.</small></div>
+  <aside class="section-card routine-week-card" id="cadastro-semana">
+    <div class="section-head compact">
+      <div>
+        <p class="panel-kicker">Programação semanal</p>
+        <h2>Cadastrar rotina da semana</h2>
       </div>
     </div>
+    <form method="post" action="{{ url_for('batch_week_operation_schedule') }}" class="routine-form weekly-routine-form">
+      <div class="form-grid two-cols">
+        <label>De
+          <input type="date" name="start_date" value="{{ selected_date.isoformat() }}">
+        </label>
+        <label>Até
+          <input type="date" name="end_date" value="{{ week_end_date.isoformat() }}">
+        </label>
+      </div>
+      <div class="weekday-picker">
+        {% for value,label in [(0,'Seg'),(1,'Ter'),(2,'Qua'),(3,'Qui'),(4,'Sex'),(5,'Sáb'),(6,'Dom')] %}
+        <label><input type="checkbox" name="weekdays" value="{{ value }}" {% if value < 5 %}checked{% endif %}><span>{{ label }}</span></label>
+        {% endfor %}
+      </div>
+      <div class="form-grid">
+        <label>Tipo da rotina
+          <select name="category">
+            {% for key, label in operation_category_labels.items() %}<option value="{{ key }}" {% if key == 'rotina' %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Horário
+          <input type="time" name="scheduled_time" value="07:00">
+        </label>
+        <label>Prioridade
+          <select name="priority">
+            <option value="critica">Crítica</option><option value="alta">Alta</option><option value="media" selected>Média</option><option value="baixa">Baixa</option>
+          </select>
+        </label>
+        <label>Quantidade padrão
+          <input type="number" step="0.001" name="quantity" placeholder="Opcional">
+        </label>
+        <label>Unidade
+          <select name="measure_unit"><option value="kg">kg</option><option value="g">g</option><option value="L">L</option><option value="mL">mL</option><option value="%">%</option></select>
+        </label>
+        <label>Frequência
+          <input type="text" name="frequency" placeholder="Ex.: diário">
+        </label>
+        <label class="full">Título da rotina
+          <input type="text" name="title" value="Conferir aeradores e comportas">
+        </label>
+        <label>Ração do estoque
+          <select name="feed_product_id"><option value="">Não usar ração</option>{% for feed in feed_products %}<option value="{{ feed.id }}">{{ feed_product_option_label(feed, feed_stock_map) }}</option>{% endfor %}</select>
+        </label>
+        <label>Insumo/aditivo do estoque
+          <select name="supply_product_id"><option value="">Não usar insumo</option>{% for supply in supply_products %}<option value="{{ supply.id }}">{{ supply_product_option_label(supply, supply_stock_map) }}</option>{% endfor %}</select>
+        </label>
+        <label class="full">Rótulo para TV
+          <input type="text" name="ration_label" placeholder="Opcional">
+        </label>
+        <label class="full">Aplicar em
+          <select name="unit_scope"><option value="all">Todos os viveiros ativos</option><option value="manual">Somente os marcados abaixo</option></select>
+        </label>
+      </div>
+      <details class="manual-unit-picker">
+        <summary>Selecionar unidades manualmente</summary>
+        <div class="unit-checkbox-grid">
+          {% for unit in units %}<label><input type="checkbox" name="unit_ids" value="{{ unit.id }}"> {{ unit.name }}</label>{% endfor %}
+        </div>
+      </details>
+      <label class="full">Observações
+        <textarea name="notes" rows="2" placeholder="Orientações da rotina semanal."></textarea>
+      </label>
+      <div class="form-actions full"><button type="submit"><i class="fa-solid fa-calendar-plus"></i> Criar programação da semana</button></div>
+    </form>
   </aside>
 </section>
 
 <section class="section-card">
-  <div class="section-head compact">
+  <div class="section-head compact table-toolbar-head">
     <div>
       <p class="panel-kicker">Itens cadastrados</p>
-      <h2>Rotina de {{ selected_date.strftime('%d/%m/%Y') }}</h2>
+      <h2>Rotina programada do dia</h2>
+    </div>
+    <div class="table-toolbar-actions">
+      <form id="complete-selected-form" method="post" action="{{ url_for('complete_selected_operation_tasks') }}" onsubmit="return confirm('Concluir os itens selecionados e lançar no Manejo Diário?')">
+        <input type="hidden" name="operation_date" value="{{ selected_date.isoformat() }}">
+      </form>
+      <button class="secondary-button" type="submit" form="complete-selected-form"><i class="fa-solid fa-check-double"></i> Concluir selecionados</button>
+      <form method="post" action="{{ url_for('complete_operation_schedule_day') }}" onsubmit="return confirm('Concluir o dia inteiro e lançar no Manejo Diário?')">
+        <input type="hidden" name="operation_date" value="{{ selected_date.isoformat() }}">
+        <button class="link-button" type="submit"><i class="fa-solid fa-circle-check"></i> Concluir dia inteiro</button>
+      </form>
     </div>
   </div>
   <div class="table-wrap routine-table-wrap" style="margin-top:16px">
     <table>
       <thead>
         <tr>
-          <th>Hora</th><th>Tipo</th><th>Prioridade</th><th>Unidade</th><th>Ação / produto</th><th>Quantidade</th><th>Frequência</th><th>Manejo</th><th>Ações</th>
+          <th></th><th>Hora</th><th>Tipo</th><th>Prioridade</th><th>Viveiro</th><th>Produto/Ação</th><th>Quantidade</th><th>Status</th><th>Ações</th>
         </tr>
       </thead>
       <tbody>
         {% for task in tasks %}
-        <tr>
+        {% set completed = task.id in completed_task_ids %}
+        <tr class="{{ 'completed-row' if completed else '' }}">
+          <td><input type="checkbox" name="task_ids" value="{{ task.id }}" form="complete-selected-form" {% if completed %}disabled{% endif %}></td>
           <td><strong>{{ task.scheduled_time.strftime('%H:%M') if task.scheduled_time else '--:--' }}</strong></td>
           <td>{{ operation_category_label(task.category) }}</td>
           <td><span class="priority-chip priority-{{ task.priority }}">{{ operation_priority_label(task.priority) }}</span></td>
           <td>{{ task.unit.name if task.unit else 'Geral' }}</td>
           <td>
-            <strong>{{ task.title }}</strong>
-            {% if task.ration_label or task.feed_product or task.supply_product %}
-            <small class="table-subline">
-              {% if task.feed_product %}<span class="badge">Ração</span> {{ task.feed_product.full_name }}{% endif %}
-              {% if task.supply_product %}<span class="badge">Insumo</span> {{ task.supply_product.full_name }}{% endif %}
-              {% if task.ration_label %}<span class="badge">TV</span> {{ task.ration_label }}{% endif %}
-            </small>
-            {% endif %}
+            <strong>{{ supply_label_for_task(task) if task.category in ['aditivo','troca_agua'] else (feed_label_for_task(task) if task.category in ['alimentacao','bercario'] else task.title) }}</strong>
+            {% if task.title and task.category != 'rotina' %}<small class="table-subline">{{ task.title }}</small>{% endif %}
+            {% if task.notes %}<small class="table-subline">{{ task.notes }}</small>{% endif %}
           </td>
-          <td>{{ format_decimal_pt(task.quantity) if task.quantity is not none else '-' }} {{ task.measure_unit or '' }}</td>
-          <td>{{ task.frequency or '-' }}</td>
+          <td>{{ quantity_label_for_task(task) if task.quantity is not none else '-' }}</td>
           <td>
-            {% if task.id in completed_task_ids %}
-              <span class="pill pill-success">Lançado</span>
-            {% else %}
-              <span class="pill pill-neutral">Pendente</span>
-            {% endif %}
+            {% if completed %}<span class="pill pill-success"><i class="fa-solid fa-check"></i> Lançado</span>{% else %}<span class="pill pill-neutral"><i class="fa-regular fa-clock"></i> Pendente</span>{% endif %}
           </td>
           <td class="actions-cell">
+            {% if not completed %}
+            <form method="post" action="{{ url_for('complete_single_operation_task', task_id=task.id) }}" style="display:inline">
+              <button class="secondary-button small-button" type="submit"><i class="fa-solid fa-check"></i> Concluir</button>
+            </form>
+            {% else %}
+            <button class="secondary-button small-button" type="button" disabled>Lançado</button>
+            {% endif %}
             <details class="inline-edit-details">
               <summary class="secondary-link-button small-button">Editar</summary>
               <form method="post" action="{{ url_for('edit_operation_task', task_id=task.id) }}" class="form-grid inline-edit-form">
@@ -209,8 +283,8 @@
                 <label>Prioridade<select name="priority">{% for key, label in operation_priority_labels.items() %}<option value="{{ key }}" {% if task.priority == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
                 <label>Unidade<select name="unit_id"><option value="">Geral</option>{% for unit in units %}<option value="{{ unit.id }}" {% if task.unit_id == unit.id %}selected{% endif %}>{{ unit.name }}</option>{% endfor %}</select></label>
                 <label class="full">Título<input type="text" name="title" value="{{ task.title }}"></label>
-                <label>Ração do estoque<select name="feed_product_id"><option value="">Nenhuma</option>{% for feed in feed_products %}<option value="{{ feed.id }}" {% if task.feed_product_id == feed.id %}selected{% endif %}>{{ feed.full_name }}</option>{% endfor %}</select></label>
-                <label>Insumo do estoque<select name="supply_product_id"><option value="">Nenhum</option>{% for supply in supply_products %}<option value="{{ supply.id }}" {% if task.supply_product_id == supply.id %}selected{% endif %}>{{ supply.full_name }}</option>{% endfor %}</select></label>
+                <label>Ração do estoque<select name="feed_product_id"><option value="">Nenhuma</option>{% for feed in feed_products %}<option value="{{ feed.id }}" {% if task.feed_product_id == feed.id %}selected{% endif %}>{{ feed_product_option_label(feed, feed_stock_map) }}</option>{% endfor %}</select></label>
+                <label>Insumo do estoque<select name="supply_product_id"><option value="">Nenhum</option>{% for supply in supply_products %}<option value="{{ supply.id }}" {% if task.supply_product_id == supply.id %}selected{% endif %}>{{ supply_product_option_label(supply, supply_stock_map) }}</option>{% endfor %}</select></label>
                 <label>Rótulo claro<input type="text" name="ration_label" value="{{ task.ration_label or '' }}"></label>
                 <label>Quantidade<input type="number" step="0.001" name="quantity" value="{{ task.quantity if task.quantity is not none else '' }}"></label>
                 <label>Unidade<input type="text" name="measure_unit" value="{{ task.measure_unit or 'kg' }}"></label>
