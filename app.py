@@ -6131,7 +6131,7 @@ def group_tv_feeding_rows(tasks):
                 'time': time_label,
                 'category': feed_tasks[0].category,
                 'feed_label': feed_label,
-                'items': [f"{task_display_unit(t)} {quantity_label_for_task(t)}".strip() for t in feed_tasks],
+                'item_labels': [f"{task_display_unit(t)} {quantity_label_for_task(t)}".strip() for t in feed_tasks],
             })
     return rows
 
