@@ -5920,15 +5920,14 @@ def complete_operation_task_into_management(task):
     notes = build_operation_management_note(task)
 
     if task.category in ('alimentacao', 'bercario'):
-        quantity = task.quantity or 0
-        measure = (task.measure_unit or 'kg').lower()
-        if measure != 'kg':
-            return 'skipped', 'Alimentação só pode ser lançada automaticamente em kg.'
-        if quantity <= 0:
+        quantity_kg = feed_quantity_kg_for_task(task)
+        if quantity_kg is None:
+            return 'skipped', 'Alimentação precisa estar em kg ou g para baixa automática.'
+        if quantity_kg <= 0:
             return 'skipped', 'Quantidade de ração zerada.'
         if not task.feed_product:
             return 'skipped', 'Ração não vinculada ao estoque.'
-        validation_error = validate_feed_usage(task.feed_product, quantity)
+        validation_error = validate_feed_usage(task.feed_product, quantity_kg)
         if validation_error:
             return 'error', validation_error
         management = DailyManagement(
@@ -5936,19 +5935,21 @@ def complete_operation_task_into_management(task):
             unit_id=task.unit_id,
             lot_id=lot.id if lot else None,
             feed_product_id=task.feed_product_id,
-            feed_offered_kg=quantity,
-            feed_consumed_kg=quantity,
+            feed_offered_kg=quantity_kg,
+            feed_consumed_kg=quantity_kg,
             mortality_qty=0,
             notes=notes,
             updated_at=datetime.utcnow(),
         )
         db.session.add(management)
         db.session.flush()
-        sync_management_feed_movement(management, task.feed_product, quantity)
+        sync_management_feed_movement(management, task.feed_product, quantity_kg)
         return 'created', 'Ração lançada no manejo.'
 
     if task.category in ('aditivo', 'troca_agua'):
-        quantity = task.quantity or 0
+        quantity = supply_quantity_for_stock(task)
+        if quantity is None:
+            return 'skipped', 'Unidade do insumo incompatível com a unidade cadastrada no estoque.'
         if quantity <= 0 or not task.supply_product:
             return 'skipped', 'Insumo/aditivo sem produto ou quantidade.'
         entries = [{'product': task.supply_product, 'quantity': quantity, 'notes': notes}]
@@ -5985,7 +5986,6 @@ def complete_operation_task_into_management(task):
     db.session.add(management)
     return 'created', 'Rotina operacional lançada no manejo.'
 
-
 def import_nursery_feed_plan_to_operation_schedule(target_date):
     plans = build_nursery_digest_for_date(target_date)
     created = 0
@@ -6007,20 +6007,21 @@ def import_nursery_feed_plan_to_operation_schedule(target_date):
             for mix in plan.get('mixes', []):
                 label = mix.get('label') or 'Ração berçário'
                 mix_total_g = int(mix.get('grams') or 0)
-                portion_mix_kg = round(((portion_g * mix_total_g) / total_day_g) / 1000, 3)
-                if portion_mix_kg <= 0:
+                portion_mix_g = round((portion_g * mix_total_g) / total_day_g, 1)
+                if portion_mix_g <= 0:
                     continue
+                product = find_or_create_nursery_feed_product(label, create_missing=False)
+                display_label = product.full_name if product else label
                 existing = OperationalTask.query.filter_by(
                     operation_date=target_date,
                     scheduled_time=scheduled,
                     category='bercario',
                     unit_id=unit.id,
-                    ration_label=label,
+                    ration_label=display_label,
                 ).first()
                 if existing:
                     skipped += 1
                     continue
-                product = find_or_create_nursery_feed_product(label, create_missing=False)
                 task = OperationalTask(
                     operation_date=target_date,
                     scheduled_time=scheduled,
@@ -6030,17 +6031,16 @@ def import_nursery_feed_plan_to_operation_schedule(target_date):
                     title=f'Alimentação berçário {unit.name}',
                     unit_id=unit.id,
                     feed_product_id=product.id if product else None,
-                    ration_label=product.full_name if product else label,
-                    quantity=portion_mix_kg,
-                    measure_unit='kg',
+                    ration_label=display_label,
+                    quantity=portion_mix_g,
+                    measure_unit='g',
                     frequency=f"{len(plan.get('schedule', []))}x ao dia",
-                    notes='Importado da aba Alimentação berçário para o Painel TV.',
+                    notes='Importado da aba Alimentação berçário para o Painel TV. O sistema converte g para kg ao lançar no manejo.',
                     updated_at=datetime.utcnow(),
                 )
                 db.session.add(task)
                 created += 1
     return created, skipped
-
 
 def weekday_label_pt(value):
     labels = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo']
@@ -6057,6 +6057,16 @@ def format_decimal_pt(value, decimals=1):
     if abs(number - round(number)) < 0.00001:
         return str(int(round(number)))
     return f"{number:.{decimals}f}".replace('.', ',')
+
+
+def format_integer_pt(value):
+    if value is None:
+        return '0'
+    try:
+        number = int(round(float(value)))
+    except (TypeError, ValueError):
+        return str(value)
+    return f'{number:,}'.replace(',', '.')
 
 
 def feed_label_for_task(task):
@@ -6085,6 +6095,123 @@ def clear_product_links_by_category(task):
     elif task.category in ('aditivo', 'troca_agua'):
         task.feed_product_id = None
 
+
+
+
+def canonical_measure_unit(unit):
+    """Normaliza unidades para conversão simples entre cadastro, TV e estoque."""
+    raw = (unit or '').strip()
+    normalized = normalize_text(raw).replace(' ', '')
+    aliases = {
+        'kg': 'kg', 'quilo': 'kg', 'quilos': 'kg', 'kilograma': 'kg', 'kilogramas': 'kg',
+        'g': 'g', 'gr': 'g', 'grama': 'g', 'gramas': 'g',
+        'l': 'L', 'lt': 'L', 'litro': 'L', 'litros': 'L',
+        'ml': 'mL', 'mililitro': 'mL', 'mililitros': 'mL',
+        '%': '%', 'porcentagem': '%', 'percentual': '%',
+        'un': 'un', 'unidade': 'un', 'unidades': 'un',
+    }
+    return aliases.get(normalized, raw or 'kg')
+
+
+def convert_quantity_between_units(quantity, from_unit, to_unit):
+    """Converte unidades compatíveis. Retorna None quando não há conversão segura."""
+    if quantity is None:
+        return None
+    try:
+        value = float(quantity)
+    except (TypeError, ValueError):
+        return None
+    source = canonical_measure_unit(from_unit)
+    target = canonical_measure_unit(to_unit)
+    if source == target:
+        return value
+    conversions = {
+        ('g', 'kg'): value / 1000,
+        ('kg', 'g'): value * 1000,
+        ('mL', 'L'): value / 1000,
+        ('L', 'mL'): value * 1000,
+    }
+    return conversions.get((source, target))
+
+
+def feed_quantity_kg_for_task(task):
+    return convert_quantity_between_units(task.quantity or 0, task.measure_unit or 'kg', 'kg')
+
+
+def feed_quantity_g_for_task(task):
+    return convert_quantity_between_units(task.quantity or 0, task.measure_unit or 'kg', 'g')
+
+
+def supply_quantity_for_stock(task):
+    if not task or not task.supply_product:
+        return None
+    return convert_quantity_between_units(task.quantity or 0, task.measure_unit or task.supply_product.measure_unit, task.supply_product.measure_unit)
+
+
+def operation_task_is_completed(task, completed_task_ids=None):
+    if not task:
+        return False
+    if completed_task_ids is not None:
+        return task.id in completed_task_ids
+    return bool(operation_task_completed_record(task))
+
+
+def operation_stock_warnings(tasks, completed_task_ids=None):
+    """Mostra pendências prováveis antes de concluir o dia, sem baixar estoque."""
+    warnings = []
+    feed_needed = defaultdict(float)
+    supply_needed = defaultdict(float)
+    for task in tasks:
+        if not task.active or operation_task_is_completed(task, completed_task_ids):
+            continue
+        if task.category in ('alimentacao', 'bercario'):
+            qty_kg = feed_quantity_kg_for_task(task)
+            if not task.feed_product:
+                warnings.append(f'{task_display_unit(task)} · {task.title}: ração não vinculada ao estoque.')
+                continue
+            if qty_kg is None:
+                warnings.append(f'{task_display_unit(task)} · {task.title}: unidade de ração inválida para baixa no estoque.')
+                continue
+            feed_needed[task.feed_product_id] += qty_kg
+        elif task.category in ('aditivo', 'troca_agua'):
+            if not task.supply_product:
+                warnings.append(f'{task_display_unit(task)} · {task.title}: insumo/aditivo não vinculado ao estoque.')
+                continue
+            qty_stock = supply_quantity_for_stock(task)
+            if qty_stock is None:
+                warnings.append(f'{task_display_unit(task)} · {task.title}: unidade incompatível com o estoque do insumo.')
+                continue
+            supply_needed[task.supply_product_id] += qty_stock
+    for product_id, needed in feed_needed.items():
+        product = db.session.get(FeedProduct, product_id)
+        available = available_stock_for_product(product_id)
+        if needed > available:
+            warnings.append(f'{product.full_name if product else "Ração"}: programado {format_decimal_pt(needed)} kg, disponível {format_decimal_pt(available)} kg.')
+    for product_id, needed in supply_needed.items():
+        product = db.session.get(SupplyProduct, product_id)
+        available = available_stock_for_supply(product_id)
+        unit_label = product.measure_unit if product else 'un'
+        if needed > available:
+            warnings.append(f'{product.full_name if product else "Insumo"}: programado {format_decimal_pt(needed)} {unit_label}, disponível {format_decimal_pt(available)} {unit_label}.')
+    return warnings
+
+
+def feed_product_option_label(product, stock_map=None):
+    label = product.full_name
+    if product.technical_summary:
+        label += f' · {product.technical_summary}'
+    if stock_map is not None:
+        label += f' — saldo: {format_decimal_pt(stock_map.get(product.id, 0))} kg'
+    return label
+
+
+def supply_product_option_label(product, stock_map=None):
+    label = product.full_name
+    if product.technical_summary:
+        label += f' · {product.technical_summary}'
+    if stock_map is not None:
+        label += f' — saldo: {format_decimal_pt(stock_map.get(product.id, 0))} {product.measure_unit}'
+    return label
 
 def quantity_label_for_task(task):
     if task.quantity is None:
@@ -6117,24 +6244,18 @@ def task_payload(task):
 
 
 def group_tv_feeding_rows(tasks):
-    grouped = defaultdict(list)
+    grouped = defaultdict(lambda: defaultdict(list))
     for task in tasks:
-        grouped[task.scheduled_time.strftime('%H:%M') if task.scheduled_time else '--:--'].append(task)
+        time_label = task.scheduled_time.strftime('%H:%M') if task.scheduled_time else '--:--'
+        unit_label = task_display_unit(task)
+        grouped[time_label][unit_label].append(f'{feed_label_for_task(task)}: {quantity_label_for_task(task)}')
     rows = []
     for time_label in sorted(grouped.keys()):
-        entries = grouped[time_label]
-        by_feed = defaultdict(list)
-        for task in entries:
-            by_feed[feed_label_for_task(task)].append(task)
-        for feed_label, feed_tasks in by_feed.items():
-            rows.append({
-                'time': time_label,
-                'category': feed_tasks[0].category,
-                'feed_label': feed_label,
-                'item_labels': [f"{task_display_unit(t)} {quantity_label_for_task(t)}".strip() for t in feed_tasks],
-            })
+        item_labels = []
+        for unit_label in sorted(grouped[time_label].keys()):
+            item_labels.append(f'{unit_label} — ' + ' | '.join(grouped[time_label][unit_label]))
+        rows.append({'time': time_label, 'item_labels': item_labels})
     return rows
-
 
 def build_tv_dashboard_data(target_date):
     tasks = (
@@ -6144,22 +6265,38 @@ def build_tv_dashboard_data(target_date):
         .order_by(OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.priority_order.asc(), OperationalTask.id.asc())
         .all()
     )
+    completed_ids = completed_operation_task_ids(target_date)
     feeding_tasks = [t for t in tasks if t.category in ('alimentacao', 'bercario')]
     additive_tasks = [t for t in tasks if t.category in ('aditivo', 'troca_agua')]
     routine_tasks = [t for t in tasks if t.category == 'rotina']
     priority_routines = sorted(routine_tasks, key=lambda t: (t.priority_order or 3, t.scheduled_time or time(23, 59), t.id))
-    priority_current = priority_routines[0] if priority_routines else None
-    total_feed = sum(t.quantity or 0 for t in feeding_tasks if (t.measure_unit or 'kg').lower() == 'kg')
+    priority_current = next((t for t in priority_routines if t.id not in completed_ids), priority_routines[0] if priority_routines else None)
+    total_feed_kg = 0.0
+    nursery_total_g = 0.0
+    for task in feeding_tasks:
+        qty_kg = feed_quantity_kg_for_task(task)
+        if qty_kg is not None:
+            total_feed_kg += qty_kg
+        if task.category == 'bercario':
+            qty_g = feed_quantity_g_for_task(task)
+            if qty_g is not None:
+                nursery_total_g += qty_g
+    completed_count = len([t for t in tasks if t.id in completed_ids])
+    pending_count = len([t for t in tasks if t.id not in completed_ids])
     return {
         'tasks': tasks,
         'feeding_rows': group_tv_feeding_rows(feeding_tasks),
         'additives': [task_payload(t) for t in additive_tasks],
         'priority_routines': [task_payload(t) for t in priority_routines],
         'priority_current': task_payload(priority_current) if priority_current else None,
-        'total_feed_kg': round(total_feed, 1),
+        'total_feed_kg': round(total_feed_kg, 1),
+        'nursery_total_g': round(nursery_total_g, 0),
         'water_changes': len([t for t in additive_tasks if t.category == 'troca_agua']),
         'additive_count': len([t for t in additive_tasks if t.category == 'aditivo']),
         'routine_count': len(routine_tasks),
+        'completed_count': completed_count,
+        'in_progress_count': max(0, len(tasks) - completed_count - pending_count),
+        'pending_count': pending_count,
     }
 
 @app.context_processor
@@ -6170,7 +6307,13 @@ def inject_operation_helpers():
         'operation_category_labels': OPERATION_CATEGORY_LABELS,
         'operation_priority_labels': OPERATION_PRIORITY_LABELS,
         'format_decimal_pt': format_decimal_pt,
+        'format_integer_pt': format_integer_pt,
         'weekday_label_pt': weekday_label_pt,
+        'feed_product_option_label': feed_product_option_label,
+        'supply_product_option_label': supply_product_option_label,
+        'quantity_label_for_task': quantity_label_for_task,
+        'feed_label_for_task': feed_label_for_task,
+        'supply_label_for_task': supply_label_for_task,
     }
 
 
@@ -6230,24 +6373,165 @@ def operation_schedule_page():
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
     supply_products = SupplyProduct.query.order_by(SupplyProduct.active.desc(), SupplyProduct.name.asc()).all()
+    feed_stock_map = {row['product'].id: row['stock_kg'] for row in build_feed_stock_snapshot()['rows'] if row.get('product')}
+    supply_stock_map = {row['product'].id: row['stock_qty'] for row in build_supply_stock_snapshot()['rows'] if row.get('product')}
     tasks = (
         OperationalTask.query
         .options(joinedload(OperationalTask.unit), joinedload(OperationalTask.feed_product), joinedload(OperationalTask.supply_product))
         .filter(OperationalTask.operation_date == selected_date)
-        .order_by(OperationalTask.category.asc(), OperationalTask.priority_order.asc(), OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.id.asc())
+        .order_by(OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.priority_order.asc(), OperationalTask.category.asc(), OperationalTask.id.asc())
         .all()
     )
     completed_task_ids = completed_operation_task_ids(selected_date)
+    stock_warnings = operation_stock_warnings(tasks, completed_task_ids)
     return render_template(
         'operation_schedule.html',
         selected_date=selected_date,
         units=units,
         feed_products=feed_products,
         supply_products=supply_products,
+        feed_stock_map=feed_stock_map,
+        supply_stock_map=supply_stock_map,
         tasks=tasks,
         completed_task_ids=completed_task_ids,
+        stock_warnings=stock_warnings,
+        week_end_date=selected_date + timedelta(days=6),
     )
 
+
+def selected_operation_units_from_form(default_all=False):
+    unit_ids = [parse_int(value) for value in request.form.getlist('unit_ids')]
+    unit_ids = [value for value in unit_ids if value]
+    unit_scope = request.form.get('unit_scope')
+    if unit_scope == 'all' or (default_all and not unit_ids):
+        return Unit.query.filter_by(active=True).order_by(Unit.name).all()
+    if not unit_ids:
+        return []
+    return Unit.query.filter(Unit.id.in_(unit_ids), Unit.active.is_(True)).order_by(Unit.name).all()
+
+
+def create_operational_task_for_unit(operation_date, unit, category, priority, scheduled_time, title, feed_product, supply_product, ration_label, quantity, measure_unit, frequency, notes):
+    feed_product_id = feed_product.id if feed_product else None
+    supply_product_id = supply_product.id if supply_product else None
+    selected_title = (title or '').strip()
+    selected_label = (ration_label or '').strip()
+    if category in ('alimentacao', 'bercario'):
+        supply_product_id = None
+        selected_label = selected_label or (feed_product.full_name if feed_product else '')
+        selected_title = selected_title or f'Alimentação {unit.name}'
+    elif category in ('aditivo', 'troca_agua'):
+        feed_product_id = None
+        selected_label = selected_label or (supply_product.full_name if supply_product else '')
+        if category == 'troca_agua':
+            selected_title = selected_title or 'Troca de água'
+        else:
+            selected_title = selected_title or selected_label or f'Aditivo {unit.name}'
+    else:
+        feed_product_id = None
+        supply_product_id = None
+        selected_title = selected_title or f'Rotina operacional {unit.name}'
+    return OperationalTask(
+        operation_date=operation_date,
+        scheduled_time=scheduled_time,
+        category=category,
+        priority=priority,
+        priority_order=OPERATION_PRIORITY_ORDER[priority],
+        title=selected_title,
+        unit_id=unit.id,
+        feed_product_id=feed_product_id,
+        supply_product_id=supply_product_id,
+        ration_label=selected_label or None,
+        quantity=quantity,
+        measure_unit=measure_unit,
+        frequency=frequency,
+        notes=notes,
+        updated_at=datetime.utcnow(),
+    )
+
+
+@app.post('/operation-schedule/batch-day')
+@login_required
+@requires_permission('management_manage')
+def batch_day_operation_schedule():
+    selected_date = parse_date(request.form.get('operation_date'), date.today())
+    category = request.form.get('category') or 'rotina'
+    priority = normalize_operation_priority(request.form.get('priority'))
+    scheduled_time = parse_time(request.form.get('scheduled_time'))
+    title = (request.form.get('title') or '').strip()
+    feed_product = db.session.get(FeedProduct, request.form.get('feed_product_id', type=int)) if request.form.get('feed_product_id', type=int) else None
+    supply_product = db.session.get(SupplyProduct, request.form.get('supply_product_id', type=int)) if request.form.get('supply_product_id', type=int) else None
+    ration_label = (request.form.get('ration_label') or '').strip()
+    measure_unit = (request.form.get('measure_unit') or ('g' if category == 'bercario' else 'kg')).strip()
+    frequency = (request.form.get('frequency') or '').strip()
+    notes = (request.form.get('notes') or '').strip()
+    units = selected_operation_units_from_form()
+    if not units:
+        flash('Selecione pelo menos um viveiro/berçário para o cadastro em lote.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+    created = 0
+    for unit in units:
+        quantity = parse_float(request.form.get(f'quantity_{unit.id}'))
+        # Para rotina operacional simples, permite criar mesmo sem quantidade.
+        if category != 'rotina' and (quantity is None or quantity <= 0):
+            continue
+        task = create_operational_task_for_unit(
+            selected_date, unit, category, priority, scheduled_time, title,
+            feed_product, supply_product, ration_label, quantity, measure_unit, frequency, notes,
+        )
+        db.session.add(task)
+        created += 1
+    if created:
+        db.session.commit()
+        flash(f'Cadastro em lote criado: {created} item(ns) adicionados à Rotina do Dia.', 'success')
+    else:
+        db.session.rollback()
+        flash('Nenhum item foi criado. Confira as quantidades dos viveiros selecionados.', 'warning')
+    return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+
+@app.post('/operation-schedule/batch-week')
+@login_required
+@requires_permission('management_manage')
+def batch_week_operation_schedule():
+    start_date = parse_date(request.form.get('start_date'), date.today())
+    end_date = parse_date(request.form.get('end_date'), start_date)
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+    selected_weekdays = {parse_int(value) for value in request.form.getlist('weekdays')}
+    selected_weekdays = {value for value in selected_weekdays if value is not None}
+    if not selected_weekdays:
+        flash('Selecione pelo menos um dia da semana.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=start_date.isoformat()))
+    units = selected_operation_units_from_form(default_all=True)
+    if not units:
+        flash('Nenhum viveiro ativo encontrado para programar a semana.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=start_date.isoformat()))
+    category = request.form.get('category') or 'rotina'
+    priority = normalize_operation_priority(request.form.get('priority'))
+    scheduled_time = parse_time(request.form.get('scheduled_time'))
+    title = (request.form.get('title') or '').strip()
+    feed_product = db.session.get(FeedProduct, request.form.get('feed_product_id', type=int)) if request.form.get('feed_product_id', type=int) else None
+    supply_product = db.session.get(SupplyProduct, request.form.get('supply_product_id', type=int)) if request.form.get('supply_product_id', type=int) else None
+    ration_label = (request.form.get('ration_label') or '').strip()
+    quantity = parse_float(request.form.get('quantity'))
+    measure_unit = (request.form.get('measure_unit') or ('g' if category == 'bercario' else 'kg')).strip()
+    frequency = (request.form.get('frequency') or '').strip()
+    notes = (request.form.get('notes') or '').strip()
+    current = start_date
+    created = 0
+    while current <= end_date:
+        if current.weekday() in selected_weekdays:
+            for unit in units:
+                task = create_operational_task_for_unit(
+                    current, unit, category, priority, scheduled_time, title,
+                    feed_product, supply_product, ration_label, quantity, measure_unit, frequency, notes,
+                )
+                db.session.add(task)
+                created += 1
+        current += timedelta(days=1)
+    db.session.commit()
+    flash(f'Programação semanal criada: {created} item(ns) gerados.', 'success')
+    return redirect(url_for('operation_schedule_page', operation_date=start_date.isoformat()))
 
 @app.post('/operation-schedule/import-nursery')
 @login_required
@@ -6265,6 +6549,31 @@ def import_nursery_to_operation_schedule():
     return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
 
 
+def complete_operation_tasks_and_flash(tasks, success_prefix='Rotina concluída'):
+    created = skipped = errors = 0
+    error_messages = []
+    for task in tasks:
+        status, message = complete_operation_task_into_management(task)
+        if status == 'created':
+            created += 1
+        elif status == 'error':
+            errors += 1
+            error_messages.append(f'{task_display_unit(task)} · {task.title}: {message}')
+        else:
+            skipped += 1
+    if errors:
+        db.session.rollback()
+        flash('Não lancei a rotina no manejo porque existem pendências de estoque/vínculo.', 'danger')
+        for msg in error_messages[:6]:
+            flash(msg, 'danger')
+    else:
+        db.session.commit()
+        flash(f'{success_prefix}: {created} item(ns) lançado(s) no Manejo Diário.', 'success')
+        if skipped:
+            flash(f'{skipped} item(ns) foram ignorados por já estarem lançados, não terem unidade ou não consumirem estoque.', 'info')
+    return created, skipped, errors
+
+
 @app.post('/operation-schedule/complete-day')
 @login_required
 @requires_permission('management_manage')
@@ -6277,29 +6586,47 @@ def complete_operation_schedule_day():
         .order_by(OperationalTask.priority_order.asc(), OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.id.asc())
         .all()
     )
-    created = skipped = errors = 0
-    error_messages = []
-    for task in tasks:
-        status, message = complete_operation_task_into_management(task)
-        if status == 'created':
-            created += 1
-        elif status == 'error':
-            errors += 1
-            error_messages.append(f'{task.title}: {message}')
-        else:
-            skipped += 1
-    if errors:
-        db.session.rollback()
-        flash('Não lancei a rotina no manejo porque existem pendências de estoque/vínculo.', 'danger')
-        for msg in error_messages[:5]:
-            flash(msg, 'danger')
-    else:
-        db.session.commit()
-        flash(f'Rotina concluída: {created} item(ns) lançado(s) no Manejo Diário.', 'success')
-        if skipped:
-            flash(f'{skipped} item(ns) foram ignorados por já estarem lançados, não terem unidade ou não consumirem estoque.', 'info')
+    complete_operation_tasks_and_flash(tasks, 'Dia concluído')
     return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
 
+
+@app.post('/operation-schedule/complete-selected')
+@login_required
+@requires_permission('management_manage')
+def complete_selected_operation_tasks():
+    selected_date = parse_date(request.form.get('operation_date'), date.today())
+    ids = [parse_int(value) for value in request.form.getlist('task_ids')]
+    ids = [value for value in ids if value]
+    if not ids:
+        flash('Selecione pelo menos uma rotina para concluir.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+    tasks = (
+        OperationalTask.query
+        .options(joinedload(OperationalTask.unit), joinedload(OperationalTask.feed_product), joinedload(OperationalTask.supply_product))
+        .filter(OperationalTask.id.in_(ids), OperationalTask.operation_date == selected_date, OperationalTask.active.is_(True))
+        .order_by(OperationalTask.priority_order.asc(), OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.id.asc())
+        .all()
+    )
+    complete_operation_tasks_and_flash(tasks, 'Itens selecionados concluídos')
+    return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+
+@app.post('/operation-schedule/<int:task_id>/complete')
+@login_required
+@requires_permission('management_manage')
+def complete_single_operation_task(task_id):
+    task = (
+        OperationalTask.query
+        .options(joinedload(OperationalTask.unit), joinedload(OperationalTask.feed_product), joinedload(OperationalTask.supply_product))
+        .filter(OperationalTask.id == task_id)
+        .first()
+    )
+    if not task:
+        flash('Item da rotina não encontrado.', 'warning')
+        return redirect(url_for('operation_schedule_page'))
+    operation_date = task.operation_date
+    complete_operation_tasks_and_flash([task], 'Item concluído')
+    return redirect(url_for('operation_schedule_page', operation_date=operation_date.isoformat()))
 
 @app.post('/operation-schedule/<int:task_id>/edit')
 @login_required
