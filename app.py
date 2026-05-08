@@ -4,6 +4,7 @@ import json
 import os
 import re
 import unicodedata
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 from functools import wraps
 
@@ -48,6 +49,24 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=7)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+# Timezone used by farm operations and on-screen dates/times.
+# Render usually runs in UTC, so keeping this explicit avoids a 3-hour offset in Brazil.
+APP_TIMEZONE_NAME = os.getenv('APP_TIMEZONE') or os.getenv('TZ') or 'America/Recife'
+try:
+    APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+except Exception:
+    APP_TIMEZONE_NAME = 'America/Recife'
+    APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+
+
+def local_now():
+    return datetime.now(APP_TIMEZONE)
+
+
+def local_today():
+    return local_now().date()
+
 
 # Thresholds
 TARGET_NURSERY_DAYS = int(os.getenv('TARGET_NURSERY_DAYS', '20'))
@@ -562,7 +581,7 @@ def money_filter(value):
 @app.context_processor
 def inject_layout_context():
     return {
-        'today_label': date.today().strftime('%d/%m/%Y'),
+        'today_label': local_today().strftime('%d/%m/%Y'),
         'current_endpoint': request.endpoint,
         'current_user_obj': current_user,
         'role_labels': ROLE_LABELS,
@@ -1015,202 +1034,443 @@ def parse_int(value, default=None):
     return int(float(value))
 
 
-NURSERY_PROTOCOL_BASE_POPULATION = 160000
-NURSERY_PROTOCOL_ROWS = [{'pl_stage': 10,
+NURSERY_PROTOCOL_BASE_POPULATION = 265000
+NURSERY_PROTOCOL_ROWS = [{'pl_stage': 11,
   'day': 1,
-  'population': 160000,
-  'survival_pct': 100.0,
-  'individual_weight_g': 0.002,
-  'daily_growth_g': None,
-  'feed_rate_pct': 35.0,
-  'total_day_g': 110,
-  'feedings_per_day': 12,
-  'per_feeding_g': 9,
-  'biomass_kg': 0.32,
-  'estimated_fcr': 0.35,
-  'mixes': [{'label': 'MeM 200-300', 'grams': 112}]},
- {'pl_stage': 11,
-  'day': 2,
-  'population': 159467,
+  'population': 265000,
   'survival_pct': 100.0,
   'individual_weight_g': 0.003,
-  'daily_growth_g': 0.001,
-  'feed_rate_pct': 34.0,
-  'total_day_g': 160,
+  'daily_growth_g': None,
+  'feed_rate_pct': 35.0,
+  'total_day_g': 279,
   'feedings_per_day': 12,
-  'per_feeding_g': 13,
-  'biomass_kg': 0.48,
-  'estimated_fcr': 0.57,
-  'mixes': [{'label': 'MeM 200-300', 'grams': 163}]},
+  'per_feeding_g': 23,
+  'biomass_kg': 0.8,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 225', 'grams': 279}]},
  {'pl_stage': 12,
-  'day': 3,
-  'population': 158933,
+  'day': 2,
+  'population': 262350.0,
   'survival_pct': 99.0,
   'individual_weight_g': 0.004,
   'daily_growth_g': 0.001,
-  'feed_rate_pct': 30.0,
-  'total_day_g': 190,
+  'feed_rate_pct': 34.0,
+  'total_day_g': 357,
   'feedings_per_day': 12,
-  'per_feeding_g': 16,
-  'biomass_kg': 0.64,
-  'estimated_fcr': 0.73,
-  'mixes': [{'label': 'MeM 200-300', 'grams': 143}, {'label': 'MeM 300-500', 'grams': 48}]},
+  'per_feeding_g': 30,
+  'biomass_kg': 1.05,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 225', 'grams': 357}]},
  {'pl_stage': 13,
-  'day': 4,
-  'population': 158400,
-  'survival_pct': 99.0,
+  'day': 3,
+  'population': 259700.0,
+  'survival_pct': 98.0,
   'individual_weight_g': 0.006,
-  'daily_growth_g': 0.0019,
-  'feed_rate_pct': 29.0,
-  'total_day_g': 270,
+  'daily_growth_g': 0.002,
+  'feed_rate_pct': 30.0,
+  'total_day_g': 456,
   'feedings_per_day': 12,
-  'per_feeding_g': 22,
-  'biomass_kg': 0.93,
-  'estimated_fcr': 0.79,
-  'mixes': [{'label': 'MeM 200-300', 'grams': 135}, {'label': 'MeM 300-500', 'grams': 135}]},
+  'per_feeding_g': 38,
+  'biomass_kg': 1.52,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 225', 'grams': 342}, {'label': 'NutriSphera 450', 'grams': 114}]},
  {'pl_stage': 14,
-  'day': 5,
-  'population': 157867,
-  'survival_pct': 99.0,
+  'day': 4,
+  'population': 258375.0,
+  'survival_pct': 97.5,
   'individual_weight_g': 0.009,
   'daily_growth_g': 0.003,
-  'feed_rate_pct': 28.0,
-  'total_day_g': 390,
+  'feed_rate_pct': 29.0,
+  'total_day_g': 663,
   'feedings_per_day': 12,
-  'per_feeding_g': 32,
-  'biomass_kg': 1.4,
-  'estimated_fcr': 0.81,
-  'mixes': [{'label': 'MeM 200-300', 'grams': 98}, {'label': 'MeM 300-500', 'grams': 294}]},
+  'per_feeding_g': 55,
+  'biomass_kg': 2.29,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 225', 'grams': 332}, {'label': 'NutriSphera 450', 'grams': 332}]},
  {'pl_stage': 15,
-  'day': 6,
-  'population': 157333,
-  'survival_pct': 98.0,
+  'day': 5,
+  'population': 257050.0,
+  'survival_pct': 97.0,
   'individual_weight_g': 0.013,
   'daily_growth_g': 0.004,
-  'feed_rate_pct': 26.0,
-  'total_day_g': 530,
+  'feed_rate_pct': 28.0,
+  'total_day_g': 923,
   'feedings_per_day': 12,
-  'per_feeding_g': 44,
-  'biomass_kg': 2.02,
-  'estimated_fcr': 0.82,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 526}]},
+  'per_feeding_g': 77,
+  'biomass_kg': 3.3,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 225', 'grams': 231}, {'label': 'NutriSphera 450', 'grams': 692}]},
  {'pl_stage': 16,
-  'day': 7,
-  'population': 156800,
-  'survival_pct': 98.0,
+  'day': 6,
+  'population': 256387.5,
+  'survival_pct': 96.75,
   'individual_weight_g': 0.017,
   'daily_growth_g': 0.004,
-  'feed_rate_pct': 24.0,
-  'total_day_g': 630,
-  'feedings_per_day': 12,
-  'per_feeding_g': 52,
-  'biomass_kg': 2.64,
-  'estimated_fcr': 0.86,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 634}]},
- {'pl_stage': 17,
-  'day': 8,
-  'population': 156267,
-  'survival_pct': 98.0,
-  'individual_weight_g': 0.022,
-  'daily_growth_g': 0.005,
-  'feed_rate_pct': 22.0,
-  'total_day_g': 750,
-  'feedings_per_day': 12,
-  'per_feeding_g': 62,
-  'biomass_kg': 3.42,
-  'estimated_fcr': 0.89,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 751}]},
- {'pl_stage': 18,
-  'day': 9,
-  'population': 155733,
-  'survival_pct': 97.0,
-  'individual_weight_g': 0.028,
-  'daily_growth_g': 0.006,
-  'feed_rate_pct': 20.0,
-  'total_day_g': 870,
-  'feedings_per_day': 12,
-  'per_feeding_g': 72,
-  'biomass_kg': 4.34,
-  'estimated_fcr': 0.9,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 868}]},
- {'pl_stage': 19,
-  'day': 10,
-  'population': 155200,
-  'survival_pct': 97.0,
-  'individual_weight_g': 0.035,
-  'daily_growth_g': 0.007,
-  'feed_rate_pct': 18.0,
-  'total_day_g': 970,
-  'feedings_per_day': 12,
-  'per_feeding_g': 81,
-  'biomass_kg': 5.41,
-  'estimated_fcr': 0.9,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 974}]},
- {'pl_stage': 20,
-  'day': 11,
-  'population': 154667,
-  'survival_pct': 97.0,
-  'individual_weight_g': 0.043,
-  'daily_growth_g': 0.008,
-  'feed_rate_pct': 17.0,
+  'feed_rate_pct': 26.0,
   'total_day_g': 1130,
   'feedings_per_day': 12,
   'per_feeding_g': 94,
-  'biomass_kg': 6.63,
-  'estimated_fcr': 0.91,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 1127}]},
- {'pl_stage': 21,
-  'day': 12,
-  'population': 154133,
-  'survival_pct': 96.0,
-  'individual_weight_g': 0.052,
-  'daily_growth_g': 0.009,
-  'feed_rate_pct': 16.0,
-  'total_day_g': 1280,
+  'biomass_kg': 4.35,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 1130}]},
+ {'pl_stage': 17,
+  'day': 7,
+  'population': 255725.0,
+  'survival_pct': 96.5,
+  'individual_weight_g': 0.022,
+  'daily_growth_g': 0.005,
+  'feed_rate_pct': 24.0,
+  'total_day_g': 1334,
   'feedings_per_day': 12,
-  'per_feeding_g': 107,
-  'biomass_kg': 7.99,
-  'estimated_fcr': 0.91,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 1279}]},
- {'pl_stage': 22,
-  'day': 13,
-  'population': 153600,
-  'survival_pct': 96.0,
-  'individual_weight_g': 0.062,
-  'daily_growth_g': 0.01,
-  'feed_rate_pct': 15.0,
-  'total_day_g': 1430,
-  'feedings_per_day': 12,
-  'per_feeding_g': 119,
-  'biomass_kg': 9.5,
-  'estimated_fcr': 0.92,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 1425}]},
- {'pl_stage': 23,
-  'day': 14,
-  'population': 153067,
-  'survival_pct': 96.0,
-  'individual_weight_g': 0.073,
-  'daily_growth_g': 0.011,
-  'feed_rate_pct': 14.0,
-  'total_day_g': 1560,
+  'per_feeding_g': 111,
+  'biomass_kg': 5.56,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 1334}]},
+ {'pl_stage': 18,
+  'day': 8,
+  'population': 255062.5,
+  'survival_pct': 96.25,
+  'individual_weight_g': 0.028,
+  'daily_growth_g': 0.006,
+  'feed_rate_pct': 22.0,
+  'total_day_g': 1559,
   'feedings_per_day': 12,
   'per_feeding_g': 130,
-  'biomass_kg': 11.15,
-  'estimated_fcr': 0.92,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 1561}]},
- {'pl_stage': 24,
-  'day': 15,
-  'population': 152000,
-  'survival_pct': 95.0,
-  'individual_weight_g': 0.085,
-  'daily_growth_g': 0.0125,
-  'feed_rate_pct': 13.0,
-  'total_day_g': 1690,
+  'biomass_kg': 7.09,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 1559}]},
+ {'pl_stage': 19,
+  'day': 9,
+  'population': 254400.0,
+  'survival_pct': 96.0,
+  'individual_weight_g': 0.0345,
+  'daily_growth_g': 0.0065,
+  'feed_rate_pct': 20.0,
+  'total_day_g': 1754,
   'feedings_per_day': 12,
-  'per_feeding_g': 141,
-  'biomass_kg': 12.97,
-  'estimated_fcr': 0.89,
-  'mixes': [{'label': 'MeM 300-500', 'grams': 1265}]}]
+  'per_feeding_g': 146,
+  'biomass_kg': 8.77,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 1754}]},
+ {'pl_stage': 20,
+  'day': 10,
+  'population': 253737.5,
+  'survival_pct': 95.75,
+  'individual_weight_g': 0.0435,
+  'daily_growth_g': 0.009,
+  'feed_rate_pct': 18.0,
+  'total_day_g': 1986,
+  'feedings_per_day': 12,
+  'per_feeding_g': 165,
+  'biomass_kg': 11.03,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 1986}]},
+ {'pl_stage': 21,
+  'day': 11,
+  'population': 253075.0,
+  'survival_pct': 95.5,
+  'individual_weight_g': 0.05265,
+  'daily_growth_g': 0.0092,
+  'feed_rate_pct': 17.0,
+  'total_day_g': 2264,
+  'feedings_per_day': 12,
+  'per_feeding_g': 189,
+  'biomass_kg': 13.32,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 2264}]},
+ {'pl_stage': 22,
+  'day': 12,
+  'population': 252412.5,
+  'survival_pct': 95.25,
+  'individual_weight_g': 0.0625,
+  'daily_growth_g': 0.0098,
+  'feed_rate_pct': 16.0,
+  'total_day_g': 2524,
+  'feedings_per_day': 12,
+  'per_feeding_g': 210,
+  'biomass_kg': 15.78,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 2524}]},
+ {'pl_stage': 23,
+  'day': 13,
+  'population': 251750.0,
+  'survival_pct': 95.0,
+  'individual_weight_g': 0.0714,
+  'daily_growth_g': 0.0089,
+  'feed_rate_pct': 15.0,
+  'total_day_g': 2697,
+  'feedings_per_day': 12,
+  'per_feeding_g': 225,
+  'biomass_kg': 17.98,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 2697}]},
+ {'pl_stage': 24,
+  'day': 14,
+  'population': 251087.5,
+  'survival_pct': 94.75,
+  'individual_weight_g': 0.0833,
+  'daily_growth_g': 0.0119,
+  'feed_rate_pct': 14.0,
+  'total_day_g': 2929,
+  'feedings_per_day': 12,
+  'per_feeding_g': 244,
+  'biomass_kg': 20.92,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 2197}, {'label': 'JUVENIL 40 - SM starter 400', 'grams': 732}]},
+ {'pl_stage': 25,
+  'day': 15,
+  'population': 250425.0,
+  'survival_pct': 94.5,
+  'individual_weight_g': 0.13,
+  'daily_growth_g': 0.0467,
+  'feed_rate_pct': 13.0,
+  'total_day_g': 4232,
+  'feedings_per_day': 12,
+  'per_feeding_g': 353,
+  'biomass_kg': 32.56,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 2116}, {'label': 'JUVENIL 40 - SM starter 400', 'grams': 2116}]},
+ {'pl_stage': 26,
+  'day': 16,
+  'population': 249762.5,
+  'survival_pct': 94.25,
+  'individual_weight_g': 0.18,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 12.0,
+  'total_day_g': 5395,
+  'feedings_per_day': 12,
+  'per_feeding_g': 450,
+  'biomass_kg': 44.96,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'NutriSphera 450', 'grams': 1349}, {'label': 'JUVENIL 40 - SM starter 400', 'grams': 4046}]},
+ {'pl_stage': 27,
+  'day': 17,
+  'population': 249100.0,
+  'survival_pct': 94.0,
+  'individual_weight_g': 0.23,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 11.0,
+  'total_day_g': 6302,
+  'feedings_per_day': 12,
+  'per_feeding_g': 525,
+  'biomass_kg': 57.29,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 6302}]},
+ {'pl_stage': 28,
+  'day': 18,
+  'population': 248437.5,
+  'survival_pct': 93.75,
+  'individual_weight_g': 0.28,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 10.0,
+  'total_day_g': 6956,
+  'feedings_per_day': 12,
+  'per_feeding_g': 580,
+  'biomass_kg': 69.56,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 6956}]},
+ {'pl_stage': 29,
+  'day': 19,
+  'population': 247775.0,
+  'survival_pct': 93.5,
+  'individual_weight_g': 0.33,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 9.0,
+  'total_day_g': 7359,
+  'feedings_per_day': 12,
+  'per_feeding_g': 613,
+  'biomass_kg': 81.77,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 7359}]},
+ {'pl_stage': 30,
+  'day': 20,
+  'population': 247112.5,
+  'survival_pct': 93.25,
+  'individual_weight_g': 0.38,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 8.5,
+  'total_day_g': 7982,
+  'feedings_per_day': 12,
+  'per_feeding_g': 665,
+  'biomass_kg': 93.9,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 7982}]},
+ {'pl_stage': 31,
+  'day': 21,
+  'population': 246450.0,
+  'survival_pct': 93.0,
+  'individual_weight_g': 0.43,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 7.6,
+  'total_day_g': 8054,
+  'feedings_per_day': 12,
+  'per_feeding_g': 671,
+  'biomass_kg': 105.97,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 8054}]},
+ {'pl_stage': 32,
+  'day': 22,
+  'population': 245787.5,
+  'survival_pct': 92.75,
+  'individual_weight_g': 0.48,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 7.3,
+  'total_day_g': 8612,
+  'feedings_per_day': 12,
+  'per_feeding_g': 718,
+  'biomass_kg': 117.98,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 8612}]},
+ {'pl_stage': 33,
+  'day': 23,
+  'population': 245125.0,
+  'survival_pct': 92.5,
+  'individual_weight_g': 0.52,
+  'daily_growth_g': 0.04,
+  'feed_rate_pct': 6.8,
+  'total_day_g': 8668,
+  'feedings_per_day': 12,
+  'per_feeding_g': 722,
+  'biomass_kg': 127.47,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 8668}]},
+ {'pl_stage': 34,
+  'day': 24,
+  'population': 244462.5,
+  'survival_pct': 92.25,
+  'individual_weight_g': 0.57,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 6.4,
+  'total_day_g': 8918,
+  'feedings_per_day': 12,
+  'per_feeding_g': 743,
+  'biomass_kg': 139.34,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 8918}]},
+ {'pl_stage': 35,
+  'day': 25,
+  'population': 243800.0,
+  'survival_pct': 92.0,
+  'individual_weight_g': 0.62,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 6.4,
+  'total_day_g': 9674,
+  'feedings_per_day': 12,
+  'per_feeding_g': 806,
+  'biomass_kg': 151.16,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 7255}, {'label': 'JUVENIL 40 - #02', 'grams': 2418}]},
+ {'pl_stage': 36,
+  'day': 26,
+  'population': 243137.5,
+  'survival_pct': 91.75,
+  'individual_weight_g': 0.67,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 6.3,
+  'total_day_g': 10263,
+  'feedings_per_day': 12,
+  'per_feeding_g': 855,
+  'biomass_kg': 162.9,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 5131}, {'label': 'JUVENIL 40 - #02', 'grams': 5131}]},
+ {'pl_stage': 37,
+  'day': 27,
+  'population': 242475.0,
+  'survival_pct': 91.5,
+  'individual_weight_g': 0.72,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 6.2,
+  'total_day_g': 10824,
+  'feedings_per_day': 12,
+  'per_feeding_g': 902,
+  'biomass_kg': 174.58,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - SM starter 400', 'grams': 2706}, {'label': 'JUVENIL 40 - #02', 'grams': 8118}]},
+ {'pl_stage': 38,
+  'day': 28,
+  'population': 241812.5,
+  'survival_pct': 91.25,
+  'individual_weight_g': 0.77,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 6.1,
+  'total_day_g': 11358,
+  'feedings_per_day': 12,
+  'per_feeding_g': 946,
+  'biomass_kg': 186.2,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - #02', 'grams': 11358}]},
+ {'pl_stage': 39,
+  'day': 29,
+  'population': 241150.0,
+  'survival_pct': 91.0,
+  'individual_weight_g': 0.82,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 6.0,
+  'total_day_g': 11865,
+  'feedings_per_day': 12,
+  'per_feeding_g': 989,
+  'biomass_kg': 197.74,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - #02', 'grams': 11865}]},
+ {'pl_stage': 40,
+  'day': 30,
+  'population': 240487.5,
+  'survival_pct': 90.75,
+  'individual_weight_g': 0.87,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 5.9,
+  'total_day_g': 12344,
+  'feedings_per_day': 12,
+  'per_feeding_g': 1029,
+  'biomass_kg': 209.22,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - #02', 'grams': 12344}]},
+ {'pl_stage': 41,
+  'day': 30,
+  'population': 239825.0,
+  'survival_pct': 90.5,
+  'individual_weight_g': 0.91,
+  'daily_growth_g': 0.04,
+  'feed_rate_pct': 5.8,
+  'total_day_g': 12658,
+  'feedings_per_day': 12,
+  'per_feeding_g': 1055,
+  'biomass_kg': 218.24,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - #02', 'grams': 12658}]},
+ {'pl_stage': 42,
+  'day': 30,
+  'population': 239162.5,
+  'survival_pct': 90.25,
+  'individual_weight_g': 0.96,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 5.7,
+  'total_day_g': 13087,
+  'feedings_per_day': 12,
+  'per_feeding_g': 1091,
+  'biomass_kg': 229.6,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - #02', 'grams': 13087}]},
+ {'pl_stage': 43,
+  'day': 30,
+  'population': 238500.0,
+  'survival_pct': 90.0,
+  'individual_weight_g': 1.01,
+  'daily_growth_g': 0.05,
+  'feed_rate_pct': 5.6,
+  'total_day_g': 13490,
+  'feedings_per_day': 12,
+  'per_feeding_g': 1124,
+  'biomass_kg': 240.89,
+  'estimated_fcr': None,
+  'mixes': [{'label': 'JUVENIL 40 - #02', 'grams': 13490}]}]
+
+NURSERY_FEED_STOCK_ALIASES = {
+    'triturada 1': ['JUVENIL 40 - SM starter 400', 'JUVENIL 40 SM starter 400', 'SM starter 400'],
+    'triturada 2': ['JUVENIL 40 - #02', 'JUVENIL 40 #02', 'JUVENIL 40 02', '#02'],
+    'juvenil 40 sm starter 400': ['JUVENIL 40 - SM starter 400'],
+    'juvenil 40 02': ['JUVENIL 40 - #02'],
+}
 TABLE_PROTOCOL_BASE_POPULATION = 160000
 PRODUCTION_PROTOCOL_ROWS = [{'phase': 'juvenil',
   'phase_day': 1,
@@ -3095,6 +3355,43 @@ def nursery_feed_alias_tokens(label: str):
     return expanded
 
 
+def nursery_feed_stock_alias_labels(label: str):
+    """Retorna nomes equivalentes do estoque para itens técnicos da tabela do berçário."""
+    normalized = normalize_text(label)
+    aliases = [label]
+    for key, values in NURSERY_FEED_STOCK_ALIASES.items():
+        if normalized == normalize_text(key):
+            aliases.extend(values)
+    # A tabela nova já usa os nomes reais do estoque para as trituradas, mas mantemos
+    # esta ponte para compatibilidade com linhas antigas chamadas "Triturada 1/2".
+    return [item for item in dict.fromkeys(aliases) if (item or '').strip()]
+
+
+def find_nursery_feed_product_by_alias(label: str, products, exclude_product_id=None):
+    alias_norms = [normalize_text(item) for item in nursery_feed_stock_alias_labels(label)]
+    alias_norms = [item for item in alias_norms if item]
+    if not alias_norms:
+        return None
+
+    best = None
+    for product in products:
+        if exclude_product_id is not None and product.id == exclude_product_id:
+            continue
+        product_norms = [
+            normalize_text(product.full_name),
+            normalize_text(product.brand or ''),
+            normalize_text(f'{product.brand} {product.feed_type} {product.technical_summary or ""}'),
+        ]
+        product_norms = [item for item in product_norms if item]
+        for alias_norm in alias_norms:
+            if any(alias_norm == prod_norm or alias_norm in prod_norm or prod_norm in alias_norm for prod_norm in product_norms):
+                candidate = (product.active, nursery_product_stock(product.id), product.full_name.lower(), product)
+                if best is None or candidate > best:
+                    best = candidate
+                break
+    return best[3] if best else None
+
+
 def nursery_protocol_product_names():
     names = set()
     for row in NURSERY_PROTOCOL_ROWS:
@@ -3223,6 +3520,10 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
     protocol_label = normalized_label in nursery_protocol_product_names() or normalized_label.startswith('mem ')
     products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
 
+    alias_product = find_nursery_feed_product_by_alias(label, products, exclude_product_id=exclude_product_id)
+    if alias_product:
+        return alias_product
+
     scored_real_nursery = []
     scored_any = []
 
@@ -3236,7 +3537,7 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
         if product_is_nursery and not is_auto_protocol:
             scored_real_nursery.append((score, nursery_product_stock(product.id), product.active, product.full_name.lower(), product))
 
-        # Produtos técnicos do protocolo (MeM 200-300, MeM 300-500 etc.) não devem ganhar
+        # Produtos técnicos do protocolo não devem ganhar
         # prioridade sobre as rações reais cadastradas no estoque.
         if not (protocol_label and is_auto_protocol):
             scored_any.append((score, nursery_product_stock(product.id), product.active, product.full_name.lower(), product))
@@ -3254,7 +3555,7 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
     if not create_missing:
         return None
 
-    # Se a linha da tabela traz um nome técnico (MeM 300-500), não cria mais produto
+    # Se a linha da tabela traz um nome técnico antigo, não cria mais produto
     # com esse nome. Usa um nome genérico até o usuário cadastrar a ração real.
     product_name = 'Ração berçário' if protocol_label else label
     product = FeedProduct(brand=product_name, feed_type='', active=True, notes='Criado automaticamente pelo protocolo de berçário.')
@@ -3308,7 +3609,7 @@ def scale_nursery_mixes(mixes, quantity_kg):
 
 
 def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, cumulative_factor=1.0, correction_events=None):
-    target_date = target_date or date.today()
+    target_date = target_date or local_today()
     if not lot or not unit or not lot.start_date or lot.entry_pl_stage is None:
         return None
 
@@ -3356,7 +3657,7 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         f"Data: {target_date.strftime('%d/%m/%Y')}",
         f"Estágio do dia: PL{stage_today}",
         f"População estimada: {projected_population:,} PL".replace(',', '.'),
-        f"Base: planilha 160.000 PL, recalculada proporcionalmente ao lote",
+        f"Base: planilha 265.000 PL, recalculada proporcionalmente ao lote",
     ]
     if correction_events:
         last_event = correction_events[-1]
@@ -3418,7 +3719,7 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
 
 
 def build_nursery_digest_for_date(target_date: date | None = None):
-    target_date = target_date or date.today()
+    target_date = target_date or local_today()
     plans = []
     nursery_units = Unit.query.filter_by(active=True, phase='bercario').order_by(Unit.name).all()
     for unit in nursery_units:
@@ -3835,7 +4136,7 @@ def init_db():
 
 
 def active_lot_allocation_for_unit(unit_id, on_date=None):
-    on_date = on_date or date.today()
+    on_date = on_date or local_today()
     return (
         LotUnitAllocation.query.options(joinedload(LotUnitAllocation.lot), joinedload(LotUnitAllocation.unit))
         .join(Lot, Lot.id == LotUnitAllocation.lot_id)
@@ -3886,7 +4187,7 @@ def backfill_lot_allocations_and_status():
                     allocation.quantity_allocated = lot.initial_count
         if lot.status == 'encerrado' and lot.end_date is None:
             last_sale = Sale.query.filter_by(lot_id=lot.id).order_by(Sale.sale_date.desc(), Sale.id.desc()).first()
-            lot.end_date = last_sale.sale_date if last_sale else date.today()
+            lot.end_date = last_sale.sale_date if last_sale else local_today()
             if not lot.closed_reason:
                 lot.closed_reason = 'encerrado_manual'
     if created:
@@ -3957,7 +4258,7 @@ def sync_lot_allocations_after_lot_edit(lot: Lot, old_unit_id=None, old_initial_
     if primary.unit_id == old_unit_id or (primary.notes and 'Alocação inicial' in primary.notes):
         primary.unit_id = lot.unit_id
 
-    today = date.today()
+    today = local_today()
     active_allocations = [
         a for a in allocations
         if a.start_date <= today and (a.end_date is None or a.end_date >= today) and (a.quantity_allocated is None or a.quantity_allocated > 0)
@@ -3980,7 +4281,7 @@ def close_lot(lot: Lot, close_date: date, reason: str = 'encerrado_manual'):
 
 
 def lot_current_units(lot: Lot, on_date=None):
-    on_date = on_date or date.today()
+    on_date = on_date or local_today()
     allocations = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
         LotUnitAllocation.lot_id == lot.id,
         LotUnitAllocation.start_date <= on_date,
@@ -4026,7 +4327,7 @@ def find_active_allocation(lot_id: int, unit_id: int, on_date: date):
 
 def active_allocation_rows(on_date=None):
     """Active lot positions by unit. Used by the trifasic transfer screen."""
-    on_date = on_date or date.today()
+    on_date = on_date or local_today()
     return (
         LotUnitAllocation.query.options(joinedload(LotUnitAllocation.lot), joinedload(LotUnitAllocation.unit))
         .join(Lot, Lot.id == LotUnitAllocation.lot_id)
@@ -4048,7 +4349,7 @@ def sync_lot_phase_from_allocations(lot: Lot, on_date=None):
     """Keeps Lot.phase compatible with the most advanced active phase of its allocations."""
     if not lot:
         return
-    on_date = on_date or date.today()
+    on_date = on_date or local_today()
     phase_rank = {'bercario': 1, 'juvenil': 2, 'engorda': 3}
     allocations = (
         LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit))
@@ -4085,7 +4386,7 @@ def calculate_fixed_cost_for_lot(lot: Lot):
     if not lot:
         return 0.0
     start = lot.start_date
-    end = lot.end_date or date.today()
+    end = lot.end_date or local_today()
     if end < start:
         return 0.0
 
@@ -4111,7 +4412,7 @@ def calculate_fixed_cost_for_allocation(lot: Lot, unit_id: int, start_date: date
     if not lot or not unit_id:
         return 0.0
     start = max(lot.start_date, start_date or lot.start_date)
-    end = end_date or lot.end_date or date.today()
+    end = end_date or lot.end_date or local_today()
     if end < start:
         return 0.0
     total = 0.0
@@ -4159,7 +4460,7 @@ def lot_total_revenue(lot_id: int):
 
 
 def build_allocation_rows(lot: Lot, on_date=None):
-    on_date = on_date or date.today()
+    on_date = on_date or local_today()
     allocations = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
         LotUnitAllocation.lot_id == lot.id,
         LotUnitAllocation.start_date <= on_date,
@@ -4987,7 +5288,7 @@ def predict_lot_metrics(lot: Lot, records_by_lot: dict[int, list[DailyManagement
 
 
 def dashboard_data():
-    today = date.today()
+    today = local_today()
     default_start = month_start(today)
     start_date = parse_date(request.args.get('start_date'), default_start)
     end_date = parse_date(request.args.get('end_date'), today)
@@ -5521,7 +5822,7 @@ def lots_page():
                 return redirect(url_for('lots_page'))
             cost.name = (request.form.get('name') or 'Funcionário').strip()
             cost.monthly_amount = parse_float(request.form.get('monthly_amount'), 0) or 0
-            cost.start_date = parse_date(request.form.get('start_date'), date.today())
+            cost.start_date = parse_date(request.form.get('start_date'), local_today())
             cost.end_date = parse_date(request.form.get('end_date')) if request.form.get('end_date') else None
             cost.active = bool(request.form.get('active', '1') == '1')
             cost.notes = request.form.get('notes')
@@ -5535,7 +5836,7 @@ def lots_page():
             if not lot:
                 flash('Lote não encontrado.', 'warning')
                 return redirect(url_for('lots_page'))
-            close_date = parse_date(request.form.get('end_date'), date.today())
+            close_date = parse_date(request.form.get('end_date'), local_today())
             close_lot(lot, close_date, reason='encerrado_manual')
             db.session.commit()
             flash('Lote encerrado manualmente.', 'success')
@@ -5572,7 +5873,7 @@ def lots_page():
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     fixed_costs = FixedCost.query.order_by(FixedCost.start_date.desc(), FixedCost.id.desc()).all()
     lot_summaries = [lot_financial_summary(lot) for lot in lots]
-    return render_template('lots.html', lots=lots, units=units, fixed_costs=fixed_costs, lot_summaries=lot_summaries, today=date.today(), lot_current_units=lot_current_units, edit_lot=edit_lot, edit_cost=edit_cost)
+    return render_template('lots.html', lots=lots, units=units, fixed_costs=fixed_costs, lot_summaries=lot_summaries, today=local_today(), lot_current_units=lot_current_units, edit_lot=edit_lot, edit_cost=edit_cost)
 
 
 @app.post('/water/import-sheet')
@@ -5581,7 +5882,7 @@ def lots_page():
 def import_water_sheet():
     upload = request.files.get('sheet_image')
     requested_sheet_type = (request.form.get('sheet_type', 'auto') or 'auto').strip().lower()
-    sheet_date = parse_date(request.form.get('sheet_date'), date.today())
+    sheet_date = parse_date(request.form.get('sheet_date'), local_today())
 
     if requested_sheet_type not in {'auto', 'day', 'night'}:
         flash('Tipo de ficha inválido.', 'danger')
@@ -5659,7 +5960,7 @@ def confirm_import_water_sheet():
 
         unit_id = parse_int(unit_ids[idx])
         slot_time = parse_time(slot_times[idx])
-        monitor_date = parse_date(monitor_dates[idx], date.today())
+        monitor_date = parse_date(monitor_dates[idx], local_today())
         if not unit_id or not slot_time:
             ignored += 1
             continue
@@ -5670,7 +5971,7 @@ def confirm_import_water_sheet():
             'ph': parse_float(ph_values[idx]),
             'ammonia': parse_float(ammonias[idx]),
             'nitrite': parse_float(nitrites[idx]),
-            'observation': f'Importado de ficha {"diurna" if pending.get("sheet_type") == "day" else "noturna"} em {datetime.utcnow().strftime("%d/%m/%Y %H:%M")}',
+            'observation': f'Importado de ficha {"diurna" if pending.get("sheet_type") == "day" else "noturna"} em {local_now().strftime("%d/%m/%Y %H:%M")}',
         }
         if all(values.get(field) is None for field in ['dissolved_oxygen', 'temperature_c', 'ph', 'ammonia', 'nitrite']):
             ignored += 1
@@ -5704,7 +6005,7 @@ def water_page():
     if request.method == 'POST':
         mode = request.form.get('entry_mode', 'single')
         unit_id = int(request.form['unit_id'])
-        monitor_date = parse_date(request.form.get('monitor_date'), date.today())
+        monitor_date = parse_date(request.form.get('monitor_date'), local_today())
         lot = active_lot_for_unit(unit_id, on_date=monitor_date)
 
         if mode == 'batch':
@@ -5810,7 +6111,7 @@ def water_page():
         'water.html',
         units=units,
         records=records,
-        today=date.today(),
+        today=local_today(),
         edit_record=edit_record,
         selected_unit_id=selected_unit_id,
         selected_unit=selected_unit,
@@ -6321,7 +6622,7 @@ def inject_operation_helpers():
 @login_required
 @requires_permission('management_manage')
 def operation_schedule_page():
-    selected_date = parse_date(request.values.get('operation_date'), date.today())
+    selected_date = parse_date(request.values.get('operation_date'), local_today())
     if request.method == 'POST':
         category = request.form.get('category') or 'rotina'
         priority = normalize_operation_priority(request.form.get('priority'))
@@ -6537,7 +6838,7 @@ def delete_auto_tray_check_for_feeding_task(task):
 @login_required
 @requires_permission('management_manage')
 def batch_day_operation_schedule():
-    selected_date = parse_date(request.form.get('operation_date'), date.today())
+    selected_date = parse_date(request.form.get('operation_date'), local_today())
     unit_id = request.form.get('unit_id', type=int)
     unit = db.session.get(Unit, unit_id) if unit_id else None
     if not unit or not unit.active:
@@ -6655,7 +6956,7 @@ def batch_day_operation_schedule():
 @login_required
 @requires_permission('management_manage')
 def batch_week_operation_schedule():
-    start_date = parse_date(request.form.get('start_date'), date.today())
+    start_date = parse_date(request.form.get('start_date'), local_today())
     end_date = parse_date(request.form.get('end_date'), start_date)
     if end_date < start_date:
         start_date, end_date = end_date, start_date
@@ -6702,7 +7003,7 @@ def batch_week_operation_schedule():
 @login_required
 @requires_permission('management_manage')
 def import_nursery_to_operation_schedule():
-    selected_date = parse_date(request.form.get('operation_date'), date.today())
+    selected_date = parse_date(request.form.get('operation_date'), local_today())
     created, skipped = import_nursery_feed_plan_to_operation_schedule(selected_date)
     db.session.commit()
     if created:
@@ -6743,7 +7044,7 @@ def complete_operation_tasks_and_flash(tasks, success_prefix='Rotina concluída'
 @login_required
 @requires_permission('management_manage')
 def complete_operation_schedule_day():
-    selected_date = parse_date(request.form.get('operation_date'), date.today())
+    selected_date = parse_date(request.form.get('operation_date'), local_today())
     tasks = (
         OperationalTask.query
         .options(joinedload(OperationalTask.unit), joinedload(OperationalTask.feed_product), joinedload(OperationalTask.supply_product))
@@ -6759,7 +7060,7 @@ def complete_operation_schedule_day():
 @login_required
 @requires_permission('management_manage')
 def complete_selected_operation_tasks():
-    selected_date = parse_date(request.form.get('operation_date'), date.today())
+    selected_date = parse_date(request.form.get('operation_date'), local_today())
     ids = [parse_int(value) for value in request.form.getlist('task_ids')]
     ids = [value for value in ids if value]
     if not ids:
@@ -6848,9 +7149,9 @@ def delete_operation_task(task_id):
 @login_required
 @requires_permission('dashboard')
 def tv_panel_page():
-    selected_date = parse_date(request.args.get('operation_date'), date.today())
+    selected_date = parse_date(request.args.get('operation_date'), local_today())
     tv_data = build_tv_dashboard_data(selected_date)
-    return render_template('tv_panel.html', selected_date=selected_date, tv_data=tv_data, now=datetime.now())
+    return render_template('tv_panel.html', selected_date=selected_date, tv_data=tv_data, now=local_now())
 
 
 @app.route('/management', methods=['GET', 'POST'])
@@ -6859,7 +7160,7 @@ def tv_panel_page():
 def management_page():
     if request.method == 'POST':
         unit_id = int(request.form['unit_id'])
-        manage_date = parse_date(request.form['manage_date'], date.today())
+        manage_date = parse_date(request.form['manage_date'], local_today())
         lot = active_lot_for_unit(unit_id, on_date=manage_date)
         feed_product = selected_feed_product_from_form()
         feed_offered_kg = parse_float(request.form.get('feed_offered_kg'), 0) or 0
@@ -6925,7 +7226,7 @@ def management_page():
         'management.html',
         units=units,
         records=records,
-        today=date.today(),
+        today=local_today(),
         edit_record=edit_record,
         selected_unit_id=selected_unit_id,
         feed_products=feed_products,
@@ -6945,7 +7246,7 @@ def management_page():
 @requires_permission('management_manage')
 def previous_management_data():
     unit_id = request.args.get('unit_id', type=int)
-    manage_date = parse_date(request.args.get('manage_date'), date.today())
+    manage_date = parse_date(request.args.get('manage_date'), local_today())
     if not unit_id:
         return jsonify({'ok': False, 'message': 'Selecione um viveiro antes de copiar.'}), 400
 
@@ -7211,7 +7512,7 @@ def charts_page():
         chart_style = 'bar'
     if days not in {7, 15, 30, 60, 90}:
         days = 30
-    start_date = date.today() - timedelta(days=days - 1)
+    start_date = local_today() - timedelta(days=days - 1)
 
     water_query = WaterMonitoring.query.join(Unit).filter(WaterMonitoring.monitor_date >= start_date)
     mgmt_query = DailyManagement.query.join(Unit).filter(DailyManagement.manage_date >= start_date)
@@ -7487,7 +7788,7 @@ def transfers_page():
 
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'create')
-        transfer_date = parse_date(request.form.get('transfer_date'), date.today())
+        transfer_date = parse_date(request.form.get('transfer_date'), local_today())
         destination_unit_id = parse_int(request.form.get('destination_unit_id'))
         destination_unit = db.session.get(Unit, destination_unit_id) if destination_unit_id else None
         transferred_qty = parse_int(request.form.get('transferred_qty')) or 0
@@ -7596,14 +7897,14 @@ def transfers_page():
     units = Unit.query.filter_by(active=True).order_by(Unit.phase, Unit.name).all()
     lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
     rows = Transfer.query.options(joinedload(Transfer.source_unit), joinedload(Transfer.destination_unit), joinedload(Transfer.source_lot)).order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).limit(80).all()
-    allocations = active_allocation_rows(date.today())
+    allocations = active_allocation_rows(local_today())
     return render_template(
         'transfers.html',
         units=units,
         lots=lots,
         rows=rows,
         allocations=allocations,
-        today=date.today(),
+        today=local_today(),
         edit_transfer=edit_transfer,
         phase_choices=[('bercario', 'Berçário'), ('juvenil', 'Juvenil'), ('engorda', 'Engorda')],
     )
@@ -7654,7 +7955,7 @@ def feed_page():
         if form_mode == 'edit_movement' and not row:
             flash('Movimentação não encontrada.', 'warning')
             return redirect(url_for('feed_page'))
-        row.movement_date = parse_date(request.form['movement_date'], date.today())
+        row.movement_date = parse_date(request.form['movement_date'], local_today())
         row.feed_name = feed_inventory_name(feed_product)
         row.feed_product_id = feed_product.id
         row.movement_type = movement_type
@@ -7670,7 +7971,7 @@ def feed_page():
     rows = FeedInventory.query.options(joinedload(FeedInventory.feed_product), joinedload(FeedInventory.unit), joinedload(FeedInventory.lot)).order_by(FeedInventory.movement_date.desc(), FeedInventory.id.desc()).limit(80).all()
     feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
     stock_by_product = {row['product'].id: row['stock_kg'] for row in snapshot['rows']}
-    return render_template('feed.html', rows=rows, today=date.today(), total_stock=snapshot['total_stock_kg'], snapshot_rows=snapshot['rows'], low_stock_count=snapshot['low_stock_count'], active_product_count=snapshot['active_product_count'], feed_products=feed_products, stock_by_product=stock_by_product, movement_origin_label=movement_origin_label, edit_product=edit_product, edit_movement=edit_movement)
+    return render_template('feed.html', rows=rows, today=local_today(), total_stock=snapshot['total_stock_kg'], snapshot_rows=snapshot['rows'], low_stock_count=snapshot['low_stock_count'], active_product_count=snapshot['active_product_count'], feed_products=feed_products, stock_by_product=stock_by_product, movement_origin_label=movement_origin_label, edit_product=edit_product, edit_movement=edit_movement)
 
 
 @app.post('/feed/products/<int:product_id>/toggle')
@@ -7768,7 +8069,7 @@ def supplies_page():
         if movement_type == 'saida' and quantity > available_stock_for_supply(product.id) + ((row.quantity or 0) if row and row.id and row.supply_product_id == product.id and row.movement_type == 'saida' else 0):
             flash(f'Estoque insuficiente para {product.full_name}.', 'danger')
             return redirect(url_for('supplies_page'))
-        row.movement_date = parse_date(request.form.get('movement_date'), date.today())
+        row.movement_date = parse_date(request.form.get('movement_date'), local_today())
         row.supply_product_id = product.id
         row.movement_type = movement_type
         row.quantity = quantity
@@ -7786,7 +8087,7 @@ def supplies_page():
     return render_template(
         'supplies.html',
         rows=rows,
-        today=date.today(),
+        today=local_today(),
         total_stock=snapshot['total_stock_qty'],
         snapshot_rows=snapshot['rows'],
         low_stock_count=snapshot['low_stock_count'],
@@ -7840,7 +8141,7 @@ def managerial_reports_page():
     period_days = request.args.get('days', default=30, type=int)
     if period_days not in {7, 30, 90, 180, 365}:
         period_days = 30
-    start_date = date.today() - timedelta(days=period_days - 1)
+    start_date = local_today() - timedelta(days=period_days - 1)
 
     feed_snapshot = build_feed_stock_snapshot()
     supply_snapshot = build_supply_stock_snapshot()
@@ -7885,7 +8186,7 @@ def export_managerial_report(report_key):
     wb = Workbook()
     ws = wb.active
     ws.title = 'Relatorio'
-    today = date.today()
+    today = local_today()
     if report_key == 'stock':
         ws.title = 'Estoque'
         ws.append(['Categoria', 'Item', 'Grupo', 'Saldo', 'Unidade', 'Estoque mínimo', 'Custo médio'])
@@ -7926,7 +8227,7 @@ def export_managerial_report(report_key):
 @login_required
 @requires_permission('management_manage')
 def nursery_feed_page():
-    selected_date = parse_date(request.args.get('feed_date'), date.today())
+    selected_date = parse_date(request.args.get('feed_date'), local_today())
     edit_id = parse_int(request.args.get('edit_id'))
     edit_entry = db.session.get(NurseryFeeding, edit_id) if edit_id else None
     nursery_units = Unit.query.filter_by(active=True, phase='bercario').order_by(Unit.name).all()
@@ -7964,7 +8265,7 @@ def nursery_feed_page():
     for plan in plans:
         plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
     combined_message = '\n\n'.join(plan['message_text'] for plan in plans)
-    return render_template('nursery_feed.html', today=date.today(), selected_date=selected_date, nursery_units=nursery_units, entries=entries, edit_entry=edit_entry, plans=plans, combined_message=combined_message)
+    return render_template('nursery_feed.html', today=local_today(), selected_date=selected_date, nursery_units=nursery_units, entries=entries, edit_entry=edit_entry, plans=plans, combined_message=combined_message)
 
 
 
@@ -7991,7 +8292,7 @@ def nursery_feed_digest_api():
     if token and provided != token:
         return jsonify({'ok': False, 'message': 'Token inválido.'}), 403
 
-    target_date = parse_date(request.args.get('feed_date'), date.today())
+    target_date = parse_date(request.args.get('feed_date'), local_today())
     plans = build_nursery_digest_for_date(target_date)
     return jsonify({
         'ok': True,
@@ -8016,7 +8317,7 @@ def sales_page():
     edit_sale = db.session.get(Sale, edit_id) if edit_id else None
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'create')
-        sale_date = parse_date(request.form['sale_date'], date.today())
+        sale_date = parse_date(request.form['sale_date'], local_today())
         unit_id = int(request.form['unit_id']) if request.form.get('unit_id') else None
         lot_id = int(request.form['lot_id']) if request.form.get('lot_id') else None
         if unit_id and not lot_id:
@@ -8070,7 +8371,7 @@ def sales_page():
     row_summaries = [summary for sale in rows if (summary := sale_financial_summary(sale))]
     total_revenue = db.session.query(func.coalesce(func.sum(Sale.quantity_kg * Sale.unit_price), 0)).scalar() or 0
     selected_summary = row_summaries[0] if row_summaries else None
-    return render_template('sales.html', units=units, lots=lots, rows=rows, row_summaries=row_summaries, today=date.today(), total_revenue=total_revenue, edit_sale=edit_sale, selected_summary=selected_summary)
+    return render_template('sales.html', units=units, lots=lots, rows=rows, row_summaries=row_summaries, today=local_today(), total_revenue=total_revenue, edit_sale=edit_sale, selected_summary=selected_summary)
 
 
 @app.get('/sales/export-history.xlsx')
@@ -8291,7 +8592,7 @@ def merged_weight_observations(lot_id):
 
 
 def lot_density_snapshot(lot: Lot, on_date=None):
-    on_date = on_date or date.today()
+    on_date = on_date or local_today()
     allocation = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
         LotUnitAllocation.lot_id == lot.id,
         LotUnitAllocation.start_date <= on_date,
@@ -8305,7 +8606,7 @@ def lot_density_snapshot(lot: Lot, on_date=None):
 
 
 def lot_environment_snapshot(lot: Lot, ref_date=None, days=5):
-    ref_date = ref_date or date.today()
+    ref_date = ref_date or local_today()
     unit_id = lot.unit_id
     allocation = LotUnitAllocation.query.filter(
         LotUnitAllocation.lot_id == lot.id,
@@ -8490,7 +8791,7 @@ def nursery_protocol_curve_for_lot(lot: Lot, age_days: int | float):
         'survival_pct': row.get('survival_pct'),
         'feed_rate_pct': row.get('feed_rate_pct'),
         'estimated_fcr': row.get('estimated_fcr'),
-        'source': 'Tabela operacional 160.000 PL — berçário',
+        'source': 'Tabela operacional 265.000 PL — berçário',
     }
 
 
@@ -8555,7 +8856,7 @@ def standard_expected_weight_at_age(lot: Lot, age_days: int):
 def standard_survival_pct_for_lot(lot: Lot, on_date=None):
     if not lot:
         return None
-    on_date = on_date or date.today()
+    on_date = on_date or local_today()
     age_days = max((on_date - lot.start_date).days, 0)
     if is_nursery_lot(lot):
         curve = nursery_protocol_curve_for_lot(lot, age_days)
@@ -8656,7 +8957,7 @@ def modeled_live_count_for_lot(lot: Lot, on_date=None):
     aplicando a sobrevivência da tabela-base calibrada pelo histórico real como teto inicial. Biomassa real lançada em biometria
     continua tendo prioridade nas sugestões de ração.
     """
-    on_date = on_date or date.today()
+    on_date = on_date or local_today()
     allocations = LotUnitAllocation.query.filter(
         LotUnitAllocation.lot_id == lot.id,
         LotUnitAllocation.start_date <= on_date,
@@ -8776,7 +9077,7 @@ def historical_growth_rate(lot):
         rate = ((last['weight_g'] or 0) - (first['weight_g'] or 0)) / days
         if rate > 0:
             return round(rate, 3)
-    age = max((date.today() - lot.start_date).days, 0) if lot and lot.start_date else 0
+    age = max((local_today() - lot.start_date).days, 0) if lot and lot.start_date else 0
     if is_nursery_lot(lot):
         curve = nursery_protocol_curve_for_lot(lot, age)
         return round(curve.get('daily_gain_g') or 0.001, 4) if curve else 0.001
@@ -8788,7 +9089,7 @@ def historical_growth_rate(lot):
 
 
 def smart_growth_projection(lot, days_ahead=7):
-    current_age = max((date.today() - lot.start_date).days, 0)
+    current_age = max((local_today() - lot.start_date).days, 0)
     current_weight = parse_float(current_weight_for_lot(lot), 0) or 0
     curve_now = adaptive_expected_weight_at_age(lot, current_age)
     curve_future = adaptive_expected_weight_at_age(lot, current_age + days_ahead)
@@ -8844,7 +9145,7 @@ def total_mortality_for_lot(lot_id: int, up_to_date=None):
 def current_live_count_for_lot(lot):
     allocations = LotUnitAllocation.query.filter(
         LotUnitAllocation.lot_id == lot.id,
-        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= date.today()),
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= local_today()),
     ).all()
     base_count = sum((allocation.quantity_allocated or 0) for allocation in allocations) or (parse_int(getattr(lot, 'initial_count', 0), 0) or 0)
     mortality = total_mortality_for_lot(lot.id)
@@ -8871,7 +9172,7 @@ def feed_profile_for_weight(weight):
 def feed_profile_for_lot(lot, weight):
     profile = feed_profile_for_weight(weight)
     if lot and is_growout_lot(lot):
-        age_days = max((date.today() - lot.start_date).days, 0)
+        age_days = max((local_today() - lot.start_date).days, 0)
         age_curve = production_protocol_curve_for_lot(lot, age_days) or standard_growout_curve_point(age_days)
         age_pct = (age_curve['feed_rate_pct'] or (profile['base_pct'] * 100)) / 100
         # Mescla peso real e idade do ciclo para evitar saltos quando a biometria atrasa.
@@ -8887,7 +9188,7 @@ def feed_profile_for_lot(lot, weight):
             'curve_source': age_curve.get('source') or profile.get('curve_source'),
         })
     elif lot and is_nursery_lot(lot):
-        age_days = max((date.today() - lot.start_date).days, 0)
+        age_days = max((local_today() - lot.start_date).days, 0)
         age_curve = nursery_protocol_curve_for_lot(lot, age_days)
         if age_curve:
             base_pct = (age_curve.get('feed_rate_pct') or (profile['base_pct'] * 100)) / 100
@@ -8942,14 +9243,14 @@ def learned_feed_profile(lot, weight_g):
 def feeding_recommendation_for_lot(lot):
     weight = parse_float(current_weight_for_lot(lot), 0) or 0
     if weight <= 0:
-        age_days = max((date.today() - lot.start_date).days, 0) if lot and lot.start_date else 0
+        age_days = max((local_today() - lot.start_date).days, 0) if lot and lot.start_date else 0
         baseline = standard_expected_weight_at_age(lot, age_days)
         weight = parse_float(baseline.get('expected_weight_g'), 0) or 0
     live_count = modeled_live_count_for_lot(lot)
     records_by_lot = {lot.id: DailyManagement.query.filter(DailyManagement.lot_id == lot.id).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all()}
     allocations_by_lot = {lot.id: LotUnitAllocation.query.filter(
         LotUnitAllocation.lot_id == lot.id,
-        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= date.today()),
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= local_today()),
     ).all()}
     biomass_from_real_data = latest_biomass_for_lot(lot, records_by_lot, allocations_by_lot)
     biomass_source = 'curva padrão + sobrevivência estimada'
@@ -9085,7 +9386,7 @@ def build_growth_analysis(lot):
         })
     projection_7 = smart_growth_projection(lot, 7)
     projection_14 = smart_growth_projection(lot, 14)
-    current_age = max((date.today() - lot.start_date).days, 0)
+    current_age = max((local_today() - lot.start_date).days, 0)
     curve_today = adaptive_expected_weight_at_age(lot, current_age)
     current_weight = parse_float(current_weight_for_lot(lot), None)
     summary = None
@@ -9223,7 +9524,7 @@ def harvest_decision_analysis(lot, base_price_10g=22.0, feed_cost_kg=None):
     current_rec = feeding_recommendation_for_lot(lot)
     live_count = current_rec['live_count']
     fixed_cost_total = calculate_fixed_cost_for_lot(lot)
-    cycle_days = max((date.today() - lot.start_date).days, 1)
+    cycle_days = max((local_today() - lot.start_date).days, 1)
     fixed_cost_day = fixed_cost_total / cycle_days if cycle_days else 0
     scenarios = []
     for days_wait in (0, 7, 14, 21):
@@ -9236,7 +9537,7 @@ def harvest_decision_analysis(lot, base_price_10g=22.0, feed_cost_kg=None):
         extra_fixed_cost = round(fixed_cost_day * days_wait, 2)
         scenarios.append({
             'days_wait': days_wait,
-            'projected_date': date.today() + timedelta(days=days_wait),
+            'projected_date': local_today() + timedelta(days=days_wait),
             'weight_g': round(weight_g or 0, 2),
             'price_kg': price_kg,
             'biomass_kg': biomass_kg,
@@ -9266,7 +9567,7 @@ def harvest_decision_analysis(lot, base_price_10g=22.0, feed_cost_kg=None):
 
 def projected_cashflow_rows(days=90, base_price_10g=22.0):
     rows = []
-    horizon = date.today() + timedelta(days=days)
+    horizon = local_today() + timedelta(days=days)
     for lot in Lot.query.filter_by(status='ativo').order_by(Lot.start_date.asc()).all():
         current_weight = current_weight_for_lot(lot)
         projection = smart_growth_projection(lot, 7)
@@ -9274,11 +9575,11 @@ def projected_cashflow_rows(days=90, base_price_10g=22.0):
         if not current_weight or growth <= 0:
             continue
         if current_weight >= TARGET_HARVEST_WEIGHT_G:
-            harvest_date = date.today()
+            harvest_date = local_today()
             projected_weight = current_weight
         else:
             days_to_target = max(int(round((TARGET_HARVEST_WEIGHT_G - current_weight) / growth)), 1)
-            harvest_date = date.today() + timedelta(days=days_to_target)
+            harvest_date = local_today() + timedelta(days=days_to_target)
             projected_weight = smart_growth_projection(lot, days_to_target).get('projected_weight_g')
         if harvest_date > horizon:
             continue
@@ -9297,7 +9598,7 @@ def projected_cashflow_rows(days=90, base_price_10g=22.0):
 
 
 def finance_summary(days=90, base_price_10g=22.0):
-    start = date.today()
+    start = local_today()
     end = start + timedelta(days=days)
     entries = FinanceEntry.query.order_by(FinanceEntry.due_date.asc().nullslast(), FinanceEntry.entry_date.desc()).all()
     payable_open = sum((entry.amount or 0) for entry in entries if entry.entry_type == 'pagar' and entry.status == 'aberto')
@@ -9390,7 +9691,7 @@ def build_pdf_response(title, headers, rows, filename):
     pdf.drawString(40, y, title)
     y -= 24
     pdf.setFont('Helvetica', 8)
-    pdf.drawString(40, y, f'Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}')
+    pdf.drawString(40, y, f'Gerado em {local_now().strftime("%d/%m/%Y %H:%M")}')
     y -= 22
     col_width = max((width - 80) / max(len(headers), 1), 60)
     pdf.setFont('Helvetica-Bold', 8)
@@ -9501,7 +9802,7 @@ def biometrics_page():
     if request.method == 'POST':
         submitted_lot_id = parse_int(request.form.get('lot_id'))
         unit_id = parse_int(request.form.get('unit_id'))
-        sample_date = parse_date(request.form.get('sample_date'), default=date.today())
+        sample_date = parse_date(request.form.get('sample_date'), default=local_today())
         average_weight_g = parse_float(request.form.get('average_weight_g'))
         sample_size = parse_int(request.form.get('sample_size'), 100) or 100
         cv_pct = parse_float(request.form.get('cv_pct'))
@@ -9573,7 +9874,7 @@ def biometrics_page():
         units=units,
         rows=enriched_rows,
         active_summaries=active_summaries,
-        today=date.today(),
+        today=local_today(),
         history_unit_id=history_unit_id,
         unit_lot_options=unit_lot_options_payload(),
     )
@@ -9620,7 +9921,7 @@ def finance_page():
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     if request.method == 'POST':
         entry = FinanceEntry(
-            entry_date=parse_date(request.form.get('entry_date'), default=date.today()),
+            entry_date=parse_date(request.form.get('entry_date'), default=local_today()),
             due_date=parse_date(request.form.get('due_date')),
             entry_type=(request.form.get('entry_type') or 'pagar').strip(),
             category=(request.form.get('category') or 'Geral').strip(),
@@ -9668,8 +9969,8 @@ def api_sensor_reading():
     unit_id = payload.get('unit_id')
     if not unit_id:
         return jsonify({'ok': False, 'error': 'unit_id é obrigatório'}), 400
-    reading_time = parse_time(payload.get('monitor_time')) if payload.get('monitor_time') else datetime.now().time().replace(second=0, microsecond=0)
-    reading_date = parse_date(payload.get('monitor_date')) if payload.get('monitor_date') else date.today()
+    reading_time = parse_time(payload.get('monitor_time')) if payload.get('monitor_time') else local_now().time().replace(second=0, microsecond=0)
+    reading_date = parse_date(payload.get('monitor_date')) if payload.get('monitor_date') else local_today()
     rec = WaterMonitoring(
         monitor_date=reading_date,
         monitor_time=reading_time,
@@ -9707,7 +10008,7 @@ def api_sensor_reading():
 @login_required
 @requires_permission('dashboard')
 def export_managerial_report_pdf(report_key):
-    today = date.today()
+    today = local_today()
     if report_key == 'stock':
         headers = ['Categoria', 'Item', 'Saldo', 'Unidade', 'Minimo']
         rows = []
