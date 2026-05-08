@@ -41,7 +41,7 @@
           <div class="tv-feed-row">
             <strong class="tv-time">{{ row.time }}</strong>
             <span class="tv-feed-chip {{ 'nursery' if row.category == 'bercario' else 'growout' }}">{{ row.feed_label }}</span>
-            <p>{{ row.items|join('  |  ') }}</p>
+            <p>{{ row.item_labels|join('  |  ') }}</p>
           </div>
           {% else %}
           <div class="tv-empty">Nenhuma alimentação programada para hoje.</div>
