@@ -6366,6 +6366,9 @@ def operation_schedule_page():
             updated_at=datetime.utcnow(),
         )
         db.session.add(task)
+        db.session.flush()
+        if task.category == 'alimentacao' and ensure_auto_tray_check_after_feeding(task):
+            flash('Verificação de bandeja gerada automaticamente 1h30 após a alimentação.', 'info')
         db.session.commit()
         flash('Item adicionado à rotina operacional do dia.', 'success')
         return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
@@ -6449,43 +6452,166 @@ def create_operational_task_for_unit(operation_date, unit, category, priority, s
     )
 
 
+AUTO_TRAY_CHECK_TITLE = 'Verificar bandeja'
+AUTO_TRAY_CHECK_MARKER = '[Rotina automática: verificar bandeja]'
+
+
+def time_plus_minutes(value, minutes):
+    if not value:
+        return None
+    return (datetime.combine(date(2000, 1, 1), value) + timedelta(minutes=minutes)).time()
+
+
+def tray_check_notes_for_feeding_task(task):
+    feed_name = feed_label_for_task(task)
+    time_label = task.scheduled_time.strftime('%H:%M') if task.scheduled_time else '--:--'
+    return '\n'.join([
+        AUTO_TRAY_CHECK_MARKER,
+        'Gerada automaticamente 1h30 após a alimentação do viveiro.',
+        f'Origem alimentação ID: {task.id}',
+        f'Alimentação de referência: {time_label} · {feed_name} · {quantity_label_for_task(task)}',
+        'Não consome estoque. Serve para orientar a conferência de sobra na bandeja.',
+    ])
+
+
+def auto_tray_check_for_feeding_task(task):
+    if not task or not task.id:
+        return None
+    marker = f'Origem alimentação ID: {task.id}'
+    return OperationalTask.query.filter(
+        OperationalTask.operation_date == task.operation_date,
+        OperationalTask.category == 'rotina',
+        OperationalTask.notes.contains(marker),
+    ).order_by(OperationalTask.id.asc()).first()
+
+
+def ensure_auto_tray_check_after_feeding(task):
+    """Cria/atualiza a rotina de verificar bandeja 1h30 após uma alimentação de viveiro."""
+    if not task or task.category != 'alimentacao' or not task.unit_id or not task.scheduled_time or not task.id:
+        return None
+    check_time = time_plus_minutes(task.scheduled_time, 90)
+    auto_task = auto_tray_check_for_feeding_task(task)
+    if not auto_task:
+        # Evita duplicar caso já exista uma conferência automática no mesmo horário/viveiro.
+        auto_task = OperationalTask.query.filter(
+            OperationalTask.operation_date == task.operation_date,
+            OperationalTask.unit_id == task.unit_id,
+            OperationalTask.category == 'rotina',
+            OperationalTask.scheduled_time == check_time,
+            OperationalTask.title == AUTO_TRAY_CHECK_TITLE,
+            OperationalTask.notes.contains(AUTO_TRAY_CHECK_MARKER),
+        ).order_by(OperationalTask.id.asc()).first()
+    if not auto_task:
+        auto_task = OperationalTask(
+            operation_date=task.operation_date,
+            unit_id=task.unit_id,
+            category='rotina',
+            title=AUTO_TRAY_CHECK_TITLE,
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(auto_task)
+    auto_task.scheduled_time = check_time
+    auto_task.priority = 'media'
+    auto_task.priority_order = OPERATION_PRIORITY_ORDER['media']
+    auto_task.feed_product_id = None
+    auto_task.supply_product_id = None
+    auto_task.ration_label = 'Conferir sobra de ração'
+    auto_task.quantity = None
+    auto_task.measure_unit = 'un'
+    auto_task.frequency = 'Automática'
+    auto_task.notes = tray_check_notes_for_feeding_task(task)
+    auto_task.active = True if task.active is None else bool(task.active)
+    auto_task.updated_at = datetime.utcnow()
+    return auto_task
+
+
+def delete_auto_tray_check_for_feeding_task(task):
+    auto_task = auto_tray_check_for_feeding_task(task)
+    if auto_task:
+        db.session.delete(auto_task)
+        return True
+    return False
+
+
 @app.post('/operation-schedule/batch-day')
 @login_required
 @requires_permission('management_manage')
 def batch_day_operation_schedule():
     selected_date = parse_date(request.form.get('operation_date'), date.today())
-    category = request.form.get('category') or 'rotina'
-    priority = normalize_operation_priority(request.form.get('priority'))
-    scheduled_time = parse_time(request.form.get('scheduled_time'))
-    title = (request.form.get('title') or '').strip()
-    feed_product = db.session.get(FeedProduct, request.form.get('feed_product_id', type=int)) if request.form.get('feed_product_id', type=int) else None
-    supply_product = db.session.get(SupplyProduct, request.form.get('supply_product_id', type=int)) if request.form.get('supply_product_id', type=int) else None
-    ration_label = (request.form.get('ration_label') or '').strip()
-    measure_unit = (request.form.get('measure_unit') or ('g' if category == 'bercario' else 'kg')).strip()
-    frequency = (request.form.get('frequency') or '').strip()
-    notes = (request.form.get('notes') or '').strip()
-    units = selected_operation_units_from_form()
-    if not units:
-        flash('Selecione pelo menos um viveiro/berçário para o cadastro em lote.', 'warning')
+    unit_id = request.form.get('unit_id', type=int)
+    unit = db.session.get(Unit, unit_id) if unit_id else None
+    if not unit or not unit.active:
+        flash('Selecione o viveiro/berçário antes de salvar as rotinas em lote.', 'warning')
         return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+    categories = request.form.getlist('row_category')
+    times = request.form.getlist('row_scheduled_time')
+    priorities = request.form.getlist('row_priority')
+    titles = request.form.getlist('row_title')
+    feed_ids = request.form.getlist('row_feed_product_id')
+    supply_ids = request.form.getlist('row_supply_product_id')
+    ration_labels = request.form.getlist('row_ration_label')
+    quantities = request.form.getlist('row_quantity')
+    measure_units = request.form.getlist('row_measure_unit')
+    frequencies = request.form.getlist('row_frequency')
+    notes_list = request.form.getlist('row_notes')
+
+    total_rows = max(
+        len(categories), len(times), len(priorities), len(titles), len(feed_ids), len(supply_ids),
+        len(ration_labels), len(quantities), len(measure_units), len(frequencies), len(notes_list), 0
+    )
     created = 0
-    for unit in units:
-        quantity = parse_float(request.form.get(f'quantity_{unit.id}'))
-        # Para rotina operacional simples, permite criar mesmo sem quantidade.
-        if category != 'rotina' and (quantity is None or quantity <= 0):
+    auto_created = 0
+    skipped = 0
+
+    def row_value(values, index, default=''):
+        return values[index] if index < len(values) else default
+
+    for idx in range(total_rows):
+        category = row_value(categories, idx, 'rotina') or 'rotina'
+        priority = normalize_operation_priority(row_value(priorities, idx, 'media'))
+        scheduled_time = parse_time(row_value(times, idx, ''))
+        title = (row_value(titles, idx, '') or '').strip()
+        ration_label = (row_value(ration_labels, idx, '') or '').strip()
+        quantity = parse_float(row_value(quantities, idx, ''))
+        measure_unit = (row_value(measure_units, idx, 'kg') or ('g' if category == 'bercario' else 'kg')).strip()
+        frequency = (row_value(frequencies, idx, '') or '').strip()
+        notes = (row_value(notes_list, idx, '') or '').strip()
+        feed_product_id = parse_int(row_value(feed_ids, idx, ''))
+        supply_product_id = parse_int(row_value(supply_ids, idx, ''))
+        feed_product = db.session.get(FeedProduct, feed_product_id) if feed_product_id else None
+        supply_product = db.session.get(SupplyProduct, supply_product_id) if supply_product_id else None
+
+        # Linha totalmente vazia não entra.
+        if not any([title, ration_label, quantity, feed_product, supply_product, notes]):
+            skipped += 1
             continue
+        # Alimentação/aditivo/troca sem quantidade não deve gerar baixa futura confusa.
+        if category != 'rotina' and (quantity is None or quantity <= 0):
+            skipped += 1
+            continue
+
         task = create_operational_task_for_unit(
             selected_date, unit, category, priority, scheduled_time, title,
             feed_product, supply_product, ration_label, quantity, measure_unit, frequency, notes,
         )
         db.session.add(task)
+        db.session.flush()
         created += 1
+        if category == 'alimentacao' and ensure_auto_tray_check_after_feeding(task):
+            auto_created += 1
+
     if created:
         db.session.commit()
-        flash(f'Cadastro em lote criado: {created} item(ns) adicionados à Rotina do Dia.', 'success')
+        msg = f'{created} rotina(s) criada(s) para {unit.name}.'
+        if auto_created:
+            msg += f' {auto_created} verificação(ões) de bandeja foram geradas automaticamente 1h30 após a ração.'
+        flash(msg, 'success')
+        if skipped:
+            flash(f'{skipped} linha(s) vazia(s) ou incompletas foram ignoradas.', 'info')
     else:
         db.session.rollback()
-        flash('Nenhum item foi criado. Confira as quantidades dos viveiros selecionados.', 'warning')
+        flash('Nenhuma rotina foi criada. Preencha pelo menos uma linha para o viveiro selecionado.', 'warning')
     return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
 
 
@@ -6527,6 +6653,9 @@ def batch_week_operation_schedule():
                     feed_product, supply_product, ration_label, quantity, measure_unit, frequency, notes,
                 )
                 db.session.add(task)
+                db.session.flush()
+                if category == 'alimentacao':
+                    ensure_auto_tray_check_after_feeding(task)
                 created += 1
         current += timedelta(days=1)
     db.session.commit()
@@ -6654,6 +6783,10 @@ def edit_operation_task(task_id):
     task.notes = (request.form.get('notes') or '').strip()
     task.active = bool(request.form.get('active'))
     task.updated_at = datetime.utcnow()
+    if task.category == 'alimentacao':
+        ensure_auto_tray_check_after_feeding(task)
+    else:
+        delete_auto_tray_check_for_feeding_task(task)
     db.session.commit()
     flash('Item da rotina atualizado.', 'success')
     return redirect(url_for('operation_schedule_page', operation_date=task.operation_date.isoformat()))
@@ -6668,6 +6801,7 @@ def delete_operation_task(task_id):
         flash('Item da rotina não encontrado.', 'warning')
         return redirect(url_for('operation_schedule_page'))
     operation_date = task.operation_date
+    delete_auto_tray_check_for_feeding_task(task)
     db.session.delete(task)
     db.session.commit()
     flash('Item removido da rotina operacional.', 'success')
