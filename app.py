@@ -6545,20 +6545,22 @@ def batch_day_operation_schedule():
         return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
 
     categories = request.form.getlist('row_category')
-    times = request.form.getlist('row_scheduled_time')
+    start_times = request.form.getlist('row_start_time') or request.form.getlist('row_scheduled_time')
     priorities = request.form.getlist('row_priority')
     titles = request.form.getlist('row_title')
     feed_ids = request.form.getlist('row_feed_product_id')
     supply_ids = request.form.getlist('row_supply_product_id')
     ration_labels = request.form.getlist('row_ration_label')
-    quantities = request.form.getlist('row_quantity')
+    total_quantities = request.form.getlist('row_total_quantity') or request.form.getlist('row_quantity')
     measure_units = request.form.getlist('row_measure_unit')
-    frequencies = request.form.getlist('row_frequency')
+    frequency_counts = request.form.getlist('row_frequency_count')
+    interval_minutes_list = request.form.getlist('row_interval_minutes')
     notes_list = request.form.getlist('row_notes')
 
     total_rows = max(
-        len(categories), len(times), len(priorities), len(titles), len(feed_ids), len(supply_ids),
-        len(ration_labels), len(quantities), len(measure_units), len(frequencies), len(notes_list), 0
+        len(categories), len(start_times), len(priorities), len(titles), len(feed_ids), len(supply_ids),
+        len(ration_labels), len(total_quantities), len(measure_units), len(frequency_counts),
+        len(interval_minutes_list), len(notes_list), 0
     )
     created = 0
     auto_created = 0
@@ -6567,53 +6569,87 @@ def batch_day_operation_schedule():
     def row_value(values, index, default=''):
         return values[index] if index < len(values) else default
 
+    def safe_frequency_count(raw_value):
+        count = parse_int(raw_value)
+        if not count or count < 1:
+            return 1
+        return min(count, 12)
+
+    def safe_interval_minutes(raw_value, frequency_count):
+        minutes = parse_int(raw_value)
+        if minutes is None:
+            minutes = 180 if frequency_count > 1 else 0
+        return max(0, min(minutes, 720))
+
     for idx in range(total_rows):
         category = row_value(categories, idx, 'rotina') or 'rotina'
         priority = normalize_operation_priority(row_value(priorities, idx, 'media'))
-        scheduled_time = parse_time(row_value(times, idx, ''))
+        start_time = parse_time(row_value(start_times, idx, ''))
         title = (row_value(titles, idx, '') or '').strip()
         ration_label = (row_value(ration_labels, idx, '') or '').strip()
-        quantity = parse_float(row_value(quantities, idx, ''))
+        total_quantity = parse_float(row_value(total_quantities, idx, ''))
         measure_unit = (row_value(measure_units, idx, 'kg') or ('g' if category == 'bercario' else 'kg')).strip()
-        frequency = (row_value(frequencies, idx, '') or '').strip()
-        notes = (row_value(notes_list, idx, '') or '').strip()
+        frequency_count = safe_frequency_count(row_value(frequency_counts, idx, '1'))
+        interval_minutes = safe_interval_minutes(row_value(interval_minutes_list, idx, ''), frequency_count)
+        user_notes = (row_value(notes_list, idx, '') or '').strip()
         feed_product_id = parse_int(row_value(feed_ids, idx, ''))
         supply_product_id = parse_int(row_value(supply_ids, idx, ''))
         feed_product = db.session.get(FeedProduct, feed_product_id) if feed_product_id else None
         supply_product = db.session.get(SupplyProduct, supply_product_id) if supply_product_id else None
 
         # Linha totalmente vazia não entra.
-        if not any([title, ration_label, quantity, feed_product, supply_product, notes]):
+        if not any([title, ration_label, total_quantity, feed_product, supply_product, user_notes]):
+            skipped += 1
+            continue
+        if not start_time:
             skipped += 1
             continue
         # Alimentação/aditivo/troca sem quantidade não deve gerar baixa futura confusa.
-        if category != 'rotina' and (quantity is None or quantity <= 0):
+        if category != 'rotina' and (total_quantity is None or total_quantity <= 0):
             skipped += 1
             continue
 
-        task = create_operational_task_for_unit(
-            selected_date, unit, category, priority, scheduled_time, title,
-            feed_product, supply_product, ration_label, quantity, measure_unit, frequency, notes,
-        )
-        db.session.add(task)
-        db.session.flush()
-        created += 1
-        if category == 'alimentacao' and ensure_auto_tray_check_after_feeding(task):
-            auto_created += 1
+        portion_quantity = None
+        if total_quantity is not None:
+            portion_quantity = round(total_quantity / frequency_count, 4) if frequency_count > 1 else total_quantity
+
+        frequency_label = f'{frequency_count}x ao dia'
+        if frequency_count > 1 and interval_minutes:
+            hours = interval_minutes // 60
+            minutes = interval_minutes % 60
+            interval_label = f'{hours}h{minutes:02d}' if minutes else f'{hours}h'
+            frequency_label = f'{frequency_label} · intervalo {interval_label}'
+        system_note = ''
+        if frequency_count > 1:
+            system_note = f'Gerado automaticamente pela frequência diária: total {format_decimal_pt(total_quantity)} {measure_unit}, {frequency_count} trato(s), intervalo de {interval_minutes} min.'
+        notes = user_notes
+        if system_note:
+            notes = f'{user_notes}\n{system_note}' if user_notes else system_note
+
+        for occurrence in range(frequency_count):
+            scheduled_time = time_plus_minutes(start_time, occurrence * interval_minutes) if occurrence else start_time
+            task = create_operational_task_for_unit(
+                selected_date, unit, category, priority, scheduled_time, title,
+                feed_product, supply_product, ration_label, portion_quantity, measure_unit, frequency_label, notes,
+            )
+            db.session.add(task)
+            db.session.flush()
+            created += 1
+            if category == 'alimentacao' and ensure_auto_tray_check_after_feeding(task):
+                auto_created += 1
 
     if created:
         db.session.commit()
         msg = f'{created} rotina(s) criada(s) para {unit.name}.'
         if auto_created:
-            msg += f' {auto_created} verificação(ões) de bandeja foram geradas automaticamente 1h30 após a ração.'
+            msg += f' {auto_created} verificação(ões) de bandeja foram geradas automaticamente 1h30 após cada ração.'
         flash(msg, 'success')
         if skipped:
-            flash(f'{skipped} linha(s) vazia(s) ou incompletas foram ignoradas.', 'info')
+            flash(f'{skipped} linha(s) vazia(s), sem horário ou incompletas foram ignoradas.', 'info')
     else:
         db.session.rollback()
-        flash('Nenhuma rotina foi criada. Preencha pelo menos uma linha para o viveiro selecionado.', 'warning')
+        flash('Nenhuma rotina foi criada. Preencha pelo menos um item para o viveiro selecionado.', 'warning')
     return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
-
 
 @app.post('/operation-schedule/batch-week')
 @login_required
