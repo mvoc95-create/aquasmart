@@ -244,6 +244,9 @@ class NurseryFeeding(db.Model):
     quantity_kg = db.Column(db.Float, nullable=False, default=0)
     intestinal_score = db.Column(db.Float)
     score_adjustment_pct = db.Column(db.Float)
+    # JSON com os aditivos/insumos de água marcados no lançamento do berçário.
+    # Mantém o histórico do que foi realmente utilizado para refazer Manejo + Estoque.
+    water_items_json = db.Column(db.Text)
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -5146,6 +5149,132 @@ def build_nursery_management_note_block(entry, mix_label=None):
     return '\n'.join(lines)
 
 
+def build_nursery_water_management_note_block(entry, water_items=None):
+    water_items = water_items or []
+    lines = [
+        '[Integração berçário]',
+        'Integração automática dos aditivos/insumos de água do berçário.',
+        f'Origem ID: {entry.id}',
+        'Tipo: manejo da água / insumos marcados na Alimentação berçário',
+    ]
+    for item in water_items:
+        qty = item.get('stock_quantity') if item.get('stock_quantity') is not None else item.get('quantity')
+        unit_label = item.get('stock_measure_unit') or item.get('measure_unit') or ''
+        if qty is not None:
+            lines.append(f"Item utilizado: {item.get('label')} — {format_decimal_pt(qty)} {unit_label}".strip())
+        else:
+            lines.append(f"Item utilizado: {item.get('label')}")
+    if (entry.notes or '').strip():
+        lines.append(f'Observações do berçário: {(entry.notes or '').strip()}')
+    lines.append('[/Integração berçário]')
+    return '\n'.join(lines)
+
+
+def nursery_water_item_form_key(item, idx):
+    """Chave estável do checkbox de aditivo do protocolo do dia."""
+    label = normalize_text(item.get('label') or item.get('source_label') or 'item').replace(' ', '_')
+    scheduled = (item.get('scheduled_time') or '').replace(':', '')
+    unit_label = normalize_text(item.get('measure_unit') or '')
+    quantity = item.get('quantity')
+    if quantity is None:
+        quantity_label = 'rotina'
+    else:
+        try:
+            quantity_label = f"{float(quantity):g}".replace('.', '_')
+        except (TypeError, ValueError):
+            quantity_label = str(quantity).replace('.', '_')
+    return f'{idx}:{scheduled}:{label}:{quantity_label}:{unit_label}'
+
+
+def nursery_water_item_is_stock_item(item):
+    return (
+        (item.get('category') or 'aditivo') in ('aditivo', 'troca_agua')
+        and item.get('quantity') is not None
+        and (item.get('quantity') or 0) > 0
+    )
+
+
+def nursery_entry_water_items(entry):
+    if not entry or not (entry.water_items_json or '').strip():
+        return []
+    try:
+        payload = json.loads(entry.water_items_json or '[]')
+    except (TypeError, ValueError):
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def nursery_entry_water_item_keys(entry):
+    return {str(item.get('form_key')) for item in nursery_entry_water_items(entry) if item.get('form_key')}
+
+
+def nursery_water_items_for_form(plan, entry=None):
+    water_items = []
+    stored_keys = nursery_entry_water_item_keys(entry) if entry else set()
+    has_saved_selection = bool(entry and (entry.water_items_json or '').strip())
+    for idx, raw_item in enumerate(plan.get('water_items', []) if plan else []):
+        item = dict(raw_item)
+        item['form_key'] = nursery_water_item_form_key(item, idx)
+        item['is_stock_item'] = nursery_water_item_is_stock_item(item)
+        item['is_selected'] = (item['form_key'] in stored_keys) if has_saved_selection else item['is_stock_item']
+        item['stock_product_label'] = ''
+        if item['is_stock_item']:
+            product = find_or_create_supply_product_for_protocol(item.get('label'), measure_unit=item.get('measure_unit') or 'g', create_missing=False)
+            item['stock_product_label'] = product.full_name if product else nursery_water_supply_alias_labels(item.get('label'))[0]
+        water_items.append(item)
+    return water_items
+
+
+def selected_nursery_water_items_from_request(plan):
+    selected_keys = set(request.form.getlist('water_item_keys'))
+    selected_items = []
+    for item in nursery_water_items_for_form(plan, entry=None):
+        if not item.get('is_stock_item') or item.get('form_key') not in selected_keys:
+            continue
+        selected_items.append({
+            'form_key': item.get('form_key'),
+            'label': item.get('label'),
+            'source_label': item.get('source_label'),
+            'category': item.get('category') or 'aditivo',
+            'quantity': item.get('quantity'),
+            'measure_unit': item.get('measure_unit') or 'g',
+            'scheduled_time': item.get('scheduled_time'),
+            'priority': item.get('priority') or 'alta',
+        })
+    return selected_items
+
+
+def nursery_water_supply_entries(water_items):
+    entries = []
+    for item in water_items or []:
+        if not nursery_water_item_is_stock_item(item):
+            continue
+        product = find_or_create_supply_product_for_protocol(
+            item.get('label') or item.get('source_label') or 'Manejo da água',
+            measure_unit=item.get('measure_unit') or 'g',
+            create_missing=True,
+        )
+        if not product:
+            continue
+        stock_quantity = convert_quantity_between_units(
+            item.get('quantity'),
+            item.get('measure_unit') or product.measure_unit,
+            product.measure_unit,
+        )
+        if stock_quantity is None:
+            continue
+        enriched = dict(item)
+        enriched['stock_quantity'] = stock_quantity
+        enriched['stock_measure_unit'] = product.measure_unit
+        entries.append({
+            'product': product,
+            'quantity': stock_quantity,
+            'notes': f"Berçário: {item.get('label')} ({format_decimal_pt(item.get('quantity'))} {item.get('measure_unit') or ''})".strip(),
+            'item': enriched,
+        })
+    return entries
+
+
 def nursery_management_source_marker(entry_id):
     return f'Origem ID: {entry_id}'
 
@@ -5167,6 +5296,15 @@ def delete_management_record_with_inventory(record):
     movement = get_management_feed_movement(record.id)
     if movement:
         db.session.delete(movement)
+
+    usage_ids = [usage.id for usage in ManagementSupplyUsage.query.filter_by(management_id=record.id).all()]
+    if usage_ids:
+        SupplyInventory.query.filter(
+            SupplyInventory.source_type == 'manejo_insumo',
+            SupplyInventory.source_ref_id.in_(usage_ids),
+        ).delete(synchronize_session=False)
+        ManagementSupplyUsage.query.filter(ManagementSupplyUsage.id.in_(usage_ids)).delete(synchronize_session=False)
+
     db.session.delete(record)
 
 
@@ -5654,6 +5792,27 @@ def sync_nursery_feed_to_management(entry):
         db.session.flush()
         sync_management_feed_movement(management, feed_product, offered_kg)
         created_records.append(management)
+
+    selected_water_items = nursery_entry_water_items(entry)
+    supply_entries = nursery_water_supply_entries(selected_water_items)
+    if supply_entries:
+        supply_management = DailyManagement(
+            manage_date=entry.feed_date,
+            unit_id=entry.unit_id,
+            lot_id=entry.lot_id,
+            feed_offered_kg=0,
+            feed_consumed_kg=0,
+            mortality_qty=0,
+            average_weight_g=None,
+            estimated_biomass_kg=None,
+            notes=build_nursery_water_management_note_block(entry, [entry_item['item'] for entry_item in supply_entries]),
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add(supply_management)
+        db.session.flush()
+        sync_management_supply_usages(supply_management, supply_entries)
+        created_records.append(supply_management)
+
     return created_records
 
 def combine_monitor_datetime(record):
@@ -5895,6 +6054,7 @@ def run_lightweight_migrations():
     if 'nursery_feeding' in tables:
         nursery_feeding_columns = get_columns('nursery_feeding')
         add_column_if_missing('nursery_feeding', nursery_feeding_columns, 'score_adjustment_pct', 'ALTER TABLE nursery_feeding ADD COLUMN score_adjustment_pct FLOAT', 'ALTER TABLE nursery_feeding ADD COLUMN score_adjustment_pct DOUBLE PRECISION')
+        add_column_if_missing('nursery_feeding', nursery_feeding_columns, 'water_items_json', 'ALTER TABLE nursery_feeding ADD COLUMN water_items_json TEXT', 'ALTER TABLE nursery_feeding ADD COLUMN water_items_json TEXT')
 
     if 'water_monitoring' in tables:
         water_columns = get_columns('water_monitoring')
@@ -8574,6 +8734,7 @@ def inject_operation_helpers():
         'quantity_label_for_task': quantity_label_for_task,
         'feed_label_for_task': feed_label_for_task,
         'supply_label_for_task': supply_label_for_task,
+        'nursery_entry_water_items': nursery_entry_water_items,
     }
 
 
@@ -10200,8 +10361,10 @@ def nursery_feed_page():
 
         entry.feed_date = parse_date(request.form['feed_date'])
         entry.unit_id = int(request.form['unit_id'])
+        unit = db.session.get(Unit, entry.unit_id)
         active_lot = active_lot_for_unit(entry.unit_id, on_date=entry.feed_date)
         entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
+        lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else active_lot
         submitted_quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
         entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
         entry.score_adjustment_pct = parse_float(request.form.get('score_adjustment_pct'))
@@ -10209,13 +10372,25 @@ def nursery_feed_page():
             entry.score_adjustment_pct = nursery_score_adjustment_pct(entry.intestinal_score)
         entry.quantity_kg = submitted_quantity_kg
         entry.notes = request.form.get('notes')
+
+        adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
+        plan_for_submission = build_nursery_protocol_for_date(
+            lot,
+            unit,
+            target_date=entry.feed_date,
+            cumulative_factor=adjustment['factor'],
+            correction_events=adjustment['events'],
+        ) if unit and lot else None
+        selected_water_items = selected_nursery_water_items_from_request(plan_for_submission) if plan_for_submission else []
+        entry.water_items_json = json.dumps(selected_water_items, ensure_ascii=False)
+
         entry.updated_at = datetime.utcnow()
         if form_mode != 'edit':
             db.session.add(entry)
         db.session.flush()
         sync_nursery_feed_to_management(entry)
         db.session.commit()
-        flash('Alimentação de berçário salva e integrada ao manejo diário.', 'success')
+        flash('Alimentação de berçário salva e integrada ao manejo diário. Os aditivos marcados também deram baixa no estoque.', 'success')
         return redirect(url_for('nursery_feed_page', feed_date=entry.feed_date.isoformat()))
 
     entries = NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot)).order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc()).limit(60).all()
@@ -10223,6 +10398,7 @@ def nursery_feed_page():
     entry_by_unit_id = {entry.unit_id: entry for entry in NurseryFeeding.query.filter_by(feed_date=selected_date).all()}
     for plan in plans:
         plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
+        plan['water_items_for_form'] = nursery_water_items_for_form(plan, plan['existing_entry'])
     combined_message = '\n\n'.join(plan['message_text'] for plan in plans)
     return render_template('nursery_feed.html', today=local_today(), selected_date=selected_date, nursery_units=nursery_units, entries=entries, edit_entry=edit_entry, plans=plans, combined_message=combined_message)
 
