@@ -372,6 +372,7 @@ button:hover{transform:translateY(-1px)}
 .nav-sublink.active{background:linear-gradient(180deg,#dbeafe 0%, #edf5ff 100%);color:#1d4ed8;font-weight:800}
 .modern-sidebar-footer{background:linear-gradient(180deg,#ffffff 0%, #edf4ff 100%);border-color:#c7d6ea}
 .modern-sidebar-footer .sidebar-label{color:#2563eb}
+.modern-sidebar-footer .sidebar-value{color:#0f172a;font-size:26px;font-weight:900;line-height:1.15;text-shadow:none}
 .modern-sidebar-footer .sidebar-note{color:#475569}
 .modern-sidebar-footer .sidebar-action{background:#1d4ed8;color:#fff}
 
