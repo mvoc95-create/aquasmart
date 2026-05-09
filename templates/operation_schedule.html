@@ -22,7 +22,7 @@
     <a class="secondary-link-button" href="{{ url_for('tv_panel_page', operation_date=selected_date.isoformat()) }}" target="_blank"><i class="fa-solid fa-tv"></i> Abrir Painel TV</a>
     <form method="post" action="{{ url_for('import_nursery_to_operation_schedule') }}">
       <input type="hidden" name="operation_date" value="{{ selected_date.isoformat() }}">
-      <button class="secondary-button" type="submit"><i class="fa-solid fa-shrimp"></i> Puxar alimentação do berçário</button>
+      <button class="secondary-button" type="submit"><i class="fa-solid fa-shrimp"></i> Puxar protocolo do berçário</button>
     </form>
     <a class="secondary-link-button" href="#cadastro-lote-viveiro"><i class="fa-solid fa-list-check"></i> Cadastro rápido por viveiro</a>
     <a class="secondary-link-button" href="#cadastro-semana"><i class="fa-solid fa-calendar-week"></i> Programação semanal</a>
@@ -93,7 +93,7 @@
     <div class="routine-lines-head">
       <div>
         <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Itens do dia</h3>
-        <small>O sistema transforma cada item em uma programação por horário. A quantidade é dividida automaticamente pela frequência.</small>
+        <small>O sistema transforma cada item em uma programação por horário. A quantidade é dividida automaticamente pela frequência; itens de água vinculados ao estoque serão baixados ao concluir o dia.</small>
       </div>
       <button type="button" class="secondary-button" id="add-routine-row"><i class="fa-solid fa-plus"></i> Adicionar item</button>
     </div>

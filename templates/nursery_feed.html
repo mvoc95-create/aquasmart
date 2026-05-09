@@ -47,7 +47,7 @@
     <div>
       <p class="panel-kicker">{{ plan.unit.name }}</p>
       <h2>Lote {{ plan.lot.lot_code }} · PL{{ plan.stage_today }}</h2>
-      <p class="helper-text">Dia {{ plan.day_index }} no berçário · População estimada {{ '{:,.0f}'.format(plan.projected_population).replace(',', '.') }} PL · Biomassa {{ '%.2f'|format(plan.biomass_kg) }} kg</p>
+      <p class="helper-text">{{ plan.protocol_name }} · Dia {{ plan.day_index }} no berçário · População estimada {{ '{:,.0f}'.format(plan.projected_population).replace(',', '.') }} PL · Biomassa {{ '%.2f'|format(plan.biomass_kg) }} kg</p>
     </div>
     <div class="action-row">
       <button type="button" class="secondary-button copy-message-btn" data-copy-target="#msg-{{ plan.unit.id }}">Copiar mensagem</button>
@@ -79,11 +79,24 @@
       </div>
     </div>
     <div>
-      <h3 class="subsection-title">Distribuição do dia</h3>
-      <div class="empty-state nursery-inline-note">
-        <h3>Horários mantidos na mensagem</h3>
-        <p>Os horários e as porções continuam no texto pronto para WhatsApp, mas saíram da tela para deixar o lançamento mais limpo.</p>
+      <h3 class="subsection-title">Manejo da água / controles</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Horário</th><th>Item</th><th>Quantidade</th></tr></thead>
+          <tbody>
+            {% for item in plan.water_items %}
+            <tr>
+              <td>{{ item.scheduled_time }}</td>
+              <td>{{ item.label }}</td>
+              <td>{% if item.quantity is not none %}{{ format_decimal_pt(item.quantity) }} {{ item.measure_unit }}{% else %}Rotina{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="empty-cell">Sem manejo de água/controle configurado para este estágio.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
+      <p class="helper-text">Ao puxar o protocolo para a Rotina do Dia, os itens com insumo vinculado entram como aditivo e baixam estoque quando o dia for concluído.</p>
     </div>
   </div>
 
