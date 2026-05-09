@@ -96,7 +96,7 @@
           </tbody>
         </table>
       </div>
-      <p class="helper-text">Ao puxar o protocolo para a Rotina do Dia, os itens com insumo vinculado entram como aditivo e baixam estoque quando o dia for concluído.</p>
+      <p class="helper-text">Na hora de salvar a alimentação, marque os aditivos de água que realmente foram utilizados. Os marcados entram direto no Manejo Diário e baixam estoque, sem passar pela Rotina do Dia.</p>
     </div>
   </div>
 
@@ -126,6 +126,34 @@
         </label>
       </div>
       <div class="full selection-info score-adjustment-info">O score lançado hoje não altera a alimentação de hoje. A partir de amanhã, o sistema usa o percentual salvo ao lado do score. Sugestão padrão: 0,0–1,0 +30%; 1,1–2,0 +20%; 2,1–3,0 +10%; 3,1–3,5 mantém; 3,6–4,0 -10%.</div>
+
+      <div class="full nursery-water-checks-panel">
+        <div class="water-checks-head">
+          <div>
+            <strong>Aditivos de água utilizados hoje</strong>
+            <span>Marque somente o que foi aplicado. O que ficar marcado entra no Manejo Diário e baixa estoque ao salvar a alimentação.</span>
+          </div>
+        </div>
+        <div class="nursery-water-check-grid">
+          {% set water_ns = namespace(has_checkable=false) %}
+          {% for item in plan.water_items_for_form %}
+            {% if item.is_stock_item %}
+            {% set water_ns.has_checkable = true %}
+            <label class="water-check-card">
+              <input type="checkbox" name="water_item_keys" value="{{ item.form_key }}" {% if item.is_selected %}checked{% endif %}>
+              <span>
+                <strong>{{ item.label }}</strong>
+                <small>{{ item.scheduled_time or 'Sem horário' }} · {{ format_decimal_pt(item.quantity) }} {{ item.measure_unit }} · estoque: {{ item.stock_product_label }}</small>
+              </span>
+            </label>
+            {% endif %}
+          {% endfor %}
+          {% if not water_ns.has_checkable %}
+          <div class="empty-cell water-check-empty">Este estágio não tem aditivo de água com baixa de estoque.</div>
+          {% endif %}
+        </div>
+      </div>
+
       <label class="full">Observações<textarea name="notes">{{ plan.existing_entry.notes if plan.existing_entry else '' }}</textarea></label>
       <div class="form-actions"><button type="submit">{{ 'Salvar alterações' if plan.existing_entry else 'Salvar alimentação' }}</button></div>
     </form>
@@ -150,11 +178,11 @@
 <section class="panel" style="margin-top:1rem;">
   <div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos lançamentos</h2></div></div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Ajuste</th><th>Obs.</th><th></th></tr></thead>
+    <thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Ajuste</th><th>Aditivos água</th><th>Obs.</th><th></th></tr></thead>
     <tbody>
     {% for e in entries %}
-    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ '%.1f'|format(e.intestinal_score) if e.intestinal_score is not none else '—' }}</td><td>{% if e.score_adjustment_pct is not none %}{% if e.score_adjustment_pct > 0 %}+{% endif %}{{ '%.1f'|format(e.score_adjustment_pct) }}%{% else %}—{% endif %}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for('delete_nursery_feed_entry', entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento do berçário? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
-    {% else %}<tr><td colspan="8" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
+    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ '%.1f'|format(e.intestinal_score) if e.intestinal_score is not none else '—' }}</td><td>{% if e.score_adjustment_pct is not none %}{% if e.score_adjustment_pct > 0 %}+{% endif %}{{ '%.1f'|format(e.score_adjustment_pct) }}%{% else %}—{% endif %}</td><td>{{ (nursery_entry_water_items(e)|map(attribute='label')|list|join(', ')) or '—' }}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for('delete_nursery_feed_entry', entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento do berçário? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
+    {% else %}<tr><td colspan="9" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
     </tbody></table></div>
 </section>
 
