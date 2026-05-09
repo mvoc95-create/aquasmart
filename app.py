@@ -7479,14 +7479,32 @@ def dashboard_data():
     latest_weight_map = {lot.id: latest_weight_for_lot(lot, records_by_lot) for lot in active_lots}
     latest_biomass_map = {lot.id: latest_biomass_for_lot(lot, records_by_lot, allocations_by_lot) for lot in active_lots}
     survival_map = {lot.id: survival_estimate_for_lot(lot, records_by_lot) for lot in active_lots}
-    weekly_growth_values = [value for value in (growth_weekly_pct(records_by_lot.get(lot.id, [])) for lot in active_lots) if value is not None]
-    avg_growth_weekly = round(sum(weekly_growth_values) / len(weekly_growth_values), 1) if weekly_growth_values else None
-    avg_weight = round(sum(value for value in latest_weight_map.values() if value is not None) / max(len([value for value in latest_weight_map.values() if value is not None]), 1), 1) if any(value is not None for value in latest_weight_map.values()) else None
-    avg_survival = round(sum(value for value in survival_map.values() if value is not None) / max(len([value for value in survival_map.values() if value is not None]), 1), 1) if any(value is not None for value in survival_map.values()) else None
+    growth_map = {lot.id: growth_weekly_pct(records_by_lot.get(lot.id, [])) for lot in active_lots}
+
+    def active_qty_for_lot(lot: Lot):
+        allocated = sum((allocation.quantity_allocated or 0) for allocation in allocations_by_lot.get(lot.id, []))
+        return allocated if allocated > 0 else (lot.initial_count or 0)
+
+    def weighted_average(weight_value_pairs, digits=1):
+        valid_pairs = [(float(value), float(weight)) for value, weight in weight_value_pairs if value is not None and weight and float(weight) > 0]
+        if not valid_pairs:
+            return None
+        total_weight = sum(weight for _, weight in valid_pairs)
+        if total_weight <= 0:
+            return None
+        weighted_sum = sum(value * weight for value, weight in valid_pairs)
+        return round(weighted_sum / total_weight, digits)
+
+    lot_active_qty_map = {lot.id: active_qty_for_lot(lot) for lot in active_lots}
+    avg_growth_weekly = weighted_average([(growth_map.get(lot.id), lot_active_qty_map.get(lot.id)) for lot in active_lots], digits=1)
+    avg_weight = weighted_average([(latest_weight_map.get(lot.id), lot_active_qty_map.get(lot.id)) for lot in active_lots], digits=1)
+    avg_survival = weighted_average([(survival_map.get(lot.id), lot.initial_count or 0) for lot in active_lots], digits=1)
 
     total_feed_offered_active = round(sum(record.feed_offered_kg or 0 for record in mgmt_records if record.lot_id in active_lot_ids), 1)
     total_biomass_active = round(sum(value for value in latest_biomass_map.values() if value is not None), 1)
-    partial_fcr = round(total_feed_offered_active / total_biomass_active, 2) if total_biomass_active > 0 else None
+    total_initial_biomass_active = round(sum(((lot.initial_count or 0) * (lot.estimated_weight_g or 0)) / 1000 for lot in active_lots), 1)
+    biomass_gain_active = round(max(total_biomass_active - total_initial_biomass_active, 0), 1)
+    partial_fcr = round(total_feed_offered_active / biomass_gain_active, 2) if biomass_gain_active > 0 else None
 
     lot_summaries = [lot_financial_summary(lot) for lot in active_lots]
     total_feed_cost = round(sum(summary['feed_cost'] for summary in lot_summaries), 2)
@@ -7621,13 +7639,26 @@ def dashboard_data():
     movement_rows = movement_rows[:6]
 
     chart_colors = ['#3b82f6', '#22c55e', '#7c3aed', '#f97316']
-    growth_chart_labels = sorted({record.manage_date.strftime('%d/%m') for lot in active_lots[:4] for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None})[-6:]
+    chart_lots = sorted(active_lots, key=lambda lot: lot.start_date, reverse=True)[:4]
+    growth_dates = sorted({record.manage_date for lot in chart_lots for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None and start_date <= record.manage_date <= end_date})
+    if not growth_dates:
+        growth_dates = sorted({record.manage_date for lot in chart_lots for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None})
+    growth_dates = growth_dates[-6:]
+    growth_chart_labels = [point.strftime('%d/%m') for point in growth_dates]
     growth_chart_datasets = []
-    for idx, lot in enumerate(active_lots[:4]):
-        lookup = {record.manage_date.strftime('%d/%m'): round(record.average_weight_g, 2) for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None}
-        if not lookup:
+    for idx, lot in enumerate(chart_lots):
+        lot_records = [record for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None]
+        if not lot_records:
             continue
-        growth_chart_datasets.append({'label': lot.lot_code, 'data': [lookup.get(label) for label in growth_chart_labels], 'borderColor': chart_colors[idx % len(chart_colors)], 'backgroundColor': chart_colors[idx % len(chart_colors)]})
+        lookup = {}
+        for record in lot_records:
+            lookup[record.manage_date] = round(record.average_weight_g, 2)
+        growth_chart_datasets.append({
+            'label': lot.lot_code,
+            'data': [lookup.get(point) for point in growth_dates],
+            'borderColor': chart_colors[idx % len(chart_colors)],
+            'backgroundColor': chart_colors[idx % len(chart_colors)]
+        })
 
     chart_payload = {
         'growth': {'labels': growth_chart_labels, 'datasets': growth_chart_datasets},
