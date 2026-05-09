@@ -569,3 +569,11 @@ button:hover{transform:translateY(-1px)}
 .generated-preview{min-height:auto!important;line-height:1.35!important;word-break:break-word}
 @media (max-width:1450px){.routine-row-fields,.quick-frequency-grid{grid-template-columns:repeat(3,minmax(165px,1fr))}}
 @media (max-width:900px){.routine-row-fields,.quick-frequency-grid{grid-template-columns:1fr}}
+
+.history-panel{padding:16px}
+.history-collapse{margin-bottom:0;background:#fff;border-color:#d9eef0}
+.history-collapse-summary{padding:2px 0}
+.history-collapse[open] .history-collapse-summary{padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.history-collapse:not([open]){box-shadow:none}
+.history-collapse:not([open]) .inline-hint::after{content:'  ▾'}
+.history-collapse[open] .inline-hint::after{content:'  ▴'}
