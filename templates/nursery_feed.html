@@ -62,6 +62,7 @@
     <div class="summary-chip"><strong>{% if plan.per_feeding_min_g != plan.per_feeding_max_g %}{{ '{:,.0f}'.format(plan.per_feeding_min_g).replace(',', '.') }}–{{ '{:,.0f}'.format(plan.per_feeding_max_g).replace(',', '.') }} g{% else %}{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g{% endif %}</strong><span>por porção</span></div>
   </div>
 
+  {% set entry_form_id = 'nursery-entry-form-' ~ plan.unit.id %}
   <div class="grid-2 nursery-main-grid" style="margin-top:1rem; gap:1rem; align-items:start;">
     <div>
       <h3 class="subsection-title">Mix do dia</h3>
@@ -80,23 +81,36 @@
     </div>
     <div>
       <h3 class="subsection-title">Manejo da água / controles</h3>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Horário</th><th>Item</th><th>Quantidade</th></tr></thead>
+      <div class="table-wrap nursery-water-table-wrap">
+        <table class="nursery-water-table">
+          <thead><tr><th>Usou?</th><th>Horário</th><th>Item</th><th>Quantidade</th></tr></thead>
           <tbody>
-            {% for item in plan.water_items %}
-            <tr>
+            {% for item in plan.water_items_for_form %}
+            <tr class="{{ 'water-stock-row' if item.is_stock_item else 'water-control-row' }}">
+              <td class="water-used-cell">
+                {% if item.is_stock_item %}
+                <label class="inline-water-checkbox" title="Marque se este item foi usado hoje">
+                  <input type="checkbox" name="water_item_keys" value="{{ item.form_key }}" form="{{ entry_form_id }}" {% if item.is_selected %}checked{% endif %}>
+                  <span></span>
+                </label>
+                {% else %}
+                <span class="water-control-badge">controle</span>
+                {% endif %}
+              </td>
               <td>{{ item.scheduled_time }}</td>
-              <td>{{ item.label }}</td>
+              <td>
+                <strong>{{ item.label }}</strong>
+                {% if item.is_stock_item %}<small>baixa: {{ item.stock_product_label }}</small>{% endif %}
+              </td>
               <td>{% if item.quantity is not none %}{{ format_decimal_pt(item.quantity) }} {{ item.measure_unit }}{% else %}Rotina{% endif %}</td>
             </tr>
             {% else %}
-            <tr><td colspan="3" class="empty-cell">Sem manejo de água/controle configurado para este estágio.</td></tr>
+            <tr><td colspan="4" class="empty-cell">Sem manejo de água/controle configurado para este estágio.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-      <p class="helper-text">Na hora de salvar a alimentação, marque os aditivos de água que realmente foram utilizados. Os marcados entram direto no Manejo Diário e baixam estoque, sem passar pela Rotina do Dia.</p>
+      <p class="helper-text">Os aditivos já aparecem com caixa de marcação nesta tabela. Quando a caixa ficar marcada e você salvar a alimentação, o item entra no Manejo Diário e baixa estoque automaticamente.</p>
     </div>
   </div>
 
@@ -108,7 +122,7 @@
         <p class="helper-text">Aqui é onde você confirma o que realmente foi ofertado no berçário.</p>
       </div>
     </div>
-    <form method="post" class="form-grid compact-grid nursery-entry-form">
+    <form method="post" id="{{ entry_form_id }}" class="form-grid compact-grid nursery-entry-form">
       <input type="hidden" name="form_mode" value="{{ 'edit' if plan.existing_entry else 'create' }}">
       {% if plan.existing_entry %}<input type="hidden" name="entry_id" value="{{ plan.existing_entry.id }}">{% endif %}
       <input type="hidden" name="feed_date" value="{{ selected_date.isoformat() }}">
@@ -127,32 +141,7 @@
       </div>
       <div class="full selection-info score-adjustment-info">O score lançado hoje não altera a alimentação de hoje. A partir de amanhã, o sistema usa o percentual salvo ao lado do score. Sugestão padrão: 0,0–1,0 +30%; 1,1–2,0 +20%; 2,1–3,0 +10%; 3,1–3,5 mantém; 3,6–4,0 -10%.</div>
 
-      <div class="full nursery-water-checks-panel">
-        <div class="water-checks-head">
-          <div>
-            <strong>Aditivos de água utilizados hoje</strong>
-            <span>Marque somente o que foi aplicado. O que ficar marcado entra no Manejo Diário e baixa estoque ao salvar a alimentação.</span>
-          </div>
-        </div>
-        <div class="nursery-water-check-grid">
-          {% set water_ns = namespace(has_checkable=false) %}
-          {% for item in plan.water_items_for_form %}
-            {% if item.is_stock_item %}
-            {% set water_ns.has_checkable = true %}
-            <label class="water-check-card">
-              <input type="checkbox" name="water_item_keys" value="{{ item.form_key }}" {% if item.is_selected %}checked{% endif %}>
-              <span>
-                <strong>{{ item.label }}</strong>
-                <small>{{ item.scheduled_time or 'Sem horário' }} · {{ format_decimal_pt(item.quantity) }} {{ item.measure_unit }} · estoque: {{ item.stock_product_label }}</small>
-              </span>
-            </label>
-            {% endif %}
-          {% endfor %}
-          {% if not water_ns.has_checkable %}
-          <div class="empty-cell water-check-empty">Este estágio não tem aditivo de água com baixa de estoque.</div>
-          {% endif %}
-        </div>
-      </div>
+      <div class="full selection-info nursery-water-inline-info">A marcação dos aditivos de água fica na tabela <strong>Manejo da água / controles</strong>, logo acima. Deixe marcado apenas o que foi utilizado no dia.</div>
 
       <label class="full">Observações<textarea name="notes">{{ plan.existing_entry.notes if plan.existing_entry else '' }}</textarea></label>
       <div class="form-actions"><button type="submit">{{ 'Salvar alterações' if plan.existing_entry else 'Salvar alimentação' }}</button></div>
