@@ -527,3 +527,22 @@ button:hover{transform:translateY(-1px)}
 .routine-table-wrap table th:nth-child(6),.routine-table-wrap table td:nth-child(6){min-width:250px}.routine-table-wrap table th:nth-child(8),.routine-table-wrap table td:nth-child(8){min-width:150px}
 @media (max-width:1450px){.compact-selected-unit-panel{grid-template-columns:1fr}.quick-frequency-grid{grid-template-columns:repeat(3,minmax(130px,1fr))}.quick-frequency-grid .wide{grid-column:span 2}}
 @media (max-width:900px){.quick-frequency-grid{grid-template-columns:1fr}.quick-frequency-grid .wide,.quick-frequency-grid .full{grid-column:1}.quick-frequency-legend{display:grid}.quick-frequency-row{grid-template-columns:1fr}.routine-row-number{width:100%;height:30px}}
+
+/* Ajustes da rotina diária: evita campos cortados e deixa o cadastro crescer item por item. */
+.routine-form-card,.routine-unit-batch-form,.routine-lines,.routine-batch-row{overflow:visible}
+.routine-row-fields input,.routine-row-fields select,.quick-frequency-grid input,.quick-frequency-grid select{min-height:42px;line-height:1.25}
+.routine-row-fields label,.quick-frequency-grid label{line-height:1.25}
+.routine-batch-row{padding-bottom:16px}
+
+/* Alimentação do berçário: checkboxes dos aditivos de água que baixam estoque direto pelo lançamento real. */
+.nursery-water-checks-panel{border:1px solid #cbeff2;background:#f7ffff;border-radius:16px;padding:12px 14px}
+.water-checks-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px}
+.water-checks-head strong{display:block;color:#07565b;font-size:15px}
+.water-checks-head span{display:block;color:#64748b;font-size:12px;font-weight:700;margin-top:2px}
+.nursery-water-check-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px}
+.water-check-card{display:flex!important;align-items:flex-start;gap:10px;border:1px solid #dbeafe;background:#fff;border-radius:14px;padding:10px 12px;margin:0!important;cursor:pointer}
+.water-check-card input{width:18px!important;height:18px!important;min-height:18px!important;margin-top:2px;flex:0 0 auto}
+.water-check-card strong{display:block;color:#0f172a;font-size:14px}
+.water-check-card small{display:block;color:#64748b;font-weight:700;line-height:1.3;margin-top:2px}
+.water-check-empty{grid-column:1/-1}
+@media (max-width:900px){.nursery-water-check-grid{grid-template-columns:1fr}}
