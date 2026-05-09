@@ -1,0 +1,244 @@
+{% extends 'base.html' %}
+{% block page_title %}Alimentação berçário{% endblock %}
+{% block page_subtitle %}Organizei esta tela para separar melhor o planejamento, o lançamento real e a mensagem do WhatsApp.{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <p class="panel-kicker">Data de trabalho</p>
+      <h2>Planejamento automático do berçário</h2>
+      <p class="helper-text">Veja o protocolo do dia, salve o lançamento real e, se precisar, abra a mensagem pronta para o WhatsApp.</p>
+    </div>
+  </div>
+  <form method="get" class="form-grid compact-grid nursery-toolbar-form">
+    <label>Data da programação<input type="date" name="feed_date" value="{{ selected_date.isoformat() }}"></label>
+    <div class="form-actions"><button type="submit">Atualizar planejamento</button></div>
+  </form>
+
+  {% if plans %}
+  <div class="nursery-overview-row">
+    <div class="summary-chip"><strong>{{ plans|length }}</strong><span>berçário{% if plans|length != 1 %}s{% endif %} ativo{% if plans|length != 1 %}s{% endif %}</span></div>
+    <div class="summary-chip"><strong>{{ '%.3f'|format((plans|sum(attribute='total_day_kg'))) }}</strong><span>kg programados no dia</span></div>
+  </div>
+  {% endif %}
+
+  {% if combined_message %}
+  <details class="reference-collapse nursery-collapse" style="margin-top:1rem;">
+    <summary class="reference-collapse-summary">
+      <div>
+        <p class="panel-kicker">Resumo consolidado</p>
+        <h2>Mensagem única do dia</h2>
+      </div>
+      <span class="inline-hint">Abrir</span>
+    </summary>
+    <div class="action-row nursery-copy-row">
+      <button type="button" class="secondary-button copy-message-btn" data-copy-target="#combined-message">Copiar mensagem consolidada do dia</button>
+      <span class="helper-text">Usa todos os berçários ativos do dia.</span>
+    </div>
+    <textarea id="combined-message" class="message-preview" readonly>{{ combined_message }}</textarea>
+  </details>
+  {% endif %}
+</section>
+
+<div class="panel-stack" style="margin-top:1rem;">
+{% for plan in plans %}
+<section class="panel nursery-plan-panel">
+  <div class="panel-head nursery-plan-head">
+    <div>
+      <p class="panel-kicker">{{ plan.unit.name }}</p>
+      <h2>Lote {{ plan.lot.lot_code }} · PL{{ plan.stage_today }}</h2>
+      <p class="helper-text">{{ plan.protocol_name }} · Dia {{ plan.day_index }} no berçário · População estimada {{ '{:,.0f}'.format(plan.projected_population).replace(',', '.') }} PL · Biomassa {{ '%.2f'|format(plan.biomass_kg) }} kg</p>
+    </div>
+    <div class="action-row">
+      <button type="button" class="secondary-button copy-message-btn" data-copy-target="#msg-{{ plan.unit.id }}">Copiar mensagem</button>
+    </div>
+  </div>
+
+  <div class="nursery-summary-strip">
+    <div class="summary-chip"><strong>{{ '%.2f'|format(plan.feed_rate_pct) }}%</strong><span>taxa de alimentação</span></div>
+    <div class="summary-chip"><strong>{{ '{:,.0f}'.format(plan.total_day_g).replace(',', '.') }} g</strong><span>{{ '%.3f'|format(plan.total_day_kg) }} kg no dia</span></div>
+    <div class="summary-chip"><strong>{{ plan.score_factor_label }}</strong><span>correção acumulada{% if plan.intestinal_score is not none %} · último score {{ '%.1f'|format(plan.intestinal_score) }}{% endif %}{% if plan.correction_source_date %} de {{ plan.correction_source_date|brdate }}{% endif %}</span></div>
+    <div class="summary-chip"><strong>{{ plan.feedings_per_day }}</strong><span>alimentações no dia</span></div>
+    <div class="summary-chip"><strong>{% if plan.per_feeding_min_g != plan.per_feeding_max_g %}{{ '{:,.0f}'.format(plan.per_feeding_min_g).replace(',', '.') }}–{{ '{:,.0f}'.format(plan.per_feeding_max_g).replace(',', '.') }} g{% else %}{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g{% endif %}</strong><span>por porção</span></div>
+  </div>
+
+  {% set entry_form_id = 'nursery-entry-form-' ~ plan.unit.id %}
+  <div class="grid-2 nursery-main-grid" style="margin-top:1rem; gap:1rem; align-items:start;">
+    <div>
+      <h3 class="subsection-title">Mix do dia</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Produto</th><th>Quantidade</th></tr></thead>
+          <tbody>
+            {% for item in plan.mixes %}
+            <tr><td>{{ item.label }}</td><td>{{ '{:,.0f}'.format(item.grams).replace(',', '.') }} g</td></tr>
+            {% else %}
+            <tr><td colspan="2" class="empty-cell">Sem mistura configurada para este estágio.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h3 class="subsection-title">Manejo da água / controles</h3>
+      <div class="table-wrap nursery-water-table-wrap">
+        <table class="nursery-water-table">
+          <thead><tr><th>Usou?</th><th>Horário</th><th>Item</th><th>Quantidade</th></tr></thead>
+          <tbody>
+            {% for item in plan.water_items_for_form %}
+            <tr class="{{ 'water-stock-row' if item.is_stock_item else 'water-control-row' }}">
+              <td class="water-used-cell">
+                {% if item.is_stock_item %}
+                <label class="inline-water-checkbox" title="Marque se este item foi usado hoje">
+                  <input type="checkbox" name="water_item_keys" value="{{ item.form_key }}" form="{{ entry_form_id }}" {% if item.is_selected %}checked{% endif %}>
+                  <span></span>
+                </label>
+                {% else %}
+                <span class="water-control-badge">controle</span>
+                {% endif %}
+              </td>
+              <td>{{ item.scheduled_time }}</td>
+              <td>
+                <strong>{{ item.label }}</strong>
+                {% if item.is_stock_item %}<small>baixa: {{ item.stock_product_label }}</small>{% endif %}
+              </td>
+              <td>{% if item.quantity is not none %}{{ format_decimal_pt(item.quantity) }} {{ item.measure_unit }}{% else %}Rotina{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="empty-cell">Sem manejo de água/controle configurado para este estágio.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="helper-text">Os aditivos já aparecem com caixa de marcação nesta tabela. Quando a caixa ficar marcada e você salvar a alimentação, o item entra no Manejo Diário e baixa estoque automaticamente.</p>
+    </div>
+  </div>
+
+  <section class="panel panel-soft nursery-entry-panel" style="margin-top:1rem;">
+    <div class="panel-head">
+      <div>
+        <p class="panel-kicker">Lançamento real</p>
+        <h3>{{ 'Editar alimentação salva' if plan.existing_entry else 'Salvar alimentação do dia' }}</h3>
+        <p class="helper-text">Aqui é onde você confirma o que realmente foi ofertado no berçário.</p>
+      </div>
+    </div>
+    <form method="post" id="{{ entry_form_id }}" class="form-grid compact-grid nursery-entry-form">
+      <input type="hidden" name="form_mode" value="{{ 'edit' if plan.existing_entry else 'create' }}">
+      {% if plan.existing_entry %}<input type="hidden" name="entry_id" value="{{ plan.existing_entry.id }}">{% endif %}
+      <input type="hidden" name="feed_date" value="{{ selected_date.isoformat() }}">
+      <input type="hidden" name="unit_id" value="{{ plan.unit.id }}">
+      <input type="hidden" name="lot_id" value="{{ plan.lot.id }}">
+      <label>Quantidade real do dia (kg)<input type="number" step="0.001" name="quantity_kg" value="{{ plan.existing_entry.quantity_kg if plan.existing_entry else plan.total_day_kg }}" required></label>
+      <div class="score-adjustment-row full">
+        <label>Score intestinal (0,0 a 4,0)
+          <input type="number" step="0.1" min="0" max="4" name="intestinal_score" class="intestinal-score-input" value="{{ '%.1f'|format(plan.existing_entry.intestinal_score) if plan.existing_entry and plan.existing_entry.intestinal_score is not none else '' }}" placeholder="Ex.: 2,9">
+        </label>
+        {% set existing_adjustment = plan.existing_entry.score_adjustment_pct if plan.existing_entry and plan.existing_entry.score_adjustment_pct is not none else none %}
+        <label>Ajuste da ração para amanhã (%)
+          <input type="number" step="0.1" name="score_adjustment_pct" class="score-adjustment-input" value="{{ '%.1f'|format(existing_adjustment) if existing_adjustment is not none else '' }}" placeholder="Ex.: 0 ou 10">
+          <span class="helper-text">Preenche automático pelo score, mas pode ser alterado antes de salvar.</span>
+        </label>
+      </div>
+      <div class="full selection-info score-adjustment-info">O score lançado hoje não altera a alimentação de hoje. A partir de amanhã, o sistema usa o percentual salvo ao lado do score. Sugestão padrão: 0,0–1,0 +30%; 1,1–2,0 +20%; 2,1–3,0 +10%; 3,1–3,5 mantém; 3,6–4,0 -10%.</div>
+
+      <div class="full selection-info nursery-water-inline-info">A marcação dos aditivos de água fica na tabela <strong>Manejo da água / controles</strong>, logo acima. Deixe marcado apenas o que foi utilizado no dia.</div>
+
+      <label class="full">Observações<textarea name="notes">{{ plan.existing_entry.notes if plan.existing_entry else '' }}</textarea></label>
+      <div class="form-actions"><button type="submit">{{ 'Salvar alterações' if plan.existing_entry else 'Salvar alimentação' }}</button></div>
+    </form>
+  </section>
+
+  <details class="reference-collapse nursery-collapse">
+    <summary class="reference-collapse-summary">
+      <div>
+        <p class="panel-kicker">Mensagem</p>
+        <h2>Texto pronto para WhatsApp</h2>
+      </div>
+      <span class="inline-hint">Abrir</span>
+    </summary>
+    <textarea id="msg-{{ plan.unit.id }}" class="message-preview message-preview-compact" readonly>{{ plan.message_text }}</textarea>
+  </details>
+</section>
+{% else %}
+<section class="panel"><div class="empty-state"><h3>Nenhum berçário ativo pronto para calcular</h3><p>Confira se há lotes ativos alocados em unidades de berçário e se o lote tem a idade inicial da PL preenchida.</p></div></section>
+{% endfor %}
+</div>
+
+<section class="panel" style="margin-top:1rem;">
+  <div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos lançamentos</h2></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Ajuste</th><th>Aditivos água</th><th>Obs.</th><th></th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ '%.1f'|format(e.intestinal_score) if e.intestinal_score is not none else '—' }}</td><td>{% if e.score_adjustment_pct is not none %}{% if e.score_adjustment_pct > 0 %}+{% endif %}{{ '%.1f'|format(e.score_adjustment_pct) }}%{% else %}—{% endif %}</td><td>{{ (nursery_entry_water_items(e)|map(attribute='label')|list|join(', ')) or '—' }}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for('delete_nursery_feed_entry', entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento do berçário? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
+    {% else %}<tr><td colspan="9" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+
+<script>
+function suggestedNurseryAdjustmentPct(score) {
+  const value = Number.parseFloat(String(score || '').replace(',', '.'));
+  if (Number.isNaN(value)) return '';
+  if (value >= 0 && value <= 1.0) return '30';
+  if (value <= 2.0) return '20';
+  if (value <= 3.0) return '10';
+  if (value <= 3.5) return '0';
+  if (value <= 4.0) return '-10';
+  return '';
+}
+
+function formatAdjustmentLabel(value) {
+  const number = Number.parseFloat(String(value || '').replace(',', '.'));
+  if (Number.isNaN(number)) return 'sem ajuste definido';
+  if (number > 0) return `+${number}%`;
+  if (number < 0) return `${number}%`;
+  return 'sem ajuste';
+}
+
+document.querySelectorAll('.nursery-entry-form').forEach((form) => {
+  const scoreInput = form.querySelector('.intestinal-score-input');
+  const adjustmentInput = form.querySelector('.score-adjustment-input');
+  const info = form.querySelector('.score-adjustment-info');
+  if (!scoreInput || !adjustmentInput) return;
+
+  const fillSuggestedAdjustment = (force = false) => {
+    const suggestion = suggestedNurseryAdjustmentPct(scoreInput.value);
+    if (suggestion === '') return;
+    if (force || !adjustmentInput.dataset.manualEdited) {
+      adjustmentInput.value = suggestion;
+    }
+    if (info) {
+      info.textContent = `Sugestão pelo score: ${formatAdjustmentLabel(suggestion)}. Você pode manter essa sugestão ou editar o percentual antes de salvar. Esse ajuste só entra a partir de amanhã.`;
+    }
+  };
+
+  adjustmentInput.addEventListener('input', () => {
+    adjustmentInput.dataset.manualEdited = 'true';
+    if (info) {
+      info.textContent = `Ajuste manual definido: ${formatAdjustmentLabel(adjustmentInput.value)}. O sistema vai usar este percentual salvo para corrigir a ração a partir de amanhã.`;
+    }
+  });
+
+  scoreInput.addEventListener('input', () => fillSuggestedAdjustment(false));
+
+  if (scoreInput.value && !adjustmentInput.value) {
+    fillSuggestedAdjustment(true);
+  }
+});
+
+document.addEventListener('click', async (event) => {
+  const btn = event.target.closest('.copy-message-btn');
+  if (!btn) return;
+  const target = document.querySelector(btn.dataset.copyTarget);
+  if (!target) return;
+  try {
+    await navigator.clipboard.writeText(target.value || target.textContent || '');
+    const original = btn.textContent;
+    btn.textContent = 'Mensagem copiada';
+    setTimeout(() => btn.textContent = original, 1800);
+  } catch (error) {
+    alert('Não consegui copiar automaticamente. Tente novamente.');
+  }
+});
+</script>
+{% endblock %}
