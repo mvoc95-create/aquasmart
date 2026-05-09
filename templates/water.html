@@ -215,8 +215,12 @@
 </section>
 </div>
 
-<section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Leituras recentes</h2></div></div>
+<section class="panel history-panel">
+<details class="reference-collapse history-collapse" {% if edit_record %}open{% endif %}>
+<summary class="reference-collapse-summary history-collapse-summary">
+  <div><p class="panel-kicker">Histórico</p><h2>Leituras recentes</h2></div>
+  <span class="inline-hint">Clique para abrir ou recolher</span>
+</summary>
 <form method="get" class="form-grid compact-form history-toolbar">
   <label>Filtrar por viveiro
     <select name="unit_id">
@@ -300,5 +304,6 @@
   </div>
 </form>
 {% endif %}
+</details>
 </section>
 {% endblock %}

@@ -78,8 +78,12 @@
 <div id="copy-previous-message" class="copy-message" hidden></div>
 </section>
 
-<section class="panel">
-<div class="panel-head"><div><p class="panel-kicker">Últimos registros</p><h2>Histórico recente</h2></div></div>
+<section class="panel history-panel">
+<details class="reference-collapse history-collapse" {% if edit_record %}open{% endif %}>
+<summary class="reference-collapse-summary history-collapse-summary">
+  <div><p class="panel-kicker">Últimos registros</p><h2>Histórico recente</h2></div>
+  <span class="inline-hint">Clique para abrir ou recolher</span>
+</summary>
 <form method="get" class="history-toolbar form-grid compact-form">
   <label>Filtrar por viveiro
     <select name="unit_id" onchange="this.form.submit()">
@@ -187,6 +191,7 @@
   </div>
 </form>
 {% endif %}
+</details>
 </section>
 </div>
 
