@@ -8576,11 +8576,22 @@ def convert_quantity_between_units(quantity, from_unit, to_unit):
     target = canonical_measure_unit(to_unit)
     if source == target:
         return value
+    # Conversões diretas entre massa e volume usando densidade 1:1.
+    # Isso permite baixar, por exemplo, Melaço lançado em gramas no protocolo
+    # contra estoque cadastrado em litros: 600 g -> 0,6 L.
     conversions = {
         ('g', 'kg'): value / 1000,
         ('kg', 'g'): value * 1000,
         ('mL', 'L'): value / 1000,
         ('L', 'mL'): value * 1000,
+        ('g', 'mL'): value,
+        ('mL', 'g'): value,
+        ('kg', 'L'): value,
+        ('L', 'kg'): value,
+        ('g', 'L'): value / 1000,
+        ('L', 'g'): value * 1000,
+        ('kg', 'mL'): value * 1000,
+        ('mL', 'kg'): value / 1000,
     }
     return conversions.get((source, target))
 
