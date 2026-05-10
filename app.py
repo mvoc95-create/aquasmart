@@ -5,7 +5,7 @@ import os
 import re
 import unicodedata
 from zoneinfo import ZoneInfo
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from functools import wraps
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -9002,6 +9002,7 @@ def operation_schedule_page():
     )
     completed_task_ids = completed_operation_task_ids(selected_date)
     stock_warnings = operation_stock_warnings(tasks, completed_task_ids)
+    operation_unit_cards = build_operation_unit_cards(tasks, completed_task_ids)
     return render_template(
         'operation_schedule.html',
         selected_date=selected_date,
@@ -9011,6 +9012,7 @@ def operation_schedule_page():
         feed_stock_map=feed_stock_map,
         supply_stock_map=supply_stock_map,
         tasks=tasks,
+        operation_unit_cards=operation_unit_cards,
         completed_task_ids=completed_task_ids,
         stock_warnings=stock_warnings,
         week_end_date=selected_date + timedelta(days=6),
@@ -9146,6 +9148,137 @@ def delete_auto_tray_check_for_feeding_task(task):
         db.session.delete(auto_task)
         return True
     return False
+
+def build_operation_unit_cards(tasks, completed_task_ids=None):
+    """Agrupa a Rotina do Dia por viveiro/berçário para evitar uma lista sem fim por horário."""
+    completed_task_ids = completed_task_ids or set()
+    colors = ['green', 'blue', 'orange', 'purple', 'teal', 'pink']
+    grouped = OrderedDict()
+
+    for task in tasks:
+        key = task.unit_id or 'general'
+        if key not in grouped:
+            unit_name = task.unit.name if task.unit else 'Geral'
+            phase = (getattr(task.unit, 'phase', '') or '').capitalize() if task.unit else 'Geral'
+            grouped[key] = {
+                'key': key,
+                'unit': task.unit,
+                'unit_name': unit_name,
+                'phase': phase,
+                'color': colors[(len(grouped)) % len(colors)],
+                'task_ids': [],
+                'completed_ids': [],
+                'pending_ids': [],
+                'times': [],
+                'priority_order': 9,
+                'priority': 'media',
+                'feeding_map': OrderedDict(),
+                'additive_map': OrderedDict(),
+                'activity_map': OrderedDict(),
+            }
+
+        card = grouped[key]
+        card['task_ids'].append(task.id)
+        if task.id in completed_task_ids:
+            card['completed_ids'].append(task.id)
+        else:
+            card['pending_ids'].append(task.id)
+        if task.scheduled_time:
+            card['times'].append(task.scheduled_time.strftime('%H:%M'))
+        if (task.priority_order or 9) < card['priority_order']:
+            card['priority_order'] = task.priority_order or 9
+            card['priority'] = task.priority
+
+        if task.category in ('alimentacao', 'bercario'):
+            label = feed_label_for_task(task)
+            bucket = card['feeding_map'].setdefault(label, {
+                'label': label,
+                'count': 0,
+                'quantity': task.quantity,
+                'measure_unit': task.measure_unit or 'kg',
+                'quantity_label': quantity_label_for_task(task),
+                'total_quantity': 0.0,
+                'can_sum': True,
+                'frequency': task.frequency,
+            })
+            bucket['count'] += 1
+            if not bucket.get('frequency') and task.frequency:
+                bucket['frequency'] = task.frequency
+            try:
+                if canonical_measure_unit(task.measure_unit or bucket['measure_unit']) == canonical_measure_unit(bucket['measure_unit']):
+                    bucket['total_quantity'] += float(task.quantity or 0)
+                else:
+                    bucket['can_sum'] = False
+            except (TypeError, ValueError):
+                bucket['can_sum'] = False
+
+        elif task.category == 'aditivo':
+            label = supply_label_for_task(task)
+            bucket = card['additive_map'].setdefault(label, {
+                'label': label,
+                'count': 0,
+                'quantity': task.quantity,
+                'measure_unit': task.measure_unit or 'kg',
+                'quantity_label': quantity_label_for_task(task),
+                'total_quantity': 0.0,
+                'can_sum': True,
+                'frequency': task.frequency,
+            })
+            bucket['count'] += 1
+            if not bucket.get('frequency') and task.frequency:
+                bucket['frequency'] = task.frequency
+            try:
+                if canonical_measure_unit(task.measure_unit or bucket['measure_unit']) == canonical_measure_unit(bucket['measure_unit']):
+                    bucket['total_quantity'] += float(task.quantity or 0)
+                else:
+                    bucket['can_sum'] = False
+            except (TypeError, ValueError):
+                bucket['can_sum'] = False
+
+        else:
+            title = 'Verificar bandeja' if AUTO_TRAY_CHECK_MARKER in (task.notes or '') else (task.title or operation_category_label(task.category))
+            bucket = card['activity_map'].setdefault(title, {
+                'title': title,
+                'count': 0,
+                'category': operation_category_label(task.category),
+                'next_time': None,
+                'priority': task.priority,
+            })
+            bucket['count'] += 1
+            if task.scheduled_time and not bucket['next_time']:
+                bucket['next_time'] = task.scheduled_time.strftime('%H:%M')
+
+    cards = []
+    for card in grouped.values():
+        feeding = []
+        for item in card['feeding_map'].values():
+            if item['can_sum'] and item['count'] > 1:
+                item['total_label'] = f"{format_decimal_pt(item['total_quantity'])} {item['measure_unit']}"
+            else:
+                item['total_label'] = item['quantity_label'] or '-'
+            item['frequency_label'] = item.get('frequency') or f"{item['count']}x hoje"
+            feeding.append(item)
+
+        additives = []
+        for item in card['additive_map'].values():
+            if item['can_sum'] and item['count'] > 1:
+                item['total_label'] = f"{format_decimal_pt(item['total_quantity'])} {item['measure_unit']}"
+            else:
+                item['total_label'] = item['quantity_label'] or '-'
+            item['frequency_label'] = item.get('frequency') or f"{item['count']}x hoje"
+            additives.append(item)
+
+        activities = list(card['activity_map'].values())
+        card['feeding'] = feeding
+        card['additives'] = additives
+        card['activities'] = activities
+        card['times'] = sorted(set(card['times']))
+        card['pending_count'] = len(card['pending_ids'])
+        card['completed_count'] = len(card['completed_ids'])
+        card['status_label'] = 'Concluído' if card['pending_count'] == 0 and card['task_ids'] else 'Pendente'
+        cards.append(card)
+
+    return cards
 
 
 @app.post('/operation-schedule/batch-day')
