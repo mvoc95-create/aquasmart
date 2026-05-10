@@ -8705,6 +8705,153 @@ def task_payload(task):
     }
 
 
+
+TV_UNIT_COLOR_CLASSES = ['green', 'blue', 'orange', 'purple', 'teal', 'pink']
+
+
+def tv_unit_color_map(unit_names):
+    mapping = {}
+    for idx, name in enumerate(sorted([u for u in unit_names if u])):
+        mapping[name] = TV_UNIT_COLOR_CLASSES[idx % len(TV_UNIT_COLOR_CLASSES)]
+    return mapping
+
+
+def smart_quantity_from_kg(value_kg):
+    if value_kg is None:
+        return ''
+    if abs(value_kg) >= 1:
+        return f"{format_decimal_pt(value_kg)} kg"
+    return f"{format_integer_pt(round(value_kg * 1000))} g"
+
+
+def group_tv_feeding_by_unit(tasks, color_map=None):
+    color_map = color_map or {}
+    grouped = {}
+    for task in tasks:
+        unit_label = task_display_unit(task)
+        entry = grouped.setdefault(unit_label, {
+            'unit': unit_label,
+            'color': color_map.get(unit_label, 'green'),
+            'feeds': {},
+            'times': [],
+        })
+        if task.scheduled_time:
+            entry['times'].append(task.scheduled_time.strftime('%H:%M'))
+        feed_label = feed_label_for_task(task)
+        key = (feed_label, task.measure_unit or 'kg')
+        feed = entry['feeds'].setdefault(key, {
+            'label': feed_label,
+            'measure_unit': task.measure_unit or 'kg',
+            'per_offer_label': quantity_label_for_task(task),
+            'count': 0,
+            'total_kg': 0.0,
+        })
+        feed['count'] += 1
+        qty_kg = feed_quantity_kg_for_task(task)
+        if qty_kg is not None:
+            feed['total_kg'] += qty_kg
+    rows = []
+    for unit_label, entry in grouped.items():
+        feed_items = []
+        for feed in entry['feeds'].values():
+            feed_items.append({
+                'label': feed['label'],
+                'per_offer_label': feed['per_offer_label'],
+                'frequency_label': f"{feed['count']}x ao dia",
+                'total_label': smart_quantity_from_kg(feed['total_kg']),
+            })
+        rows.append({
+            'unit': entry['unit'],
+            'color': entry['color'],
+            'feed_items': sorted(feed_items, key=lambda item: item['label']),
+            'times_label': ' • '.join(sorted(set(entry['times']))) if entry['times'] else 'Sem horário fixo',
+        })
+    return sorted(rows, key=lambda row: row['unit'])
+
+
+def group_tv_additives_by_unit(tasks, color_map=None):
+    color_map = color_map or {}
+    grouped = {}
+    for task in tasks:
+        unit_label = task_display_unit(task)
+        entry = grouped.setdefault(unit_label, {
+            'unit': unit_label,
+            'color': color_map.get(unit_label, 'purple'),
+            'items': {},
+        })
+        title = supply_label_for_task(task)
+        unit = task.measure_unit or (task.supply_product.measure_unit if task.supply_product else '') or ''
+        key = (title, unit)
+        item = entry['items'].setdefault(key, {
+            'title': title,
+            'measure_unit': unit,
+            'quantity': 0.0,
+            'count': 0,
+            'times': [],
+        })
+        item['quantity'] += task.quantity or 0
+        item['count'] += 1
+        if task.scheduled_time:
+            item['times'].append(task.scheduled_time.strftime('%H:%M'))
+    rows = []
+    for unit_label, entry in grouped.items():
+        items = []
+        for item in entry['items'].values():
+            qty_label = f"{format_decimal_pt(item['quantity'])} {item['measure_unit']}".strip()
+            items.append({
+                'title': item['title'],
+                'quantity_label': qty_label,
+                'count_label': f"{item['count']}x",
+                'times_label': ' • '.join(sorted(set(item['times']))),
+            })
+        rows.append({
+            'unit': entry['unit'],
+            'color': entry['color'],
+            'items': sorted(items, key=lambda item: item['title']),
+        })
+    return sorted(rows, key=lambda row: row['unit'])
+
+
+def group_tv_activities(tasks, completed_ids=None, color_map=None):
+    color_map = color_map or {}
+    completed_ids = completed_ids or set()
+    grouped = {}
+    for task in tasks:
+        unit_label = task_display_unit(task)
+        key = (task.title, unit_label, task.priority)
+        entry = grouped.setdefault(key, {
+            'title': task.title,
+            'unit': unit_label,
+            'color': color_map.get(unit_label, 'orange'),
+            'priority': task.priority,
+            'priority_label': operation_priority_label(task.priority),
+            'priority_order': task.priority_order or OPERATION_PRIORITY_ORDER.get(task.priority, 3),
+            'times': [],
+            'pending_times': [],
+            'count': 0,
+        })
+        entry['count'] += 1
+        if task.scheduled_time:
+            time_label = task.scheduled_time.strftime('%H:%M')
+            entry['times'].append(time_label)
+            if task.id not in completed_ids:
+                entry['pending_times'].append(time_label)
+    rows = []
+    for entry in grouped.values():
+        next_time = sorted(entry['pending_times'] or entry['times'])
+        rows.append({
+            'title': entry['title'],
+            'unit': entry['unit'],
+            'color': entry['color'],
+            'priority': entry['priority'],
+            'priority_label': entry['priority_label'],
+            'priority_order': entry['priority_order'],
+            'frequency_label': f"{entry['count']}x hoje",
+            'next_time': next_time[0] if next_time else '--:--',
+        })
+    return sorted(rows, key=lambda row: (row['priority_order'], row['next_time'], row['title'], row['unit']))
+
+
 def group_tv_feeding_rows(tasks):
     grouped = defaultdict(lambda: defaultdict(list))
     for task in tasks:
@@ -8745,11 +8892,16 @@ def build_tv_dashboard_data(target_date):
                 nursery_total_g += qty_g
     completed_count = len([t for t in tasks if t.id in completed_ids])
     pending_count = len([t for t in tasks if t.id not in completed_ids])
+    all_units = {task_display_unit(t) for t in feeding_tasks + additive_tasks + routine_tasks}
+    unit_colors = tv_unit_color_map(all_units)
     return {
         'tasks': tasks,
         'feeding_rows': group_tv_feeding_rows(feeding_tasks),
+        'feeding_by_unit': group_tv_feeding_by_unit(feeding_tasks, unit_colors),
         'additives': [task_payload(t) for t in additive_tasks],
+        'additives_by_unit': group_tv_additives_by_unit(additive_tasks, unit_colors),
         'priority_routines': [task_payload(t) for t in priority_routines],
+        'activities_by_unit': group_tv_activities(priority_routines, completed_ids, unit_colors),
         'priority_current': task_payload(priority_current) if priority_current else None,
         'total_feed_kg': round(total_feed_kg, 1),
         'nursery_total_g': round(nursery_total_g, 0),
