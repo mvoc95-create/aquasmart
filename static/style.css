@@ -691,3 +691,18 @@ button:hover{transform:translateY(-1px)}
 @media (max-width:1600px){.clean-entry-grid{grid-template-columns:repeat(4,minmax(150px,1fr)) 44px}.clean-field-wide{grid-column:span 2}.unit-routine-grid{grid-template-columns:repeat(2,minmax(280px,1fr))}}
 @media (max-width:1180px){.clean-unit-select-grid{grid-template-columns:1fr}.clean-entry-grid{grid-template-columns:repeat(2,minmax(140px,1fr)) 44px}.clean-field-wide{grid-column:span 2}.clean-optional-grid{grid-template-columns:1fr}.unit-routine-grid{grid-template-columns:1fr}.unit-routine-content{grid-template-columns:1fr}.unit-routine-block.activities{grid-row:auto}}
 @media (max-width:720px){.clean-routine-entry{grid-template-columns:1fr!important}.clean-entry-number{margin-top:0}.clean-entry-grid{grid-template-columns:1fr}.clean-field-wide{grid-column:1}.clean-remove-row{width:100%}.clean-preview{align-items:flex-start!important;flex-direction:column}.clean-form-actions{justify-content:stretch}.clean-form-actions button{width:100%}.unit-routine-top{grid-template-columns:24px 40px 1fr}.unit-status-chip{grid-column:3}.unit-detail-list{position:static;width:100%;margin-top:8px}}
+
+/* Correção: botão "Ver detalhes" da Rotina do Dia
+   Antes o painel de detalhes era absoluto e ficava cortado pelo card. Agora abre inline. */
+.unit-routine-card{overflow:visible!important}
+.unit-routine-footer{align-items:flex-start!important}
+.unit-details-panel{width:100%!important;position:static!important;display:block!important}
+.unit-details-panel>summary{list-style:none;cursor:pointer;width:max-content;margin-left:auto}
+.unit-details-panel>summary::-webkit-details-marker{display:none}
+.unit-detail-list{position:static!important;right:auto!important;top:auto!important;width:100%!important;max-height:320px;overflow:auto;background:#fff;border:1px solid #dbe5f1;border-radius:16px;box-shadow:0 12px 26px rgba(15,23,42,.10);padding:10px;margin-top:10px;display:none;box-sizing:border-box}
+.unit-details-panel[open] .unit-detail-list{display:grid!important}
+.unit-detail-list div{display:grid;grid-template-columns:68px 1fr auto;gap:8px;align-items:center;padding:9px 8px;border-bottom:1px solid #eef2f7}
+.unit-detail-list div:last-child{border-bottom:0}
+.unit-detail-list strong{color:#0b6fd3;font-weight:950}
+.unit-detail-list span{color:#0f172a;font-weight:850;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.unit-detail-list em{font-style:normal;color:#64748b;font-weight:800;text-align:right}
