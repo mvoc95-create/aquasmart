@@ -68,7 +68,7 @@
                 <div class="tv-unit-body">
                   <h3>{{ unit.unit }}</h3>
                   <div class="tv-insumo-list">
-                    {% for item in unit.items %}
+                    {% for item in unit['items'] %}
                     <div class="tv-insumo-item">
                       <span><i></i>{{ item.title }}</span>
                       <strong>{{ item.quantity_label }}</strong>
