@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>Painel TV · AquaSmart</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+</head>
+<body class="tv-panel-page tv-panel-wide tv-panel-operational">
+  <header class="tv-topbar">
+    <div class="tv-topbar-brand">
+      <img src="{{ url_for('static', filename='logo-aqua-smart.png') }}" alt="Aqua Smart">
+      <strong>Aqua Smart</strong>
+      <span></span>
+      <div><b>Painel TV</b><small>Programação operacional do dia</small></div>
+    </div>
+    <div class="tv-topbar-meta">
+      <div><i class="fa-regular fa-calendar-days"></i><strong>{{ selected_date.strftime('%d/%m/%Y') }}</strong></div>
+      <div><i class="fa-regular fa-clock"></i><strong>{{ now.strftime('%H:%M') }}</strong></div>
+    </div>
+  </header>
+
+  <main class="tv-dashboard tv-dashboard-wide tv-dashboard-operational">
+    <section class="tv-columns tv-columns-operational">
+      <div class="tv-card tv-column-panel tv-feed-column">
+        <h2><i class="fa-solid fa-fish"></i> Alimentação por unidade</h2>
+        <div class="tv-scroll-shell">
+          <i class="fa-solid fa-chevron-up tv-scroll-arrow tv-scroll-up"></i>
+          <div class="tv-scroll-track"><span></span></div>
+          <div class="tv-scroll-window">
+            <div class="tv-scroll-content tv-scroll-content-feed">
+              {% for unit in tv_data.feeding_by_unit %}
+              <article class="tv-unit-card tv-unit-{{ unit.color }}">
+                <div class="tv-unit-icon"><i class="fa-solid fa-shrimp"></i></div>
+                <div class="tv-unit-body">
+                  <h3>{{ unit.unit }}</h3>
+                  {% for feed in unit.feed_items %}
+                  <div class="tv-feed-summary">
+                    <div><small>Ração</small><strong>{{ feed.label }}</strong></div>
+                    <div><small>Qtd. por oferta</small><strong>{{ feed.per_offer_label }}</strong></div>
+                    <div><small>Frequência</small><strong>{{ feed.frequency_label }}</strong></div>
+                    <div><small>Total do dia</small><strong>{{ feed.total_label }}</strong></div>
+                  </div>
+                  {% endfor %}
+                  <p class="tv-hours"><i class="fa-regular fa-clock"></i> Horários: {{ unit.times_label }}</p>
+                </div>
+              </article>
+              {% else %}
+              <div class="tv-empty">Nenhuma alimentação programada para hoje.</div>
+              {% endfor %}
+            </div>
+          </div>
+          <i class="fa-solid fa-chevron-down tv-scroll-arrow tv-scroll-down"></i>
+        </div>
+      </div>
+
+      <div class="tv-card tv-column-panel tv-additives-column">
+        <h2><i class="fa-solid fa-flask"></i> Insumos / aplicações</h2>
+        <div class="tv-scroll-shell">
+          <i class="fa-solid fa-chevron-up tv-scroll-arrow tv-scroll-up"></i>
+          <div class="tv-scroll-track"><span></span></div>
+          <div class="tv-scroll-window">
+            <div class="tv-scroll-content tv-scroll-content-additives">
+              {% for unit in tv_data.additives_by_unit %}
+              <article class="tv-unit-card tv-insumo-card tv-unit-{{ unit.color }}">
+                <div class="tv-unit-body">
+                  <h3>{{ unit.unit }}</h3>
+                  <div class="tv-insumo-list">
+                    {% for item in unit['items'] %}
+                    <div class="tv-insumo-item">
+                      <span><i></i>{{ item.title }}</span>
+                      <strong>{{ item.quantity_label }}</strong>
+                      <em>{{ item.count_label }}<small>aplicação</small></em>
+                    </div>
+                    {% endfor %}
+                  </div>
+                </div>
+              </article>
+              {% else %}
+              <div class="tv-empty">Sem aditivos ou troca d’água programados.</div>
+              {% endfor %}
+            </div>
+          </div>
+          <i class="fa-solid fa-chevron-down tv-scroll-arrow tv-scroll-down"></i>
+        </div>
+      </div>
+
+      <div class="tv-card tv-column-panel tv-activities-column">
+        <h2><i class="fa-solid fa-flag"></i> Atividades do dia</h2>
+        <div class="tv-scroll-shell">
+          <i class="fa-solid fa-chevron-up tv-scroll-arrow tv-scroll-up"></i>
+          <div class="tv-scroll-track"><span></span></div>
+          <div class="tv-scroll-window">
+            <div class="tv-scroll-content tv-scroll-content-activities">
+              {% for item in tv_data.activities_by_unit %}
+              <article class="tv-activity-card tv-unit-{{ item.color }}">
+                <div class="tv-activity-icon"><i class="fa-solid fa-magnifying-glass"></i></div>
+                <div class="tv-activity-body">
+                  <div class="tv-activity-title-row">
+                    <h3>{{ item.title }}</h3>
+                    <span class="priority-chip priority-{{ item.priority }}">{{ item.priority_label }}</span>
+                  </div>
+                  <p><i></i>{{ item.unit }}</p>
+                  <div class="tv-activity-meta">
+                    <div><small>Frequência no dia</small><strong>{{ item.frequency_label }}</strong></div>
+                    <div><small>Próxima execução</small><strong>{{ item.next_time }}</strong></div>
+                  </div>
+                </div>
+              </article>
+              {% else %}
+              <div class="tv-empty">Nenhuma atividade cadastrada.</div>
+              {% endfor %}
+            </div>
+          </div>
+          <i class="fa-solid fa-chevron-down tv-scroll-arrow tv-scroll-down"></i>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
