@@ -610,6 +610,19 @@ def parse_date(value, default=None):
     return datetime.strptime(value, '%Y-%m-%d').date()
 
 
+def parse_sheet_date(value, default=None):
+    """Aceita datas vindas da IA em ISO ou no padrão brasileiro da ficha."""
+    if not value:
+        return default
+    raw = str(value).strip()
+    for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d/%m/%y'):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return default
+
+
 def parse_time(value, default=None):
     if not value:
         return default
@@ -777,8 +790,8 @@ def build_water_sheet_prompt(sheet_type: str, sheet_date: date, units):
         "2. Preserve os horários exatamente como aparecem: HH:MM.\n"
         "3. Para ficha diurna, aceite 07:00, 16:00 e 18:00. Para ficha noturna, aceite 18:00, 00:00, 02:00 e 04:00.\n"
         "4. A presença isolada da coluna 18:00 não muda o tipo da ficha; siga o cabeçalho DIA/NOITE e o conjunto de colunas.\n"
-        "5. Para cada leitura, informe: row_name, time, dissolved_oxygen, temperature_c, ph, ammonia, nitrite.\n"
-        "6. Use null para campos em branco.\n"
+        "5. Para cada leitura, informe: row_name, time, dissolved_oxygen, temperature_c, transparency_cm.\n"
+        "6. Use null para campos em branco. Não extraia pH, TAN, nitrito, nitrato, alcalinidade ou dureza nesta aba.\n"
         "7. Não invente dados.\n"
         "8. Se tiver dúvida em algum número, prefira null.\n"
         "9. Responda no formato: {\"readings\":[...]}\n"
@@ -842,11 +855,9 @@ def build_water_import_preview(readings, units, sheet_type: str, sheet_date: dat
         values = {
             'dissolved_oxygen': parse_float(item.get('dissolved_oxygen')) if item.get('dissolved_oxygen') is not None else None,
             'temperature_c': parse_float(item.get('temperature_c')) if item.get('temperature_c') is not None else None,
-            'ph': parse_float(item.get('ph')) if item.get('ph') is not None else None,
-            'ammonia': parse_float(item.get('ammonia')) if item.get('ammonia') is not None else None,
-            'nitrite': parse_float(item.get('nitrite')) if item.get('nitrite') is not None else None,
+            'transparency_cm': parse_float(item.get('transparency_cm')) if item.get('transparency_cm') is not None else None,
         }
-        if all(values.get(field) is None for field in ['dissolved_oxygen', 'temperature_c', 'ph', 'ammonia', 'nitrite']):
+        if all(values.get(field) is None for field in ['dissolved_oxygen', 'temperature_c', 'transparency_cm']):
             continue
 
         unit = match_unit_from_sheet_row(row_name, units)
@@ -862,9 +873,7 @@ def build_water_import_preview(readings, units, sheet_type: str, sheet_date: dat
             'monitor_date': slot_date.isoformat(),
             'dissolved_oxygen': values['dissolved_oxygen'],
             'temperature_c': values['temperature_c'],
-            'ph': values['ph'],
-            'ammonia': values['ammonia'],
-            'nitrite': values['nitrite'],
+            'transparency_cm': values['transparency_cm'],
             'selected': True,
         })
 
@@ -908,14 +917,12 @@ def upsert_water_reading(unit_id: int, slot_date: date, slot_time, values: dict)
     )
     record.shift = infer_shift_from_time(slot_time)
     record.lot_id = lot.id if lot else None
-    record.temperature_c = values.get('temperature_c')
-    record.dissolved_oxygen = values.get('dissolved_oxygen')
-    record.ph = values.get('ph')
-    record.ammonia = values.get('ammonia')
-    record.nitrite = values.get('nitrite')
-    record.nitrate = values.get('nitrate')
-    record.alkalinity = values.get('alkalinity')
-    record.hardness = values.get('hardness')
+    for field in (
+        'temperature_c', 'dissolved_oxygen', 'ph', 'salinity', 'transparency_cm',
+        'ammonia', 'nitrite', 'nitrate', 'alkalinity', 'hardness'
+    ):
+        if field in values:
+            setattr(record, field, values.get(field))
     note = values.get('observation')
     if note:
         record.observation = note
@@ -1024,6 +1031,11 @@ def parse_float(value, default=None):
         return default
     value = str(value).strip().replace(',', '.')
     if value == '':
+        return default
+    # A leitura por IA às vezes devolve valores como "<0.25" ou "0.25 mg/L".
+    # Mantemos apenas o número para evitar erro no lançamento.
+    value = re.sub(r'[^0-9.\-]+', '', value)
+    if value in {'', '-', '.', '-.'}:
         return default
     return float(value)
 
@@ -5940,10 +5952,37 @@ def build_water_alert_rows(records, config=None):
     return rows
 
 
-def build_reference_summary(config=None):
+PHYSICAL_WATER_FIELDS = {'dissolved_oxygen', 'temperature_c', 'transparency_cm'}
+QUALITY_WATER_FIELDS = {'ph', 'salinity', 'ammonia', 'nitrite', 'nitrate', 'alkalinity', 'hardness'}
+
+
+def physical_water_filter():
+    return or_(
+        WaterMonitoring.dissolved_oxygen.isnot(None),
+        WaterMonitoring.temperature_c.isnot(None),
+        WaterMonitoring.transparency_cm.isnot(None),
+    )
+
+
+def quality_water_filter():
+    return or_(
+        WaterMonitoring.ph.isnot(None),
+        WaterMonitoring.salinity.isnot(None),
+        WaterMonitoring.ammonia.isnot(None),
+        WaterMonitoring.nitrite.isnot(None),
+        WaterMonitoring.nitrate.isnot(None),
+        WaterMonitoring.alkalinity.isnot(None),
+        WaterMonitoring.hardness.isnot(None),
+    )
+
+
+def build_reference_summary(config=None, fields=None):
     config = config or get_water_reference_config()
+    selected_fields = set(fields or []) if fields else None
     summary = []
     for spec in WATER_PARAMETER_SPECS:
+        if selected_fields and spec['field'] not in selected_fields:
+            continue
         summary.append({
             'label': spec['label'],
             'unit': spec['unit'],
@@ -7865,12 +7904,16 @@ def update_water_reference_ranges():
         'nitrate_min', 'nitrate_max', 'alkalinity_min', 'alkalinity_max', 'hardness_min', 'hardness_max',
     ]
     for field in fields:
-        setattr(config, field, parse_float(request.form.get(field)))
+        if field in request.form:
+            setattr(config, field, parse_float(request.form.get(field)))
     config.updated_at = datetime.utcnow()
     config.updated_by_id = getattr(current_user, 'id', None)
     db.session.commit()
     flash('Faixas de referência da água atualizadas.', 'success')
-    return redirect(url_for('water_page', unit_id=request.args.get('unit_id', type=int)))
+    return_to = request.form.get('return_to') or 'water_page'
+    if return_to not in {'water_page', 'water_quality_page'}:
+        return_to = 'water_page'
+    return redirect(url_for(return_to, unit_id=request.args.get('unit_id', type=int)))
 
 
 @app.route('/units', methods=['GET', 'POST'])
@@ -8050,9 +8093,7 @@ def confirm_import_water_sheet():
     row_names = request.form.getlist('row_name')
     oxygens = request.form.getlist('dissolved_oxygen')
     temperatures = request.form.getlist('temperature_c')
-    ph_values = request.form.getlist('ph')
-    ammonias = request.form.getlist('ammonia')
-    nitrites = request.form.getlist('nitrite')
+    transparencies = request.form.getlist('transparency_cm')
 
     created = 0
     updated = 0
@@ -8074,12 +8115,10 @@ def confirm_import_water_sheet():
         values = {
             'dissolved_oxygen': parse_float(oxygens[idx]),
             'temperature_c': parse_float(temperatures[idx]),
-            'ph': parse_float(ph_values[idx]),
-            'ammonia': parse_float(ammonias[idx]),
-            'nitrite': parse_float(nitrites[idx]),
+            'transparency_cm': parse_float(transparencies[idx]),
             'observation': f'Importado de ficha {"diurna" if pending.get("sheet_type") == "day" else "noturna"} em {local_now().strftime("%d/%m/%Y %H:%M")}',
         }
-        if all(values.get(field) is None for field in ['dissolved_oxygen', 'temperature_c', 'ph', 'ammonia', 'nitrite']):
+        if all(values.get(field) is None for field in ['dissolved_oxygen', 'temperature_c', 'transparency_cm']):
             ignored += 1
             continue
 
@@ -8104,10 +8143,125 @@ def cancel_import_water_sheet():
     return redirect(url_for('water_page'))
 
 
+def build_water_quality_sheet_prompt(units):
+    unit_labels = ', '.join(unit.name for unit in units)
+    return (
+        "Leia esta foto de uma ficha de QUALIDADE DE ÁGUA da fazenda e devolva apenas JSON válido.\n\n"
+        f"Unidades esperadas no sistema: {unit_labels}.\n\n"
+        "Modelo da ficha: a página pode ter vários quadros, cada quadro com uma DATA e colunas "
+        "pH, TAN, NITRITO, NITRATO, ALK, DUREZA e Comentários.\n"
+        "Regras obrigatórias:\n"
+        "1. Identifique todas as datas visíveis na folha e escolha somente a data mais recente.\n"
+        "2. Extraia apenas as linhas preenchidas dentro do quadro da data mais recente. Ignore todos os quadros mais antigos.\n"
+        "3. A coluna TAN deve ser retornada como ammonia.\n"
+        "4. Preserve o nome da linha exatamente como aparece em row_name, por exemplo BERÇARIO - SP1 ou BERÇARIO - RG1.\n"
+        "5. Para cada linha, informe row_name, ph, ammonia, nitrite, nitrate, alkalinity, hardness e observation.\n"
+        "6. Use null para campos em branco, ilegíveis ou não preenchidos. Não invente dados.\n"
+        "7. Se a data aparecer como 12/05/2026 ou 12/05/26, devolva latest_date em ISO: YYYY-MM-DD.\n"
+        "8. Responda exatamente no formato: "
+        "{\"latest_date\":\"YYYY-MM-DD\",\"readings\":[{\"row_name\":\"...\",\"ph\":8.2,\"ammonia\":1.0,\"nitrite\":2.9,\"nitrate\":null,\"alkalinity\":340,\"hardness\":450,\"observation\":null}]}\n"
+    )
+
+
+def extract_water_quality_sheet_data_with_openai(file_bytes: bytes, filename: str, content_type: str, units):
+    if OpenAI is None:
+        raise RuntimeError('A biblioteca OpenAI não está instalada no ambiente.')
+    api_key = os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        raise RuntimeError('Defina OPENAI_API_KEY para habilitar a leitura automática por foto.')
+
+    mime_type = content_type or 'image/jpeg'
+    model = os.getenv('OPENAI_VISION_MODEL', 'gpt-5.4-mini')
+    client = OpenAI(api_key=api_key)
+    encoded = base64.b64encode(file_bytes).decode('utf-8')
+
+    response = client.responses.create(
+        model=model,
+        input=[{
+            'role': 'user',
+            'content': [
+                {'type': 'input_text', 'text': build_water_quality_sheet_prompt(units)},
+                {'type': 'input_image', 'image_url': f'data:{mime_type};base64,{encoded}'},
+            ],
+        }],
+    )
+
+    raw_text = getattr(response, 'output_text', '') or ''
+    payload = extract_json_object(raw_text)
+    readings = payload.get('readings') or []
+    if not isinstance(readings, list):
+        raise ValueError('Formato inválido retornado pela IA.')
+    return payload
+
+
+def build_water_quality_import_preview(payload, units, fallback_date=None):
+    preview_rows = []
+    warnings = []
+    latest_date = parse_sheet_date(payload.get('latest_date'), fallback_date or local_today())
+    seen_unknown_rows = []
+
+    for item in payload.get('readings') or []:
+        row_name = (item.get('row_name') or '').strip()
+        values = {
+            'ph': parse_float(item.get('ph')) if item.get('ph') is not None else None,
+            'ammonia': parse_float(item.get('ammonia')) if item.get('ammonia') is not None else None,
+            'nitrite': parse_float(item.get('nitrite')) if item.get('nitrite') is not None else None,
+            'nitrate': parse_float(item.get('nitrate')) if item.get('nitrate') is not None else None,
+            'alkalinity': parse_float(item.get('alkalinity')) if item.get('alkalinity') is not None else None,
+            'hardness': parse_float(item.get('hardness')) if item.get('hardness') is not None else None,
+        }
+        observation = (item.get('observation') or '').strip() if item.get('observation') is not None else ''
+        if all(values.get(field) is None for field in QUALITY_WATER_FIELDS) and not observation:
+            continue
+
+        unit = match_unit_from_sheet_row(row_name, units)
+        if not unit and row_name:
+            seen_unknown_rows.append(row_name)
+
+        preview_rows.append({
+            'row_name': row_name,
+            'unit_id': unit.id if unit else '',
+            'unit_name': unit.name if unit else '',
+            'monitor_date': latest_date.isoformat(),
+            'ph': values['ph'],
+            'ammonia': values['ammonia'],
+            'nitrite': values['nitrite'],
+            'nitrate': values['nitrate'],
+            'alkalinity': values['alkalinity'],
+            'hardness': values['hardness'],
+            'observation': observation,
+            'selected': True,
+        })
+
+    if seen_unknown_rows:
+        warnings.append('Algumas linhas não bateram com os viveiros cadastrados: ' + ', '.join(sorted(set(seen_unknown_rows))))
+    if latest_date == (fallback_date or local_today()) and not payload.get('latest_date'):
+        warnings.append('A IA não devolveu uma data clara; usei a data de hoje como fallback. Confira antes de salvar.')
+
+    return preview_rows, warnings, latest_date
+
+
+def store_pending_water_quality_import(sheet_date: date, preview_rows, warnings):
+    session['pending_water_quality_import'] = {
+        'sheet_date': sheet_date.isoformat(),
+        'rows': preview_rows,
+        'warnings': warnings,
+    }
+
+
+def pop_pending_water_quality_import():
+    return session.pop('pending_water_quality_import', None)
+
+
+def get_pending_water_quality_import():
+    return session.get('pending_water_quality_import')
+
+
 @app.route('/water', methods=['GET', 'POST'])
 @login_required
 @requires_permission('water_manage')
 def water_page():
+    """Monitoramento operacional: somente temperatura, OD e transparência."""
     if request.method == 'POST':
         mode = request.form.get('entry_mode', 'single')
         unit_id = int(request.form['unit_id'])
@@ -8118,19 +8272,12 @@ def water_page():
             slot_times = request.form.getlist('slot_time')
             temperatures = parse_multi_float_list(request.form.getlist('temperature_c'))
             oxygens = parse_multi_float_list(request.form.getlist('dissolved_oxygen'))
-            ph_values = parse_multi_float_list(request.form.getlist('ph'))
-            salinities = parse_multi_float_list(request.form.getlist('salinity'))
             transparencies = parse_multi_float_list(request.form.getlist('transparency_cm'))
-            ammonias = parse_multi_float_list(request.form.getlist('ammonia'))
-            nitrites = parse_multi_float_list(request.form.getlist('nitrite'))
-            nitrates = parse_multi_float_list(request.form.getlist('nitrate'))
-            alkalinities = parse_multi_float_list(request.form.getlist('alkalinity'))
-            hardness_values = parse_multi_float_list(request.form.getlist('hardness'))
             observations = request.form.getlist('observation')
 
             created = 0
             for idx, slot in enumerate(slot_times):
-                values = [temperatures[idx], oxygens[idx], ph_values[idx], salinities[idx], transparencies[idx], ammonias[idx], nitrites[idx], nitrates[idx], alkalinities[idx], hardness_values[idx], (observations[idx] or '').strip()]
+                values = [temperatures[idx], oxygens[idx], transparencies[idx], (observations[idx] or '').strip()]
                 has_data = any(v not in (None, '') for v in values)
                 if not has_data:
                     continue
@@ -8143,14 +8290,7 @@ def water_page():
                     lot_id=lot.id if lot else None,
                     temperature_c=temperatures[idx],
                     dissolved_oxygen=oxygens[idx],
-                    ph=ph_values[idx],
-                    salinity=salinities[idx],
                     transparency_cm=transparencies[idx],
-                    ammonia=ammonias[idx],
-                    nitrite=nitrites[idx],
-                    nitrate=nitrates[idx],
-                    alkalinity=alkalinities[idx],
-                    hardness=hardness_values[idx],
                     observation=(observations[idx] or '').strip() or None,
                 )
                 db.session.add(rec)
@@ -8161,7 +8301,7 @@ def water_page():
                 return redirect(url_for('water_page', unit_id=unit_id))
 
             db.session.commit()
-            flash(f'{created} leituras de água salvas em lote.', 'success')
+            flash(f'{created} leituras de monitoramento salvas em lote.', 'success')
             return redirect(url_for('water_page', unit_id=unit_id))
 
         rec = WaterMonitoring(
@@ -8172,14 +8312,7 @@ def water_page():
             lot_id=lot.id if lot else None,
             temperature_c=parse_float(request.form.get('temperature_c')),
             dissolved_oxygen=parse_float(request.form.get('dissolved_oxygen')),
-            ph=parse_float(request.form.get('ph')),
-            salinity=parse_float(request.form.get('salinity')),
             transparency_cm=parse_float(request.form.get('transparency_cm')),
-            ammonia=parse_float(request.form.get('ammonia')),
-            nitrite=parse_float(request.form.get('nitrite')),
-            nitrate=parse_float(request.form.get('nitrate')),
-            alkalinity=parse_float(request.form.get('alkalinity')),
-            hardness=parse_float(request.form.get('hardness')),
             observation=request.form.get('observation')
         )
         db.session.add(rec)
@@ -8192,7 +8325,7 @@ def water_page():
     sort_by = request.args.get('sort_by', 'monitor_date')
     sort_dir = 'asc' if request.args.get('sort_dir', 'desc').lower() == 'asc' else 'desc'
 
-    records_query = WaterMonitoring.query.join(Unit)
+    records_query = WaterMonitoring.query.join(Unit).filter(physical_water_filter())
     if selected_unit_id:
         records_query = records_query.filter(WaterMonitoring.unit_id == selected_unit_id)
 
@@ -8202,9 +8335,8 @@ def water_page():
         'shift': [WaterMonitoring.shift, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
         'unit': [func.lower(Unit.name), WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
         'od': [WaterMonitoring.dissolved_oxygen, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'ph': [WaterMonitoring.ph, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
         'temperature': [WaterMonitoring.temperature_c, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
-        'salinity': [WaterMonitoring.salinity, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
+        'transparency': [WaterMonitoring.transparency_cm, WaterMonitoring.monitor_date, WaterMonitoring.monitor_time, WaterMonitoring.id],
     }
     order_columns = sort_map.get(sort_by, sort_map['monitor_date'])
     ordered = [col.asc().nullslast() if sort_dir == 'asc' else col.desc().nullslast() for col in order_columns]
@@ -8227,10 +8359,224 @@ def water_page():
         build_sort_url=build_sort_url,
         batch_slots=batch_monitor_slots(),
         reference_config=get_water_reference_config(),
-        reference_summary=build_reference_summary(),
+        reference_summary=build_reference_summary(fields=PHYSICAL_WATER_FIELDS),
         pending_water_import=get_pending_water_import(),
     )
 
+
+@app.post('/water-quality/import-sheet')
+@login_required
+@requires_permission('water_manage')
+def import_water_quality_sheet():
+    upload = request.files.get('sheet_image')
+    fallback_date = parse_date(request.form.get('fallback_date'), local_today())
+
+    if not upload or not upload.filename:
+        flash('Envie a foto da ficha antes de importar.', 'warning')
+        return redirect(url_for('water_quality_page'))
+
+    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+    try:
+        file_bytes = upload.read()
+        payload = extract_water_quality_sheet_data_with_openai(
+            file_bytes=file_bytes,
+            filename=upload.filename,
+            content_type=upload.mimetype,
+            units=units,
+        )
+        preview_rows, warnings, sheet_date = build_water_quality_import_preview(payload, units, fallback_date=fallback_date)
+    except Exception as exc:
+        flash(f'Não consegui ler a ficha de qualidade automaticamente: {exc}', 'danger')
+        return redirect(url_for('water_quality_page'))
+
+    if not preview_rows:
+        flash('Não encontrei leituras válidas na data mais recente da ficha.', 'warning')
+        return redirect(url_for('water_quality_page'))
+
+    store_pending_water_quality_import(sheet_date, preview_rows, warnings)
+    flash(f'Prévia da importação gerada usando a data mais recente da folha: {sheet_date.strftime("%d/%m/%Y")}. Confira antes de confirmar.', 'success')
+    return redirect(url_for('water_quality_page', show_import_preview=1))
+
+
+@app.post('/water-quality/import-sheet/confirm')
+@login_required
+@requires_permission('water_manage')
+def confirm_import_water_quality_sheet():
+    pending = get_pending_water_quality_import()
+    if not pending:
+        flash('A prévia da importação expirou. Gere a leitura da ficha novamente.', 'warning')
+        return redirect(url_for('water_quality_page'))
+
+    selected_indices = {int(value) for value in request.form.getlist('selected_indices') if str(value).isdigit()}
+    unit_ids = request.form.getlist('unit_id')
+    monitor_dates = request.form.getlist('monitor_date')
+    ph_values = request.form.getlist('ph')
+    ammonias = request.form.getlist('ammonia')
+    nitrites = request.form.getlist('nitrite')
+    nitrates = request.form.getlist('nitrate')
+    alkalinities = request.form.getlist('alkalinity')
+    hardness_values = request.form.getlist('hardness')
+    observations = request.form.getlist('observation')
+
+    created = 0
+    updated = 0
+    ignored = 0
+
+    total_rows = len(unit_ids)
+    for idx in range(total_rows):
+        if idx not in selected_indices:
+            ignored += 1
+            continue
+        unit_id = parse_int(unit_ids[idx])
+        monitor_date = parse_date(monitor_dates[idx], local_today())
+        if not unit_id:
+            ignored += 1
+            continue
+        values = {
+            'ph': parse_float(ph_values[idx]),
+            'ammonia': parse_float(ammonias[idx]),
+            'nitrite': parse_float(nitrites[idx]),
+            'nitrate': parse_float(nitrates[idx]),
+            'alkalinity': parse_float(alkalinities[idx]),
+            'hardness': parse_float(hardness_values[idx]),
+            'observation': (observations[idx] or '').strip() or f'Importado de ficha de qualidade em {local_now().strftime("%d/%m/%Y %H:%M")}',
+        }
+        if all(values.get(field) is None for field in QUALITY_WATER_FIELDS):
+            ignored += 1
+            continue
+        result = upsert_water_reading(unit_id, monitor_date, None, values)
+        if result == 'created':
+            created += 1
+        else:
+            updated += 1
+
+    db.session.commit()
+    pop_pending_water_quality_import()
+    flash(f'Importação de qualidade confirmada. {created} leitura(s) criada(s), {updated} atualizada(s) e {ignored} ignorada(s).', 'success')
+    return redirect(url_for('water_quality_page'))
+
+
+@app.post('/water-quality/import-sheet/cancel')
+@login_required
+@requires_permission('water_manage')
+def cancel_import_water_quality_sheet():
+    pop_pending_water_quality_import()
+    flash('Prévia da importação de qualidade cancelada.', 'warning')
+    return redirect(url_for('water_quality_page'))
+
+
+@app.route('/water-quality', methods=['GET', 'POST'])
+@login_required
+@requires_permission('water_manage')
+def water_quality_page():
+    """Qualidade de água: parâmetros químicos e físico-químicos fora do monitoramento de rotina."""
+    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+
+    if request.method == 'POST':
+        mode = request.form.get('entry_mode', 'batch')
+        monitor_date = parse_date(request.form.get('monitor_date'), local_today())
+
+        if mode == 'batch':
+            unit_ids = request.form.getlist('unit_id')
+            ph_values = parse_multi_float_list(request.form.getlist('ph'))
+            salinities = parse_multi_float_list(request.form.getlist('salinity'))
+            ammonias = parse_multi_float_list(request.form.getlist('ammonia'))
+            nitrites = parse_multi_float_list(request.form.getlist('nitrite'))
+            nitrates = parse_multi_float_list(request.form.getlist('nitrate'))
+            alkalinities = parse_multi_float_list(request.form.getlist('alkalinity'))
+            hardness_values = parse_multi_float_list(request.form.getlist('hardness'))
+            observations = request.form.getlist('observation')
+
+            created = 0
+            updated = 0
+            for idx, raw_unit_id in enumerate(unit_ids):
+                unit_id = parse_int(raw_unit_id)
+                values = {
+                    'ph': ph_values[idx],
+                    'salinity': salinities[idx],
+                    'ammonia': ammonias[idx],
+                    'nitrite': nitrites[idx],
+                    'nitrate': nitrates[idx],
+                    'alkalinity': alkalinities[idx],
+                    'hardness': hardness_values[idx],
+                    'observation': (observations[idx] or '').strip() or None,
+                }
+                if not unit_id or all(values.get(field) is None for field in QUALITY_WATER_FIELDS):
+                    continue
+                result = upsert_water_reading(unit_id, monitor_date, None, values)
+                if result == 'created':
+                    created += 1
+                else:
+                    updated += 1
+
+            if created + updated == 0:
+                flash('Preencha pelo menos uma unidade no lançamento em lote.', 'warning')
+                return redirect(url_for('water_quality_page'))
+            db.session.commit()
+            flash(f'Qualidade de água salva. {created} leitura(s) criada(s) e {updated} atualizada(s).', 'success')
+            return redirect(url_for('water_quality_page'))
+
+        unit_id = int(request.form['unit_id'])
+        values = {
+            'ph': parse_float(request.form.get('ph')),
+            'salinity': parse_float(request.form.get('salinity')),
+            'ammonia': parse_float(request.form.get('ammonia')),
+            'nitrite': parse_float(request.form.get('nitrite')),
+            'nitrate': parse_float(request.form.get('nitrate')),
+            'alkalinity': parse_float(request.form.get('alkalinity')),
+            'hardness': parse_float(request.form.get('hardness')),
+            'observation': request.form.get('observation'),
+        }
+        if all(values.get(field) is None for field in QUALITY_WATER_FIELDS):
+            flash('Informe pelo menos um parâmetro de qualidade.', 'warning')
+            return redirect(url_for('water_quality_page', unit_id=unit_id))
+        result = upsert_water_reading(unit_id, monitor_date, None, values)
+        db.session.commit()
+        flash('Qualidade de água lançada.' if result == 'created' else 'Qualidade de água atualizada para essa data/unidade.', 'success')
+        return redirect(url_for('water_quality_page', unit_id=unit_id))
+
+    selected_unit_id = request.args.get('unit_id', type=int)
+    sort_by = request.args.get('sort_by', 'monitor_date')
+    sort_dir = 'asc' if request.args.get('sort_dir', 'desc').lower() == 'asc' else 'desc'
+
+    records_query = WaterMonitoring.query.join(Unit).filter(quality_water_filter())
+    if selected_unit_id:
+        records_query = records_query.filter(WaterMonitoring.unit_id == selected_unit_id)
+
+    sort_map = {
+        'monitor_date': [WaterMonitoring.monitor_date, WaterMonitoring.id],
+        'unit': [func.lower(Unit.name), WaterMonitoring.monitor_date, WaterMonitoring.id],
+        'ph': [WaterMonitoring.ph, WaterMonitoring.monitor_date, WaterMonitoring.id],
+        'salinity': [WaterMonitoring.salinity, WaterMonitoring.monitor_date, WaterMonitoring.id],
+        'ammonia': [WaterMonitoring.ammonia, WaterMonitoring.monitor_date, WaterMonitoring.id],
+        'nitrite': [WaterMonitoring.nitrite, WaterMonitoring.monitor_date, WaterMonitoring.id],
+        'nitrate': [WaterMonitoring.nitrate, WaterMonitoring.monitor_date, WaterMonitoring.id],
+        'alkalinity': [WaterMonitoring.alkalinity, WaterMonitoring.monitor_date, WaterMonitoring.id],
+        'hardness': [WaterMonitoring.hardness, WaterMonitoring.monitor_date, WaterMonitoring.id],
+    }
+    order_columns = sort_map.get(sort_by, sort_map['monitor_date'])
+    ordered = [col.asc().nullslast() if sort_dir == 'asc' else col.desc().nullslast() for col in order_columns]
+    records = records_query.order_by(*ordered).limit(100).all()
+
+    edit_id = request.args.get('edit_id', type=int)
+    edit_record = db.session.get(WaterMonitoring, edit_id) if edit_id else None
+    selected_unit = db.session.get(Unit, selected_unit_id) if selected_unit_id else None
+    return render_template(
+        'water_quality.html',
+        units=units,
+        records=records,
+        today=local_today(),
+        edit_record=edit_record,
+        selected_unit_id=selected_unit_id,
+        selected_unit=selected_unit,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        sort_indicator=sort_indicator,
+        build_sort_url=build_sort_url,
+        reference_config=get_water_reference_config(),
+        reference_summary=build_reference_summary(fields=QUALITY_WATER_FIELDS),
+        pending_water_quality_import=get_pending_water_quality_import(),
+    )
 
 
 
@@ -9744,17 +10090,14 @@ def edit_water_record(record_id):
     rec.monitor_time = parse_time(request.form.get('monitor_time'))
     rec.unit_id = unit_id
     rec.lot_id = lot.id if lot else None
-    rec.temperature_c = parse_float(request.form.get('temperature_c'))
-    rec.dissolved_oxygen = parse_float(request.form.get('dissolved_oxygen'))
-    rec.ph = parse_float(request.form.get('ph'))
-    rec.salinity = parse_float(request.form.get('salinity'))
-    rec.transparency_cm = parse_float(request.form.get('transparency_cm'))
-    rec.ammonia = parse_float(request.form.get('ammonia'))
-    rec.nitrite = parse_float(request.form.get('nitrite'))
-    rec.nitrate = parse_float(request.form.get('nitrate'))
-    rec.alkalinity = parse_float(request.form.get('alkalinity'))
-    rec.hardness = parse_float(request.form.get('hardness'))
-    rec.observation = request.form.get('observation')
+    for field in (
+        'temperature_c', 'dissolved_oxygen', 'ph', 'salinity', 'transparency_cm',
+        'ammonia', 'nitrite', 'nitrate', 'alkalinity', 'hardness'
+    ):
+        if field in request.form:
+            setattr(rec, field, parse_float(request.form.get(field)))
+    if 'observation' in request.form:
+        rec.observation = request.form.get('observation')
     db.session.commit()
     flash('Registro de água atualizado.', 'success')
     return redirect(request.referrer or url_for('water_page'))
@@ -9868,9 +10211,15 @@ def build_sort_url(base_endpoint: str, current_args, column: str):
 def chart_parameter_options():
     return {
         'od': {'group': 'water', 'field': 'dissolved_oxygen', 'label': 'OD', 'unit': 'mg/L', 'title': 'OD x tempo', 'threshold_key': 'dissolved_oxygen'},
-        'salinity': {'group': 'water', 'field': 'salinity', 'label': 'Salinidade', 'unit': '‰', 'title': 'Salinidade x tempo', 'threshold_key': 'salinity'},
         'temperature': {'group': 'water', 'field': 'temperature_c', 'label': 'Temperatura', 'unit': '°C', 'title': 'Temperatura x tempo', 'threshold_key': 'temperature_c'},
+        'transparency': {'group': 'water', 'field': 'transparency_cm', 'label': 'Transparência', 'unit': 'cm', 'title': 'Transparência x tempo', 'threshold_key': 'transparency_cm'},
         'ph': {'group': 'water', 'field': 'ph', 'label': 'pH', 'unit': '', 'title': 'pH x tempo', 'threshold_key': 'ph'},
+        'salinity': {'group': 'water', 'field': 'salinity', 'label': 'Salinidade', 'unit': '‰', 'title': 'Salinidade x tempo', 'threshold_key': 'salinity'},
+        'ammonia': {'group': 'water', 'field': 'ammonia', 'label': 'Amônia/TAN', 'unit': 'mg/L', 'title': 'Amônia/TAN x tempo', 'threshold_key': 'ammonia'},
+        'nitrite': {'group': 'water', 'field': 'nitrite', 'label': 'Nitrito', 'unit': 'mg/L', 'title': 'Nitrito x tempo', 'threshold_key': 'nitrite'},
+        'nitrate': {'group': 'water', 'field': 'nitrate', 'label': 'Nitrato', 'unit': 'mg/L', 'title': 'Nitrato x tempo', 'threshold_key': 'nitrate'},
+        'alkalinity': {'group': 'water', 'field': 'alkalinity', 'label': 'Alcalinidade', 'unit': 'mg/L', 'title': 'Alcalinidade x tempo', 'threshold_key': 'alkalinity'},
+        'hardness': {'group': 'water', 'field': 'hardness', 'label': 'Dureza', 'unit': 'mg/L', 'title': 'Dureza x tempo', 'threshold_key': 'hardness'},
         'feed_offered': {'group': 'management', 'field': 'feed_offered_kg', 'label': 'Ração ofertada', 'unit': 'kg', 'title': 'Ração ofertada x tempo', 'threshold_key': None},
         'tray_score': {'group': 'management', 'field': 'tray_score', 'label': 'Score de bandeja', 'unit': '0–4', 'title': 'Score de bandeja x tempo', 'threshold_key': None},
         'mortality': {'group': 'management', 'field': 'mortality_qty', 'label': 'Mortalidade', 'unit': 'un', 'title': 'Mortalidade x tempo', 'threshold_key': None},
@@ -9882,9 +10231,15 @@ def build_chart_thresholds():
     config = get_water_reference_config()
     return {
         'dissolved_oxygen': {'label': 'Faixa ideal de OD', 'min': config.od_min, 'max': config.od_max},
-        'ph': {'label': 'Faixa ideal de pH', 'min': config.ph_min, 'max': config.ph_max},
         'temperature_c': {'label': 'Faixa ideal de temperatura', 'min': config.temperature_min, 'max': config.temperature_max},
+        'transparency_cm': {'label': 'Faixa ideal de transparência', 'min': config.transparency_min, 'max': config.transparency_max},
+        'ph': {'label': 'Faixa ideal de pH', 'min': config.ph_min, 'max': config.ph_max},
         'salinity': {'label': 'Faixa de salinidade alvo', 'min': config.salinity_min, 'max': config.salinity_max},
+        'ammonia': {'label': 'Faixa ideal de amônia/TAN', 'min': config.ammonia_min, 'max': config.ammonia_max},
+        'nitrite': {'label': 'Faixa ideal de nitrito', 'min': config.nitrite_min, 'max': config.nitrite_max},
+        'nitrate': {'label': 'Faixa ideal de nitrato', 'min': config.nitrate_min, 'max': config.nitrate_max},
+        'alkalinity': {'label': 'Faixa ideal de alcalinidade', 'min': config.alkalinity_min, 'max': config.alkalinity_max},
+        'hardness': {'label': 'Faixa ideal de dureza', 'min': config.hardness_min, 'max': config.hardness_max},
     }
 
 
@@ -9892,9 +10247,15 @@ def build_chart_meta():
     return {
         'water': {
             'od': {'label': 'OD', 'unit': 'mg/L'},
-            'salinity': {'label': 'Salinidade', 'unit': '‰'},
             'temperature': {'label': 'Temperatura', 'unit': '°C'},
+            'transparency': {'label': 'Transparência', 'unit': 'cm'},
             'ph': {'label': 'pH', 'unit': ''},
+            'salinity': {'label': 'Salinidade', 'unit': '‰'},
+            'ammonia': {'label': 'Amônia/TAN', 'unit': 'mg/L'},
+            'nitrite': {'label': 'Nitrito', 'unit': 'mg/L'},
+            'nitrate': {'label': 'Nitrato', 'unit': 'mg/L'},
+            'alkalinity': {'label': 'Alcalinidade', 'unit': 'mg/L'},
+            'hardness': {'label': 'Dureza', 'unit': 'mg/L'},
         },
         'management': {
             'feed_offered': {'label': 'Ração ofertada', 'unit': 'kg'},
