@@ -94,13 +94,19 @@ function buildYAxisConfig(chartData, values) {
 
   const presetMap = {
     od: { min: 0, stepSize: 0.2 },
-    salinity: { min: 0, stepSize: 1 },
     temperature: { min: 0, stepSize: 1 },
+    transparency: { min: 0, stepSize: 1 },
+    ph: { min: 0, max: 14, stepSize: 0.2 },
+    salinity: { min: 0, stepSize: 1 },
+    ammonia: { min: 0, stepSize: 0.1 },
+    nitrite: { min: 0, stepSize: 0.1 },
+    nitrate: { min: 0, stepSize: 1 },
+    alkalinity: { min: 0, stepSize: 10 },
+    hardness: { min: 0, stepSize: 10 },
     feed_offered: { min: 0 },
     mortality: { min: 0 },
     average_weight: { min: 0 },
     tray_score: { min: 0, max: 4, stepSize: 0.2 },
-    ph: { min: 0, max: 14, stepSize: 0.2 },
   };
 
   const preset = presetMap[parameterKey] || {};

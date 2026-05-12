@@ -1,0 +1,291 @@
+{% extends 'base.html' %}
+{% block page_title %}Qualidade de água{% endblock %}
+{% block page_subtitle %}Aba separada para pH, salinidade, TAN/amônia, nitrito, nitrato, alcalinidade e dureza, com leitura automática da ficha química da fazenda.{% endblock %}
+{% block content %}
+<section class="panel">
+  <details class="reference-collapse">
+    <summary class="reference-collapse-summary">
+      <div>
+        <p class="panel-kicker">Faixas de referência</p>
+        <h2>Parâmetros de qualidade</h2>
+      </div>
+      <span class="inline-hint">Clique para abrir ou recolher</span>
+    </summary>
+    <p class="empty-state compact-state">Essas faixas são usadas nos alertas e nos gráficos. TAN da ficha entra no sistema como <strong>Amônia/TAN</strong>.</p>
+    <form method="post" action="{{ url_for('update_water_reference_ranges', unit_id=selected_unit_id) }}" class="form-grid reference-grid">
+      <input type="hidden" name="return_to" value="water_quality_page">
+      <label>pH mín.<input type="number" step="0.01" name="ph_min" value="{{ reference_config.ph_min if reference_config.ph_min is not none else '' }}"></label>
+      <label>pH máx.<input type="number" step="0.01" name="ph_max" value="{{ reference_config.ph_max if reference_config.ph_max is not none else '' }}"></label>
+      <label>Salinidade mín. (‰)<input type="number" step="0.01" name="salinity_min" value="{{ reference_config.salinity_min if reference_config.salinity_min is not none else '' }}"></label>
+      <label>Salinidade máx. (‰)<input type="number" step="0.01" name="salinity_max" value="{{ reference_config.salinity_max if reference_config.salinity_max is not none else '' }}"></label>
+      <label>Amônia/TAN mín. (mg/L)<input type="number" step="0.01" name="ammonia_min" value="{{ reference_config.ammonia_min if reference_config.ammonia_min is not none else '' }}"></label>
+      <label>Amônia/TAN máx. (mg/L)<input type="number" step="0.01" name="ammonia_max" value="{{ reference_config.ammonia_max if reference_config.ammonia_max is not none else '' }}"></label>
+      <label>Nitrito mín. (mg/L)<input type="number" step="0.01" name="nitrite_min" value="{{ reference_config.nitrite_min if reference_config.nitrite_min is not none else '' }}"></label>
+      <label>Nitrito máx. (mg/L)<input type="number" step="0.01" name="nitrite_max" value="{{ reference_config.nitrite_max if reference_config.nitrite_max is not none else '' }}"></label>
+      <label>Nitrato mín. (mg/L)<input type="number" step="0.01" name="nitrate_min" value="{{ reference_config.nitrate_min if reference_config.nitrate_min is not none else '' }}"></label>
+      <label>Nitrato máx. (mg/L)<input type="number" step="0.01" name="nitrate_max" value="{{ reference_config.nitrate_max if reference_config.nitrate_max is not none else '' }}"></label>
+      <label>Alcalinidade mín. (mg/L)<input type="number" step="0.01" name="alkalinity_min" value="{{ reference_config.alkalinity_min if reference_config.alkalinity_min is not none else '' }}"></label>
+      <label>Alcalinidade máx. (mg/L)<input type="number" step="0.01" name="alkalinity_max" value="{{ reference_config.alkalinity_max if reference_config.alkalinity_max is not none else '' }}"></label>
+      <label>Dureza mín. (mg/L)<input type="number" step="0.01" name="hardness_min" value="{{ reference_config.hardness_min if reference_config.hardness_min is not none else '' }}"></label>
+      <label>Dureza máx. (mg/L)<input type="number" step="0.01" name="hardness_max" value="{{ reference_config.hardness_max if reference_config.hardness_max is not none else '' }}"></label>
+      <div class="form-actions action-row-between full">
+        <button type="submit">Salvar faixas de referência</button>
+        <span class="inline-hint">Última atualização: {{ reference_config.updated_at.strftime('%d/%m/%Y %H:%M') if reference_config.updated_at else '—' }}</span>
+      </div>
+    </form>
+  </details>
+
+  <div class="reference-summary-grid">
+    {% for item in reference_summary %}
+    <div class="reference-summary-card">
+      <strong>{{ item.label }}</strong>
+      <small>{{ item.range_text }}</small>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Importação por foto com IA</p><h2>Ler ficha de qualidade</h2></div></div>
+  <p class="empty-state compact-state">Envie a foto no modelo da folha enviada: vários quadros por data, colunas <strong>pH, TAN, Nitrito, Nitrato, ALK e Dureza</strong>. A IA usa automaticamente a <strong>data mais recente da folha</strong> e ignora os quadros antigos. A foto não é salva no banco.</p>
+  <form method="post" action="{{ url_for('import_water_quality_sheet') }}" enctype="multipart/form-data" class="form-grid">
+    <label>Data fallback
+      <input type="date" name="fallback_date" value="{{ today.isoformat() }}" required>
+      <span class="inline-hint">Usada só se a IA não conseguir ler a data.</span>
+    </label>
+    <label class="full">Foto da ficha
+      <input type="file" name="sheet_image" accept="image/*" required>
+    </label>
+    <div class="form-actions action-row-between full">
+      <button type="submit">Importar ficha de qualidade</button>
+      <span class="inline-hint">Configure OPENAI_API_KEY no Render para habilitar.</span>
+    </div>
+  </form>
+</section>
+
+{% if pending_water_quality_import and pending_water_quality_import.rows %}
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Prévia da importação</p><h2>Confira a data mais recente antes de salvar</h2></div></div>
+  <p class="empty-state compact-state">Data selecionada pela IA: <strong>{{ pending_water_quality_import.sheet_date[8:10] ~ '/' ~ pending_water_quality_import.sheet_date[5:7] ~ '/' ~ pending_water_quality_import.sheet_date[0:4] }}</strong>. Revise os viveiros e valores antes de confirmar.</p>
+  {% if pending_water_quality_import.warnings %}
+  <div class="warning-list">
+    {% for warning in pending_water_quality_import.warnings %}
+    <div class="warning-chip">{{ warning }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <form method="post" action="{{ url_for('confirm_import_water_quality_sheet') }}" class="form-grid">
+    <div class="full batch-table-wrap">
+      <table class="batch-entry-table import-preview-table">
+        <thead>
+          <tr>
+            <th>Importar</th>
+            <th>Linha da ficha</th>
+            <th>Viveiro</th>
+            <th>Data</th>
+            <th>pH</th>
+            <th>TAN</th>
+            <th>Nitrito</th>
+            <th>Nitrato</th>
+            <th>ALK</th>
+            <th>Dureza</th>
+            <th>Obs.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in pending_water_quality_import.rows %}
+          <tr>
+            <td><input type="checkbox" name="selected_indices" value="{{ loop.index0 }}" {% if row.selected %}checked{% endif %}></td>
+            <td>{{ row.row_name or '—' }}</td>
+            <td>
+              <select name="unit_id" required>
+                <option value="">Selecione</option>
+                {% for u in units %}
+                <option value="{{ u.id }}" {% if row.unit_id|string == u.id|string %}selected{% endif %}>{{ u.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td><input type="date" name="monitor_date" value="{{ row.monitor_date }}" required></td>
+            <td><input type="number" step="0.01" name="ph" value="{{ row.ph if row.ph is not none else '' }}"></td>
+            <td><input type="number" step="0.01" name="ammonia" value="{{ row.ammonia if row.ammonia is not none else '' }}"></td>
+            <td><input type="number" step="0.01" name="nitrite" value="{{ row.nitrite if row.nitrite is not none else '' }}"></td>
+            <td><input type="number" step="0.01" name="nitrate" value="{{ row.nitrate if row.nitrate is not none else '' }}"></td>
+            <td><input type="number" step="0.01" name="alkalinity" value="{{ row.alkalinity if row.alkalinity is not none else '' }}"></td>
+            <td><input type="number" step="0.01" name="hardness" value="{{ row.hardness if row.hardness is not none else '' }}"></td>
+            <td><input type="text" name="observation" value="{{ row.observation or '' }}"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="form-actions action-row-between full">
+      <button type="submit">Confirmar importação</button>
+      <button type="button" class="secondary-link-button" onclick="document.getElementById('cancel-quality-import-form').submit();">Cancelar prévia</button>
+    </div>
+  </form>
+  <form id="cancel-quality-import-form" method="post" action="{{ url_for('cancel_import_water_quality_sheet') }}"></form>
+</section>
+{% endif %}
+
+<div class="grid-2 water-grid-layout">
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Lançamento em lote</p><h2>Várias unidades na mesma data</h2></div></div>
+  <p class="empty-state compact-state">Preencha apenas os viveiros/berçários medidos. Se já existir registro para a mesma data e unidade, o sistema atualiza em vez de duplicar.</p>
+  <form method="post" class="form-grid water-batch-form">
+    <input type="hidden" name="entry_mode" value="batch">
+    <label>Data<input type="date" name="monitor_date" value="{{ today.isoformat() }}" required></label>
+    <div class="full batch-table-wrap">
+      <table class="batch-entry-table">
+        <thead>
+          <tr>
+            <th>Unidade</th>
+            <th>pH</th>
+            <th>Sal.</th>
+            <th>TAN</th>
+            <th>Nitrito</th>
+            <th>Nitrato</th>
+            <th>ALK</th>
+            <th>Dureza</th>
+            <th>Obs.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in units %}
+          <tr>
+            <td>
+              <input type="hidden" name="unit_id" value="{{ u.id }}">
+              <strong>{{ u.name }}</strong>
+            </td>
+            <td><input type="number" step="0.01" name="ph" placeholder="--"></td>
+            <td><input type="number" step="0.1" name="salinity" placeholder="--"></td>
+            <td><input type="number" step="0.01" name="ammonia" placeholder="--"></td>
+            <td><input type="number" step="0.01" name="nitrite" placeholder="--"></td>
+            <td><input type="number" step="0.01" name="nitrate" placeholder="--"></td>
+            <td><input type="number" step="0.01" name="alkalinity" placeholder="--"></td>
+            <td><input type="number" step="0.01" name="hardness" placeholder="--"></td>
+            <td><input type="text" name="observation" placeholder="Opcional"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="form-actions action-row-between full">
+      <button type="submit">Salvar qualidade em lote</button>
+      <span class="inline-hint">TAN é salvo como Amônia/TAN.</span>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Lançamento individual</p><h2>Análise avulsa</h2></div></div>
+  <form method="post" class="form-grid">
+    <input type="hidden" name="entry_mode" value="single">
+    <label>Data<input type="date" name="monitor_date" value="{{ today.isoformat() }}" required></label>
+    <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if selected_unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
+    <label>pH<input type="number" step="0.01" name="ph"></label>
+    <label>Salinidade (‰)<input type="number" step="0.1" name="salinity"></label>
+    <label>TAN / Amônia (mg/L)<input type="number" step="0.01" name="ammonia"></label>
+    <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite"></label>
+    <label>Nitrato (mg/L)<input type="number" step="0.01" name="nitrate"></label>
+    <label>Alcalinidade / ALK (mg/L)<input type="number" step="0.01" name="alkalinity"></label>
+    <label>Dureza (mg/L)<input type="number" step="0.01" name="hardness"></label>
+    <label class="full">Observação<textarea name="observation"></textarea></label>
+    <div class="form-actions"><button type="submit">Salvar análise</button></div>
+  </form>
+</section>
+</div>
+
+<section class="panel history-panel">
+<details class="reference-collapse history-collapse" {% if edit_record %}open{% endif %}>
+<summary class="reference-collapse-summary history-collapse-summary">
+  <div><p class="panel-kicker">Histórico</p><h2>Análises recentes</h2></div>
+  <span class="inline-hint">Clique para abrir ou recolher</span>
+</summary>
+<form method="get" class="form-grid compact-form history-toolbar">
+  <label>Filtrar por viveiro
+    <select name="unit_id">
+      <option value="">Todos</option>
+      {% for u in units %}
+      <option value="{{ u.id }}" {% if selected_unit_id == u.id %}selected{% endif %}>{{ u.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <input type="hidden" name="sort_by" value="{{ sort_by }}">
+  <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
+  <div class="form-actions history-toolbar-actions">
+    <button type="submit">Aplicar filtro</button>
+    <a class="secondary-link-button" href="{{ url_for('water_quality_page') }}">Limpar</a>
+  </div>
+</form>
+<p class="empty-state compact-state">Exibindo: <strong>{{ selected_unit.name if selected_unit else 'Todos os viveiros' }}</strong> · Clique no título da coluna para ordenar crescente ou decrescente.</p>
+<div class="table-wrap">
+<table>
+<thead>
+  <tr>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_quality_page', request.args, 'monitor_date') }}">Data <span>{{ sort_indicator('monitor_date', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_quality_page', request.args, 'unit') }}">Unidade <span>{{ sort_indicator('unit', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_quality_page', request.args, 'ph') }}">pH <span>{{ sort_indicator('ph', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_quality_page', request.args, 'salinity') }}">Sal. <span>{{ sort_indicator('salinity', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_quality_page', request.args, 'ammonia') }}">TAN <span>{{ sort_indicator('ammonia', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_quality_page', request.args, 'nitrite') }}">Nitrito <span>{{ sort_indicator('nitrite', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_quality_page', request.args, 'nitrate') }}">Nitrato <span>{{ sort_indicator('nitrate', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_quality_page', request.args, 'alkalinity') }}">ALK <span>{{ sort_indicator('alkalinity', sort_by, sort_dir) }}</span></a></th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_quality_page', request.args, 'hardness') }}">Dureza <span>{{ sort_indicator('hardness', sort_by, sort_dir) }}</span></a></th>
+    <th>Obs.</th>
+    <th></th>
+  </tr>
+</thead>
+<tbody>
+{% for r in records %}
+<tr>
+  <td>{{ r.monitor_date|brdate }}</td>
+  <td>{{ r.unit.name }}</td>
+  <td>{{ r.ph or '' }}</td>
+  <td>{{ r.salinity or '' }}</td>
+  <td>{{ r.ammonia or '' }}</td>
+  <td>{{ r.nitrite or '' }}</td>
+  <td>{{ r.nitrate or '' }}</td>
+  <td>{{ r.alkalinity or '' }}</td>
+  <td>{{ r.hardness or '' }}</td>
+  <td>{{ r.observation or '' }}</td>
+  <td class="actions-cell">
+    <div class="action-stack">
+      <a class="link-button small-button" href="{{ url_for('water_quality_page', unit_id=selected_unit_id, sort_by=sort_by, sort_dir=sort_dir, edit_id=r.id) }}">Editar</a>
+      <form method="post" action="{{ url_for('delete_water_record', record_id=r.id) }}" onsubmit="return confirm('Excluir este registro de qualidade?');">
+        <button type="submit" class="danger-button small-button">Excluir</button>
+      </form>
+    </div>
+  </td>
+</tr>
+{% else %}
+<tr><td colspan="11" class="empty-cell">Nenhum registro encontrado para esse filtro.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+
+{% if edit_record %}
+<hr class="panel-divider">
+<div class="panel-head"><div><p class="panel-kicker">Edição</p><h2>Editar análise selecionada</h2></div></div>
+<form method="post" action="{{ url_for('edit_water_record', record_id=edit_record.id) }}" class="form-grid">
+  <label>Data<input type="date" name="monitor_date" value="{{ edit_record.monitor_date.isoformat() }}" required></label>
+  <input type="hidden" name="shift" value="{{ edit_record.shift or 'manha' }}">
+  <input type="hidden" name="monitor_time" value="{{ edit_record.monitor_time.strftime('%H:%M') if edit_record.monitor_time else '' }}">
+  <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if edit_record.unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
+  <label>pH<input type="number" step="0.01" name="ph" value="{{ edit_record.ph if edit_record.ph is not none else '' }}"></label>
+  <label>Salinidade (‰)<input type="number" step="0.1" name="salinity" value="{{ edit_record.salinity if edit_record.salinity is not none else '' }}"></label>
+  <label>TAN / Amônia (mg/L)<input type="number" step="0.01" name="ammonia" value="{{ edit_record.ammonia if edit_record.ammonia is not none else '' }}"></label>
+  <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite" value="{{ edit_record.nitrite if edit_record.nitrite is not none else '' }}"></label>
+  <label>Nitrato (mg/L)<input type="number" step="0.01" name="nitrate" value="{{ edit_record.nitrate if edit_record.nitrate is not none else '' }}"></label>
+  <label>Alcalinidade / ALK (mg/L)<input type="number" step="0.01" name="alkalinity" value="{{ edit_record.alkalinity if edit_record.alkalinity is not none else '' }}"></label>
+  <label>Dureza (mg/L)<input type="number" step="0.01" name="hardness" value="{{ edit_record.hardness if edit_record.hardness is not none else '' }}"></label>
+  <label class="full">Observação<textarea name="observation">{{ edit_record.observation or '' }}</textarea></label>
+  <div class="form-actions action-row-between">
+    <button type="submit">Salvar alterações</button>
+    <a class="secondary-link-button" href="{{ url_for('water_quality_page', unit_id=selected_unit_id, sort_by=sort_by, sort_dir=sort_dir) }}">Cancelar edição</a>
+  </div>
+</form>
+{% endif %}
+</details>
+</section>
+{% endblock %}

@@ -1,37 +1,30 @@
 {% extends 'base.html' %}
 {% block page_title %}Monitoramento da água{% endblock %}
-{% block page_subtitle %}Agora você pode lançar várias leituras do mesmo viveiro na mesma tela, ajustar as faixas de referência e acompanhar o histórico mais rápido.{% endblock %}
+{% block page_subtitle %}Lançamento operacional de rotina: temperatura, oxigênio dissolvido e transparência. Os parâmetros químicos ficam na aba Qualidade de água.{% endblock %}
 {% block content %}
 <section class="panel">
   <details class="reference-collapse">
     <summary class="reference-collapse-summary">
       <div>
         <p class="panel-kicker">Faixas de referência</p>
-        <h2>Editar faixas de referência</h2>
+        <h2>Monitoramento operacional</h2>
       </div>
       <span class="inline-hint">Clique para abrir ou recolher</span>
     </summary>
-    <p class="empty-state compact-state">Tudo que estiver fora dessas faixas pode aparecer em <strong>alertas de água</strong> no painel operacional.</p>
+    <p class="empty-state compact-state">Essas faixas controlam os alertas de <strong>temperatura</strong>, <strong>OD</strong> e <strong>transparência</strong>. pH, TAN, nitrito, nitrato, alcalinidade, dureza e salinidade agora ficam na aba <strong>Qualidade de água</strong>.</p>
     <form method="post" action="{{ url_for('update_water_reference_ranges', unit_id=selected_unit_id) }}" class="form-grid reference-grid">
-    <label>OD mín. (mg/L)<input type="number" step="0.01" name="od_min" value="{{ reference_config.od_min if reference_config.od_min is not none else '' }}"></label>
-    <label>OD máx. (mg/L)<input type="number" step="0.01" name="od_max" value="{{ reference_config.od_max if reference_config.od_max is not none else '' }}"></label>
-    <label>pH mín.<input type="number" step="0.01" name="ph_min" value="{{ reference_config.ph_min if reference_config.ph_min is not none else '' }}"></label>
-    <label>pH máx.<input type="number" step="0.01" name="ph_max" value="{{ reference_config.ph_max if reference_config.ph_max is not none else '' }}"></label>
-    <label>Temperatura mín. (°C)<input type="number" step="0.01" name="temperature_min" value="{{ reference_config.temperature_min if reference_config.temperature_min is not none else '' }}"></label>
-    <label>Temperatura máx. (°C)<input type="number" step="0.01" name="temperature_max" value="{{ reference_config.temperature_max if reference_config.temperature_max is not none else '' }}"></label>
-    <label>Salinidade mín. (‰)<input type="number" step="0.01" name="salinity_min" value="{{ reference_config.salinity_min if reference_config.salinity_min is not none else '' }}"></label>
-    <label>Salinidade máx. (‰)<input type="number" step="0.01" name="salinity_max" value="{{ reference_config.salinity_max if reference_config.salinity_max is not none else '' }}"></label>
-    <label>Transparência mín. (cm)<input type="number" step="0.01" name="transparency_min" value="{{ reference_config.transparency_min if reference_config.transparency_min is not none else '' }}"></label>
-    <label>Transparência máx. (cm)<input type="number" step="0.01" name="transparency_max" value="{{ reference_config.transparency_max if reference_config.transparency_max is not none else '' }}"></label>
-    <label>Amônia mín. (mg/L)<input type="number" step="0.01" name="ammonia_min" value="{{ reference_config.ammonia_min if reference_config.ammonia_min is not none else '' }}"></label>
-    <label>Amônia máx. (mg/L)<input type="number" step="0.01" name="ammonia_max" value="{{ reference_config.ammonia_max if reference_config.ammonia_max is not none else '' }}"></label>
-    <label>Nitrito mín. (mg/L)<input type="number" step="0.01" name="nitrite_min" value="{{ reference_config.nitrite_min if reference_config.nitrite_min is not none else '' }}"></label>
-    <label>Nitrito máx. (mg/L)<input type="number" step="0.01" name="nitrite_max" value="{{ reference_config.nitrite_max if reference_config.nitrite_max is not none else '' }}"></label>
-    <div class="form-actions action-row-between full">
-      <button type="submit">Salvar faixas de referência</button>
-      <span class="inline-hint">Última atualização: {{ reference_config.updated_at.strftime('%d/%m/%Y %H:%M') if reference_config.updated_at else '—' }}</span>
-    </div>
-  </form>
+      <input type="hidden" name="return_to" value="water_page">
+      <label>OD mín. (mg/L)<input type="number" step="0.01" name="od_min" value="{{ reference_config.od_min if reference_config.od_min is not none else '' }}"></label>
+      <label>OD máx. (mg/L)<input type="number" step="0.01" name="od_max" value="{{ reference_config.od_max if reference_config.od_max is not none else '' }}"></label>
+      <label>Temperatura mín. (°C)<input type="number" step="0.01" name="temperature_min" value="{{ reference_config.temperature_min if reference_config.temperature_min is not none else '' }}"></label>
+      <label>Temperatura máx. (°C)<input type="number" step="0.01" name="temperature_max" value="{{ reference_config.temperature_max if reference_config.temperature_max is not none else '' }}"></label>
+      <label>Transparência mín. (cm)<input type="number" step="0.01" name="transparency_min" value="{{ reference_config.transparency_min if reference_config.transparency_min is not none else '' }}"></label>
+      <label>Transparência máx. (cm)<input type="number" step="0.01" name="transparency_max" value="{{ reference_config.transparency_max if reference_config.transparency_max is not none else '' }}"></label>
+      <div class="form-actions action-row-between full">
+        <button type="submit">Salvar faixas de referência</button>
+        <span class="inline-hint">Última atualização: {{ reference_config.updated_at.strftime('%d/%m/%Y %H:%M') if reference_config.updated_at else '—' }}</span>
+      </div>
+    </form>
   </details>
 
   <div class="reference-summary-grid">
@@ -45,8 +38,8 @@
 </section>
 
 <section class="panel">
-  <div class="panel-head"><div><p class="panel-kicker">Importação por foto com IA</p><h2>Ler ficha automaticamente</h2></div></div>
-  <p class="empty-state compact-state">Envie a foto da ficha e a IA devolve os dados estruturados. Agora o sistema pode <strong>identificar automaticamente</strong> se a ficha é <strong>diurna</strong> ou <strong>noturna</strong>. A coluna <strong>18:00</strong> sozinha não define ficha noturna: o sistema usa o cabeçalho <strong>DIA/NOITE</strong> e o conjunto de colunas. Na ficha <strong>noturna</strong>, os horários de <strong>00:00, 02:00 e 04:00</strong> entram automaticamente no <strong>dia seguinte</strong>. A foto não é salva no banco.</p>
+  <div class="panel-head"><div><p class="panel-kicker">Importação por foto com IA</p><h2>Ler ficha de monitoramento</h2></div></div>
+  <p class="empty-state compact-state">Use esta importação para fichas de rotina com horários. Nesta aba entram apenas <strong>temperatura</strong>, <strong>OD</strong> e <strong>transparência</strong>. A foto não é salva no banco.</p>
   <form method="post" action="{{ url_for('import_water_sheet') }}" enctype="multipart/form-data" class="form-grid">
     <label>Tipo da ficha
       <select name="sheet_type" required>
@@ -91,9 +84,7 @@
             <th>Hora</th>
             <th>OD</th>
             <th>Temp.</th>
-            <th>pH</th>
-            <th>Amônia</th>
-            <th>Nitrito</th>
+            <th>Transp.</th>
           </tr>
         </thead>
         <tbody>
@@ -116,9 +107,7 @@
             <td><input type="time" name="time" value="{{ row.time }}" required></td>
             <td><input type="number" step="0.1" name="dissolved_oxygen" value="{{ row.dissolved_oxygen if row.dissolved_oxygen is not none else '' }}"></td>
             <td><input type="number" step="0.1" name="temperature_c" value="{{ row.temperature_c if row.temperature_c is not none else '' }}"></td>
-            <td><input type="number" step="0.1" name="ph" value="{{ row.ph if row.ph is not none else '' }}"></td>
-            <td><input type="number" step="0.01" name="ammonia" value="{{ row.ammonia if row.ammonia is not none else '' }}"></td>
-            <td><input type="number" step="0.01" name="nitrite" value="{{ row.nitrite if row.nitrite is not none else '' }}"></td>
+            <td><input type="number" step="0.1" name="transparency_cm" value="{{ row.transparency_cm if row.transparency_cm is not none else '' }}"></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -139,7 +128,7 @@
 <div class="grid-2 water-grid-layout">
 <section class="panel">
   <div class="panel-head"><div><p class="panel-kicker">Lançamento em lote</p><h2>Vários horários na mesma tela</h2></div></div>
-  <p class="empty-state compact-state">Use esta área quando quiser digitar de uma vez as leituras de 00:00, 02:00, 04:00, 07:00, 16:00 e 18:00. Preencha só os horários que tiver medido.</p>
+  <p class="empty-state compact-state">Preencha só os horários que tiver medido. Os parâmetros químicos foram movidos para Qualidade de água.</p>
   <form method="post" class="form-grid water-batch-form">
     <input type="hidden" name="entry_mode" value="batch">
     <label>Data<input type="date" name="monitor_date" value="{{ today.isoformat() }}" required></label>
@@ -158,11 +147,7 @@
             <th>Hora</th>
             <th>Temp. (°C)</th>
             <th>OD (mg/L)</th>
-            <th>pH</th>
-            <th>Sal. (‰)</th>
             <th>Transp. (cm)</th>
-            <th>Amônia (mg/L)</th>
-            <th>Nitrito</th><th>Nitrato</th><th>Alcalin.</th><th>Dureza</th>
             <th>Obs.</th>
           </tr>
         </thead>
@@ -175,11 +160,7 @@
             </td>
             <td><input type="number" step="0.1" name="temperature_c" placeholder="--"></td>
             <td><input type="number" step="0.1" name="dissolved_oxygen" placeholder="--"></td>
-            <td><input type="number" step="0.1" name="ph" placeholder="--"></td>
-            <td><input type="number" step="0.1" name="salinity" placeholder="--"></td>
             <td><input type="number" step="0.1" name="transparency_cm" placeholder="--"></td>
-            <td><input type="number" step="0.01" name="ammonia" placeholder="--"></td>
-            <td><input type="number" step="0.01" name="nitrite" placeholder="--"></td><td><input type="number" step="0.01" name="nitrate" placeholder="--"></td><td><input type="number" step="0.01" name="alkalinity" placeholder="--"></td><td><input type="number" step="0.01" name="hardness" placeholder="--"></td>
             <td><input type="text" name="observation" placeholder="Opcional"></td>
           </tr>
           {% endfor %}
@@ -204,11 +185,7 @@
     <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if selected_unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
     <label>Temperatura (°C)<input type="number" step="0.1" name="temperature_c"></label>
     <label>OD (mg/L)<input type="number" step="0.1" name="dissolved_oxygen"></label>
-    <label>pH<input type="number" step="0.1" name="ph"></label>
-    <label>Salinidade (‰)<input type="number" step="0.1" name="salinity"></label>
     <label>Transparência (cm)<input type="number" step="0.1" name="transparency_cm"></label>
-    <label>Amônia (mg/L)<input type="number" step="0.01" name="ammonia"></label>
-    <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite"></label><label>Nitrato (mg/L)<input type="number" step="0.01" name="nitrate"></label><label>Alcalinidade (mg/L)<input type="number" step="0.01" name="alkalinity"></label><label>Dureza (mg/L)<input type="number" step="0.01" name="hardness"></label>
     <label class="full">Observação<textarea name="observation"></textarea></label>
     <div class="form-actions"><button type="submit">Salvar leitura avulsa</button></div>
   </form>
@@ -247,10 +224,9 @@
     <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'shift') }}">Turno <span>{{ sort_indicator('shift', sort_by, sort_dir) }}</span></a></th>
     <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'unit') }}">Unidade <span>{{ sort_indicator('unit', sort_by, sort_dir) }}</span></a></th>
     <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'od') }}">OD (mg/L) <span>{{ sort_indicator('od', sort_by, sort_dir) }}</span></a></th>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'ph') }}">pH <span>{{ sort_indicator('ph', sort_by, sort_dir) }}</span></a></th>
     <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'temperature') }}">Temp. (°C) <span>{{ sort_indicator('temperature', sort_by, sort_dir) }}</span></a></th>
-    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'salinity') }}">Sal. (‰) <span>{{ sort_indicator('salinity', sort_by, sort_dir) }}</span></a></th>
-    <th>Transp.</th><th>Amônia</th><th>Nitrito</th><th>Nitrato</th><th>Alcalin.</th><th>Dureza</th><th>Obs.</th>
+    <th><a class="sortable-link" href="{{ build_sort_url('water_page', request.args, 'transparency') }}">Transp. <span>{{ sort_indicator('transparency', sort_by, sort_dir) }}</span></a></th>
+    <th>Obs.</th>
     <th></th>
   </tr>
 </thead>
@@ -262,10 +238,9 @@
   <td>{{ r.shift|shift_label }}</td>
   <td>{{ r.unit.name }}</td>
   <td>{{ r.dissolved_oxygen or '' }}</td>
-  <td>{{ r.ph or '' }}</td>
   <td>{{ r.temperature_c or '' }}</td>
-  <td>{{ r.salinity or '' }}</td>
-  <td>{{ r.transparency_cm or '' }}</td><td>{{ r.ammonia or '' }}</td><td>{{ r.nitrite or '' }}</td><td>{{ r.nitrate or '' }}</td><td>{{ r.alkalinity or '' }}</td><td>{{ r.hardness or '' }}</td><td>{{ r.observation or '' }}</td>
+  <td>{{ r.transparency_cm or '' }}</td>
+  <td>{{ r.observation or '' }}</td>
   <td class="actions-cell">
     <div class="action-stack">
       <a class="link-button small-button" href="{{ url_for('water_page', unit_id=selected_unit_id, sort_by=sort_by, sort_dir=sort_dir, edit_id=r.id) }}">Editar</a>
@@ -276,7 +251,7 @@
   </td>
 </tr>
 {% else %}
-<tr><td colspan="16" class="empty-cell">Nenhum registro encontrado para esse filtro.</td></tr>
+<tr><td colspan="9" class="empty-cell">Nenhum registro encontrado para esse filtro.</td></tr>
 {% endfor %}
 </tbody>
 </table>
@@ -292,11 +267,7 @@
   <label>Unidade<select name="unit_id">{% for u in units %}<option value="{{u.id}}" {% if edit_record.unit_id == u.id %}selected{% endif %}>{{u.name}}</option>{% endfor %}</select></label>
   <label>Temperatura (°C)<input type="number" step="0.1" name="temperature_c" value="{{ edit_record.temperature_c if edit_record.temperature_c is not none else '' }}"></label>
   <label>OD (mg/L)<input type="number" step="0.1" name="dissolved_oxygen" value="{{ edit_record.dissolved_oxygen if edit_record.dissolved_oxygen is not none else '' }}"></label>
-  <label>pH<input type="number" step="0.1" name="ph" value="{{ edit_record.ph if edit_record.ph is not none else '' }}"></label>
-  <label>Salinidade (‰)<input type="number" step="0.1" name="salinity" value="{{ edit_record.salinity if edit_record.salinity is not none else '' }}"></label>
   <label>Transparência (cm)<input type="number" step="0.1" name="transparency_cm" value="{{ edit_record.transparency_cm if edit_record.transparency_cm is not none else '' }}"></label>
-  <label>Amônia (mg/L)<input type="number" step="0.01" name="ammonia" value="{{ edit_record.ammonia if edit_record.ammonia is not none else '' }}"></label>
-  <label>Nitrito (mg/L)<input type="number" step="0.01" name="nitrite" value="{{ edit_record.nitrite if edit_record.nitrite is not none else '' }}"></label><label>Nitrato (mg/L)<input type="number" step="0.01" name="nitrate" value="{{ edit_record.nitrate if edit_record.nitrate is not none else '' }}"></label><label>Alcalinidade (mg/L)<input type="number" step="0.01" name="alkalinity" value="{{ edit_record.alkalinity if edit_record.alkalinity is not none else '' }}"></label><label>Dureza (mg/L)<input type="number" step="0.01" name="hardness" value="{{ edit_record.hardness if edit_record.hardness is not none else '' }}"></label>
   <label class="full">Observação<textarea name="observation">{{ edit_record.observation or '' }}</textarea></label>
   <div class="form-actions action-row-between">
     <button type="submit">Salvar alterações</button>
