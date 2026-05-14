@@ -6693,7 +6693,13 @@ def lot_financial_summary(lot: Lot):
     current_units = lot_current_units(lot)
     allocation_rows = build_allocation_rows(lot)
     harvested_units = lot_total_harvested_units(lot.id)
-    survival_pct = round((harvested_units / lot.initial_count) * 100, 2) if lot.initial_count else None
+    if lot.initial_count:
+        if harvested_units > 0:
+            survival_pct = round((harvested_units / lot.initial_count) * 100, 2)
+        else:
+            survival_pct = round((allocation_live_count_for_lot(lot) / lot.initial_count) * 100, 2)
+    else:
+        survival_pct = None
     total_feed_offered = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
     harvested_kg = lot_total_harvested_kg(lot.id)
     fcr_real = round(total_feed_offered / harvested_kg, 2) if harvested_kg else None
@@ -7392,25 +7398,108 @@ def safe_round(value, digits=1):
     return round(value, digits)
 
 
-def latest_weight_for_lot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]]):
-    records = records_by_lot.get(lot.id, [])
-    for record in sorted(records, key=lambda item: (item.manage_date, item.id), reverse=True):
-        if record.average_weight_g is not None:
-            return round(record.average_weight_g, 3)
-    if lot.estimated_weight_g is not None:
+def active_allocations_for_lot(lot: Lot, on_date=None):
+    """Alocações vivas do lote na data, já refletindo transferências reais."""
+    if not lot or not lot.id:
+        return []
+    on_date = on_date or local_today()
+    return LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+    ).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
+
+
+def latest_transfer_for_lot(lot: Lot, on_date=None):
+    if not lot or not lot.id:
+        return None
+    on_date = on_date or local_today()
+    return Transfer.query.filter(
+        Transfer.source_lot_id == lot.id,
+        Transfer.transfer_date <= on_date,
+    ).order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).first()
+
+
+def latest_real_population_marker_date(lot: Lot, on_date=None):
+    """Última data em que a população deixou de ser só estimativa e virou contagem real/operacional."""
+    latest_transfer = latest_transfer_for_lot(lot, on_date=on_date)
+    return latest_transfer.transfer_date if latest_transfer and latest_transfer.transfer_date else (lot.start_date if lot else None)
+
+
+def _sum_mortality_after_marker(lot_id: int, unit_id: int | None, start_date: date | None, up_to_date: date):
+    query = DailyManagement.query.filter(
+        DailyManagement.lot_id == lot_id,
+        DailyManagement.manage_date <= up_to_date,
+    )
+    if unit_id:
+        query = query.filter(DailyManagement.unit_id == unit_id)
+    if start_date:
+        # A contagem da transferência já inclui perdas até aquele momento; não desconta de novo.
+        query = query.filter(DailyManagement.manage_date > start_date)
+    return int(sum(row.mortality_qty or 0 for row in query.all()))
+
+
+def _sum_harvested_after_marker(lot_id: int, unit_id: int | None, start_date: date | None, up_to_date: date):
+    query = Sale.query.filter(
+        Sale.lot_id == lot_id,
+        Sale.sale_date <= up_to_date,
+    )
+    if unit_id:
+        query = query.filter(Sale.unit_id == unit_id)
+    if start_date:
+        query = query.filter(Sale.sale_date > start_date)
+    total = 0
+    for sale in query.all():
+        harvested_units = sale.harvested_units
+        if harvested_units is None and sale.average_weight_g:
+            harvested_units = int(round(((sale.quantity_kg or 0) * 1000) / sale.average_weight_g))
+        total += harvested_units or 0
+    return int(total or 0)
+
+
+def allocation_live_count_for_lot(lot: Lot, on_date=None):
+    """População viva atual baseada no último saldo real por unidade, menos perdas posteriores."""
+    if not lot or not lot.id:
+        return 0
+    on_date = on_date or local_today()
+    allocations = active_allocations_for_lot(lot, on_date=on_date)
+    if allocations:
+        total = 0
+        for allocation in allocations:
+            base_qty = allocation.quantity_allocated
+            if base_qty is None:
+                base_qty = lot.initial_count or 0
+            mortality = _sum_mortality_after_marker(lot.id, allocation.unit_id, allocation.start_date, on_date)
+            harvested = _sum_harvested_after_marker(lot.id, allocation.unit_id, allocation.start_date, on_date)
+            total += max(int(base_qty or 0) - mortality - harvested, 0)
+        return int(total)
+    mortality = total_mortality_for_lot(lot.id, up_to_date=on_date)
+    harvested = lot_total_harvested_units(lot.id)
+    return max(int(lot.initial_count or 0) - mortality - harvested, 0)
+
+
+def latest_weight_for_lot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]] | None = None):
+    # Usa a linha única de observações: manejo < biometria < transferência real no mesmo dia.
+    observations = merged_weight_observations(lot.id) if lot and lot.id else []
+    if observations:
+        return round(observations[-1]['weight_g'], 3)
+    if lot and lot.estimated_weight_g is not None:
         return round(lot.estimated_weight_g, 3)
     return None
 
 
-def latest_biomass_for_lot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]], allocations_by_lot: dict[int, list[LotUnitAllocation]]):
-    records = records_by_lot.get(lot.id, [])
+def latest_biomass_for_lot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]], allocations_by_lot: dict[int, list[LotUnitAllocation]] | None = None):
+    records = records_by_lot.get(lot.id, []) if records_by_lot else []
+    marker_date = latest_real_population_marker_date(lot)
     for record in sorted(records, key=lambda item: (item.manage_date, item.id), reverse=True):
-        if record.estimated_biomass_kg is not None:
+        if record.estimated_biomass_kg is not None and (not marker_date or record.manage_date >= marker_date):
             return round(record.estimated_biomass_kg, 1)
+
     latest_weight = latest_weight_for_lot(lot, records_by_lot)
     if latest_weight is None:
         return None
-    qty = sum((allocation.quantity_allocated or 0) for allocation in allocations_by_lot.get(lot.id, [])) or lot.initial_count or 0
+    qty = allocation_live_count_for_lot(lot)
     if qty <= 0:
         return None
     return round((qty * latest_weight) / 1000, 1)
@@ -7420,47 +7509,61 @@ def lot_mortality_total(lot_id: int, records_by_lot: dict[int, list[DailyManagem
     return int(sum(record.mortality_qty or 0 for record in records_by_lot.get(lot_id, [])))
 
 
-def survival_estimate_for_lot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]]):
-    if not lot.initial_count:
+def survival_estimate_for_lot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]] | None = None, on_date=None):
+    if not lot or not lot.initial_count:
         return None
-    losses = lot_mortality_total(lot.id, records_by_lot) + lot_total_harvested_units(lot.id)
-    survivors = max(lot.initial_count - losses, 0)
+    on_date = on_date or local_today()
+    survivors = allocation_live_count_for_lot(lot, on_date=on_date)
     return round((survivors / lot.initial_count) * 100, 1)
 
 
-def average_daily_growth(records: list[DailyManagement]):
-    weighted_records = [record for record in sorted(records, key=lambda item: (item.manage_date, item.id)) if record.average_weight_g is not None]
-    if len(weighted_records) < 2:
+def _weight_observations_from_records(records: list[DailyManagement]):
+    observations = []
+    for record in sorted(records, key=lambda item: (item.manage_date, item.id)):
+        if record.average_weight_g is None or not record.manage_date:
+            continue
+        observations.append({
+            'date': record.manage_date,
+            'weight_g': record.average_weight_g,
+        })
+    return observations
+
+
+def average_daily_growth(records: list[DailyManagement], lot_id: int | None = None):
+    observations = merged_weight_observations(lot_id) if lot_id else _weight_observations_from_records(records)
+    observations = [obs for obs in observations if obs.get('weight_g') is not None]
+    if len(observations) < 2:
         return None
-    latest = weighted_records[-1]
+    latest = observations[-1]
     baseline = None
-    for candidate in reversed(weighted_records[:-1]):
-        days = (latest.manage_date - candidate.manage_date).days
+    for candidate in reversed(observations[:-1]):
+        days = (latest['date'] - candidate['date']).days
         if days >= 5:
             baseline = candidate
             break
     if baseline is None:
-        baseline = weighted_records[-2]
-    days = max((latest.manage_date - baseline.manage_date).days, 1)
-    return max((latest.average_weight_g - baseline.average_weight_g) / days, 0)
+        baseline = observations[-2]
+    days = max((latest['date'] - baseline['date']).days, 1)
+    return max(((latest['weight_g'] or 0) - (baseline['weight_g'] or 0)) / days, 0)
 
 
-def growth_weekly_pct(records: list[DailyManagement]):
-    weighted_records = [record for record in sorted(records, key=lambda item: (item.manage_date, item.id)) if record.average_weight_g is not None]
-    if len(weighted_records) < 2:
+def growth_weekly_pct(records: list[DailyManagement], lot_id: int | None = None):
+    observations = merged_weight_observations(lot_id) if lot_id else _weight_observations_from_records(records)
+    observations = [obs for obs in observations if obs.get('weight_g') is not None]
+    if len(observations) < 2:
         return None
-    latest = weighted_records[-1]
+    latest = observations[-1]
     baseline = None
-    for candidate in reversed(weighted_records[:-1]):
-        days = (latest.manage_date - candidate.manage_date).days
+    for candidate in reversed(observations[:-1]):
+        days = (latest['date'] - candidate['date']).days
         if days >= 5:
             baseline = candidate
             break
     if baseline is None:
-        baseline = weighted_records[-2]
-    if not baseline.average_weight_g:
+        baseline = observations[-2]
+    if not baseline['weight_g']:
         return None
-    return round(((latest.average_weight_g - baseline.average_weight_g) / baseline.average_weight_g) * 100, 1)
+    return round((((latest['weight_g'] or 0) - baseline['weight_g']) / baseline['weight_g']) * 100, 1)
 
 
 def phase_growth_baselines():
@@ -7473,7 +7576,7 @@ def phase_growth_baselines():
         lot = records[0].lot if records and records[0].lot else None
         if not lot:
             continue
-        growth = average_daily_growth(records)
+        growth = average_daily_growth(records, lot_id=lot.id)
         if growth is not None and growth > 0:
             phase_values[lot.phase].append(growth)
     return {phase: (sum(values) / len(values) if values else None) for phase, values in phase_values.items()}
@@ -7500,9 +7603,11 @@ def predict_lot_metrics(lot: Lot, records_by_lot: dict[int, list[DailyManagement
     current_biomass = latest_biomass_for_lot(lot, records_by_lot, allocations_by_lot)
     if not current_biomass and current_weight:
         current_biomass = round((modeled_live_count_for_lot(lot) * current_weight) / 1000, 2)
-    survival_now = survival_estimate_for_lot(lot, records_by_lot)
+    survival_now = survival_estimate_for_lot(lot, records_by_lot, on_date=today)
     standard_survival = standard_survival_pct_for_lot(lot, on_date=today)
-    if standard_survival is not None and survival_now is not None:
+    # Sem transferência real, usa a tabela como teto para não superestimar lotes jovens.
+    # Com transferência, a quantidade real informada passa a mandar na sobrevivência.
+    if not latest_transfer_for_lot(lot, on_date=today) and standard_survival is not None and survival_now is not None:
         survival_now = min(survival_now, standard_survival)
     recent_mortality = sum((record.mortality_qty or 0) for record in records if (today - record.manage_date).days <= 7)
     predicted_survival = survival_now
@@ -7657,7 +7762,7 @@ def dashboard_data():
     latest_weight_map = {lot.id: latest_weight_for_lot(lot, records_by_lot) for lot in active_lots}
     latest_biomass_map = {lot.id: latest_biomass_for_lot(lot, records_by_lot, allocations_by_lot) for lot in active_lots}
     survival_map = {lot.id: survival_estimate_for_lot(lot, records_by_lot) for lot in active_lots}
-    growth_map = {lot.id: growth_weekly_pct(records_by_lot.get(lot.id, [])) for lot in active_lots}
+    growth_map = {lot.id: growth_weekly_pct(records_by_lot.get(lot.id, []), lot.id) for lot in active_lots}
 
     def active_qty_for_lot(lot: Lot):
         allocated = sum((allocation.quantity_allocated or 0) for allocation in allocations_by_lot.get(lot.id, []))
@@ -7758,19 +7863,26 @@ def dashboard_data():
         if not lot or lot.id not in active_lot_ids:
             continue
         unit_biomass = None
+        allocation = next((allocation for allocation in allocations_by_lot.get(lot.id, []) if allocation.unit_id == unit.id), None)
         latest_unit_mgmt = latest_mgmt_by_unit.get(unit.id)
-        if latest_unit_mgmt and latest_unit_mgmt.estimated_biomass_kg is not None:
+        if (
+            latest_unit_mgmt
+            and latest_unit_mgmt.estimated_biomass_kg is not None
+            and (not allocation or not allocation.start_date or latest_unit_mgmt.manage_date >= allocation.start_date)
+        ):
             unit_biomass = round(latest_unit_mgmt.estimated_biomass_kg, 1)
         else:
-            allocation = next((allocation for allocation in allocations_by_lot.get(lot.id, []) if allocation.unit_id == unit.id), None)
-            if allocation and latest_weight_map.get(lot.id) is not None and allocation.quantity_allocated:
-                unit_biomass = round((allocation.quantity_allocated * latest_weight_map[lot.id]) / 1000, 1)
+            live_qty = allocation_live_count_for_lot(lot)
+            if allocation and allocation.quantity_allocated:
+                live_qty = max((allocation.quantity_allocated or 0) - _sum_mortality_after_marker(lot.id, allocation.unit_id, allocation.start_date, today) - _sum_harvested_after_marker(lot.id, allocation.unit_id, allocation.start_date, today), 0)
+            if latest_weight_map.get(lot.id) is not None and live_qty:
+                unit_biomass = round((live_qty * latest_weight_map[lot.id]) / 1000, 1)
         biomass_unit_rows.append({'unit_name': unit.name, 'biomass': unit_biomass or 0})
     biomass_unit_rows.sort(key=lambda row: row['biomass'], reverse=True)
 
     growth_alerts = []
     for lot in active_lots:
-        weekly = growth_weekly_pct(records_by_lot.get(lot.id, []))
+        weekly = growth_weekly_pct(records_by_lot.get(lot.id, []), lot.id)
         if weekly is not None and avg_growth_weekly is not None and weekly < (avg_growth_weekly * 0.75):
             growth_alerts.append({'lot_code': lot.lot_code, 'value': weekly})
 
@@ -7818,19 +7930,18 @@ def dashboard_data():
 
     chart_colors = ['#3b82f6', '#22c55e', '#7c3aed', '#f97316']
     chart_lots = sorted(active_lots, key=lambda lot: lot.start_date, reverse=True)[:4]
-    growth_dates = sorted({record.manage_date for lot in chart_lots for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None and start_date <= record.manage_date <= end_date})
+    growth_observations_by_lot = {lot.id: merged_weight_observations(lot.id) for lot in chart_lots}
+    growth_dates = sorted({obs['date'] for lot in chart_lots for obs in growth_observations_by_lot.get(lot.id, []) if start_date <= obs['date'] <= end_date})
     if not growth_dates:
-        growth_dates = sorted({record.manage_date for lot in chart_lots for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None})
+        growth_dates = sorted({obs['date'] for lot in chart_lots for obs in growth_observations_by_lot.get(lot.id, [])})
     growth_dates = growth_dates[-6:]
     growth_chart_labels = [point.strftime('%d/%m') for point in growth_dates]
     growth_chart_datasets = []
     for idx, lot in enumerate(chart_lots):
-        lot_records = [record for record in records_by_lot.get(lot.id, []) if record.average_weight_g is not None]
-        if not lot_records:
+        lot_observations = growth_observations_by_lot.get(lot.id, [])
+        if not lot_observations:
             continue
-        lookup = {}
-        for record in lot_records:
-            lookup[record.manage_date] = round(record.average_weight_g, 2)
+        lookup = {obs['date']: round(obs['weight_g'], 2) for obs in lot_observations}
         growth_chart_datasets.append({
             'label': lot.lot_code,
             'data': [lookup.get(point) for point in growth_dates],
@@ -10443,6 +10554,61 @@ def serialize_management_series(records, field):
     return pts
 
 
+def serialize_weight_series_with_real_transfers(mgmt_records, unit_id=None, start_date=None):
+    """Série de peso médio incluindo manejo, biometria e biometria real informada na transferência."""
+    rows = []
+    for r in mgmt_records:
+        if r.average_weight_g is None or not r.manage_date:
+            continue
+        rows.append({
+            'sort_key': (r.manage_date, 1, r.id),
+            'label': f"{r.unit.name + ' · ' if r.unit else ''}{r.manage_date.strftime('%d/%m/%Y')} · Manejo",
+            'value': round(r.average_weight_g, 3),
+            'unit': r.unit.name if r.unit else '',
+            'date': r.manage_date.strftime('%d/%m/%Y'),
+            'source': 'Manejo diário',
+        })
+
+    bio_query = BiometricsSample.query.options(joinedload(BiometricsSample.unit), joinedload(BiometricsSample.lot)).filter(BiometricsSample.average_weight_g.isnot(None))
+    if start_date:
+        bio_query = bio_query.filter(BiometricsSample.sample_date >= start_date)
+    if unit_id:
+        bio_query = bio_query.filter(BiometricsSample.unit_id == unit_id)
+    for r in bio_query.order_by(BiometricsSample.sample_date.asc(), BiometricsSample.id.asc()).all():
+        if r.average_weight_g is None or not r.sample_date:
+            continue
+        rows.append({
+            'sort_key': (r.sample_date, 2, r.id),
+            'label': f"{r.unit.name + ' · ' if r.unit else ''}{r.sample_date.strftime('%d/%m/%Y')} · Biometria",
+            'value': round(r.average_weight_g, 3),
+            'unit': r.unit.name if r.unit else '',
+            'date': r.sample_date.strftime('%d/%m/%Y'),
+            'source': 'Biometria',
+        })
+
+    transfer_query = Transfer.query.options(joinedload(Transfer.destination_unit), joinedload(Transfer.source_lot)).filter(Transfer.avg_weight_g.isnot(None))
+    if start_date:
+        transfer_query = transfer_query.filter(Transfer.transfer_date >= start_date)
+    if unit_id:
+        transfer_query = transfer_query.filter(Transfer.destination_unit_id == unit_id)
+    for r in transfer_query.order_by(Transfer.transfer_date.asc(), Transfer.id.asc()).all():
+        if r.avg_weight_g is None or not r.transfer_date:
+            continue
+        rows.append({
+            'sort_key': (r.transfer_date, 3, r.id),
+            'label': f"{r.destination_unit.name + ' · ' if r.destination_unit else ''}{r.transfer_date.strftime('%d/%m/%Y')} · Transferência real",
+            'value': round(r.avg_weight_g, 3),
+            'unit': r.destination_unit.name if r.destination_unit else '',
+            'date': r.transfer_date.strftime('%d/%m/%Y'),
+            'source': 'Transferência real',
+        })
+
+    rows.sort(key=lambda item: item['sort_key'])
+    for item in rows:
+        item.pop('sort_key', None)
+    return rows
+
+
 @app.route('/charts')
 @login_required
 @requires_permission('dashboard')
@@ -10474,6 +10640,8 @@ def charts_page():
     selected_parameter = parameter_options[selected_parameter_key]
     if selected_parameter['group'] == 'water':
         points = serialize_water_series(water_records, selected_parameter['field'])
+    elif selected_parameter_key == 'average_weight':
+        points = serialize_weight_series_with_real_transfers(mgmt_records, unit_id=unit_id, start_date=start_date)
     else:
         points = serialize_management_series(mgmt_records, selected_parameter['field'])
 
@@ -11544,45 +11712,56 @@ def latest_biometric_for_lot(lot_id):
 
 def merged_weight_observations(lot_id):
     observations_by_date = {}
+
+    def put_observation(payload):
+        existing = observations_by_date.get(payload['date'])
+        if not existing or (payload['source_priority'], payload['id']) >= (existing['source_priority'], existing['id']):
+            observations_by_date[payload['date']] = payload
+
     for row in DailyManagement.query.filter(DailyManagement.lot_id == lot_id, DailyManagement.average_weight_g.isnot(None)).order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc()).all():
         if not row.manage_date or row.average_weight_g is None:
             continue
-        payload = {
+        put_observation({
             'date': row.manage_date,
             'weight_g': round(row.average_weight_g or 0, 3),
             'source': 'manejo',
             'source_label': 'Manejo diário',
             'source_priority': 1,
             'id': row.id,
-        }
-        existing = observations_by_date.get(row.manage_date)
-        if not existing or (payload['source_priority'], payload['id']) >= (existing['source_priority'], existing['id']):
-            observations_by_date[row.manage_date] = payload
+        })
+
     for row in BiometricsSample.query.filter(BiometricsSample.lot_id == lot_id, BiometricsSample.average_weight_g.isnot(None)).order_by(BiometricsSample.sample_date.asc(), BiometricsSample.id.asc()).all():
         if not row.sample_date or row.average_weight_g is None:
             continue
-        payload = {
+        put_observation({
             'date': row.sample_date,
             'weight_g': round(row.average_weight_g or 0, 3),
             'source': 'biometria',
             'source_label': 'Biometria',
             'source_priority': 2,
             'id': row.id,
-        }
-        existing = observations_by_date.get(row.sample_date)
-        if not existing or (payload['source_priority'], payload['id']) >= (existing['source_priority'], existing['id']):
-            observations_by_date[row.sample_date] = payload
+        })
+
+    for row in Transfer.query.filter(Transfer.source_lot_id == lot_id, Transfer.avg_weight_g.isnot(None)).order_by(Transfer.transfer_date.asc(), Transfer.id.asc()).all():
+        if not row.transfer_date or row.avg_weight_g is None:
+            continue
+        unit_label = row.destination_unit.name if row.destination_unit else 'destino'
+        put_observation({
+            'date': row.transfer_date,
+            'weight_g': round(row.avg_weight_g or 0, 3),
+            'source': 'transferencia',
+            'source_label': f'Transferência real para {unit_label}',
+            'source_priority': 3,
+            'id': row.id,
+        })
+
     return [item for _day, item in sorted(observations_by_date.items(), key=lambda pair: pair[0])]
 
 
 def lot_density_snapshot(lot: Lot, on_date=None):
     on_date = on_date or local_today()
-    allocation = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
-        LotUnitAllocation.lot_id == lot.id,
-        LotUnitAllocation.start_date <= on_date,
-        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
-    ).order_by(LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc()).first()
-    qty = allocation.quantity_allocated if allocation and allocation.quantity_allocated else lot.initial_count
+    allocation = (active_allocations_for_lot(lot, on_date=on_date) or [None])[-1]
+    qty = allocation.quantity_allocated if allocation and allocation.quantity_allocated else allocation_live_count_for_lot(lot, on_date=on_date)
     unit = allocation.unit if allocation and allocation.unit else lot.unit
     if not unit or not unit.area_m2 or not qty:
         return None
@@ -11941,22 +12120,17 @@ def adaptive_survival_profile_for_lot(lot: Lot, on_date=None):
 
 
 def modeled_live_count_for_lot(lot: Lot, on_date=None):
-    """Contagem viva usada em projeções/sugestão quando ainda não há despesca real.
+    """Contagem viva usada em projeções/sugestão.
 
-    Usa mortalidade lançada, mas evita superestimar biomassa quando há pouca mortalidade visível,
-    aplicando a sobrevivência da tabela-base calibrada pelo histórico real como teto inicial. Biomassa real lançada em biometria
-    continua tendo prioridade nas sugestões de ração.
+    Depois de uma transferência, a quantidade transferida vira o novo marco real do lote.
+    A curva de sobrevivência só limita lotes que ainda não têm contagem real de transferência.
     """
     on_date = on_date or local_today()
-    allocations = LotUnitAllocation.query.filter(
-        LotUnitAllocation.lot_id == lot.id,
-        LotUnitAllocation.start_date <= on_date,
-        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
-    ).all()
-    base_count = sum((allocation.quantity_allocated or 0) for allocation in allocations) or (parse_int(getattr(lot, 'initial_count', 0), 0) or 0)
-    mortality = total_mortality_for_lot(lot.id, up_to_date=on_date)
+    mortality_adjusted = allocation_live_count_for_lot(lot, on_date=on_date)
+    base_count = sum((allocation.quantity_allocated or 0) for allocation in active_allocations_for_lot(lot, on_date=on_date)) or (parse_int(getattr(lot, 'initial_count', 0), 0) or 0)
     harvested = lot_total_harvested_units(lot.id)
-    mortality_adjusted = max(base_count - mortality - harvested, 0)
+    if latest_transfer_for_lot(lot, on_date=on_date):
+        return mortality_adjusted
     survival_profile = adaptive_survival_profile_for_lot(lot, on_date=on_date)
     modeled_survival = survival_profile.get('survival_pct')
     if modeled_survival is None or harvested > 0 or not base_count:
@@ -12133,14 +12307,7 @@ def total_mortality_for_lot(lot_id: int, up_to_date=None):
 
 
 def current_live_count_for_lot(lot):
-    allocations = LotUnitAllocation.query.filter(
-        LotUnitAllocation.lot_id == lot.id,
-        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= local_today()),
-    ).all()
-    base_count = sum((allocation.quantity_allocated or 0) for allocation in allocations) or (parse_int(getattr(lot, 'initial_count', 0), 0) or 0)
-    mortality = total_mortality_for_lot(lot.id)
-    harvested = lot_total_harvested_units(lot.id)
-    return max(base_count - mortality - harvested, 0)
+    return allocation_live_count_for_lot(lot, on_date=local_today())
 
 
 def feed_profile_for_weight(weight):
