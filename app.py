@@ -390,6 +390,7 @@ class Transfer(db.Model):
     source_phase = db.Column(db.String(30))
     destination_phase = db.Column(db.String(30))
     transferred_qty = db.Column(db.Integer, nullable=False)
+    close_source_after_transfer = db.Column(db.Boolean, nullable=False, default=False)
     avg_weight_g = db.Column(db.Float)
     notes = db.Column(db.Text)
     source_unit = db.relationship('Unit', foreign_keys=[source_unit_id])
@@ -6084,6 +6085,7 @@ def run_lightweight_migrations():
         transfer_columns = get_columns('transfer')
         add_column_if_missing('transfer', transfer_columns, 'source_phase', 'ALTER TABLE transfer ADD COLUMN source_phase VARCHAR(30)', 'ALTER TABLE transfer ADD COLUMN source_phase VARCHAR(30)')
         add_column_if_missing('transfer', transfer_columns, 'destination_phase', 'ALTER TABLE transfer ADD COLUMN destination_phase VARCHAR(30)', 'ALTER TABLE transfer ADD COLUMN destination_phase VARCHAR(30)')
+        add_column_if_missing('transfer', transfer_columns, 'close_source_after_transfer', 'ALTER TABLE transfer ADD COLUMN close_source_after_transfer BOOLEAN DEFAULT 0', 'ALTER TABLE transfer ADD COLUMN close_source_after_transfer BOOLEAN DEFAULT FALSE')
 
     if 'sale' in tables:
         sale_columns = get_columns('sale')
@@ -6189,6 +6191,9 @@ def run_lightweight_migrations():
 
     backfill_lot_allocations_and_status()
     sync_transfer_phase_history()
+    sync_transfer_close_source_flags()
+    rebuild_all_lot_allocations_from_transfer_history()
+    db.session.commit()
     sync_feed_products_from_legacy_movements()
     normalize_auto_nursery_feed_product_names()
     cleanup_ghost_feed_products()
@@ -6278,6 +6283,163 @@ def sync_transfer_phase_history():
         db.session.flush()
 
 
+def sync_transfer_close_source_flags():
+    """Preserva a intenção antiga de "encerrar origem" antes de recalcular saldos.
+
+    Versões anteriores guardavam essa decisão apenas em LotUnitAllocation.end_date.
+    A partir de agora o flag fica no próprio histórico da transferência para que edições
+    e recálculos futuros não tragam de volta saldo residual que já saiu da unidade.
+    """
+    changed = False
+    for transfer in Transfer.query.all():
+        if getattr(transfer, 'close_source_after_transfer', False):
+            continue
+        closed_source = LotUnitAllocation.query.filter(
+            LotUnitAllocation.lot_id == transfer.source_lot_id,
+            LotUnitAllocation.unit_id == transfer.source_unit_id,
+            LotUnitAllocation.end_date == transfer.transfer_date,
+        ).first()
+        if closed_source:
+            transfer.close_source_after_transfer = True
+            changed = True
+    if changed:
+        db.session.flush()
+
+
+def rebuild_lot_allocations_from_transfer_history(lot: Lot):
+    """Recalcula os saldos vivos do lote a partir do cadastro inicial + histórico de transferências.
+
+    A tabela Transfer é o histórico oficial do que aconteceu. A tela "Saldos vivos estimados"
+    lê LotUnitAllocation, então sempre que uma transferência é editada precisamos reconstruir
+    essa tabela derivada para evitar saldo fantasma na origem ou no destino.
+    """
+    if not lot or not lot.id:
+        return []
+
+    warnings = []
+    initial_qty = max(int(lot.initial_count or 0), 0)
+    state = {}
+
+    if lot.unit_id and initial_qty > 0:
+        state[lot.unit_id] = {
+            'qty': initial_qty,
+            'start_date': lot.start_date or local_today(),
+            'notes': 'Alocação inicial do lote.',
+        }
+
+    # Remove o mapa derivado antigo. Ele será recriado abaixo com base no histórico oficial.
+    LotUnitAllocation.query.filter_by(lot_id=lot.id).delete(synchronize_session=False)
+
+    def add_allocation(unit_id, start_date, end_date, qty, notes):
+        if not unit_id or not start_date or not qty or qty <= 0:
+            return
+        if end_date and end_date < start_date:
+            return
+        db.session.add(LotUnitAllocation(
+            lot_id=lot.id,
+            unit_id=unit_id,
+            start_date=start_date,
+            end_date=end_date,
+            quantity_allocated=int(qty),
+            notes=notes,
+        ))
+
+    transfers = (
+        Transfer.query
+        .filter_by(source_lot_id=lot.id)
+        .order_by(Transfer.transfer_date.asc(), Transfer.id.asc())
+        .all()
+    )
+
+    for transfer in transfers:
+        qty_requested = max(int(transfer.transferred_qty or 0), 0)
+        if qty_requested <= 0 or not transfer.source_unit_id or not transfer.destination_unit_id:
+            continue
+        if transfer.source_unit_id == transfer.destination_unit_id:
+            warnings.append(f'Transferência #{transfer.id} ignorada porque origem e destino são iguais.')
+            continue
+
+        source_state = state.get(transfer.source_unit_id)
+        available_qty = int(source_state['qty']) if source_state else 0
+        if available_qty <= 0:
+            warnings.append(
+                f'Transferência #{transfer.id} não encontrou saldo disponível na origem; confira a ordem/data do histórico.'
+            )
+            continue
+
+        received_qty = min(qty_requested, available_qty)
+        if received_qty < qty_requested:
+            warnings.append(
+                f'Transferência #{transfer.id} pedia {qty_requested:,} un., mas só havia {available_qty:,} un. na origem; o saldo foi limitado ao disponível.'.replace(',', '.')
+            )
+
+        # Quando a origem foi encerrada, a diferença entre o saldo estimado e o transferido
+        # é tratada como perda/ajuste de sobrevivência, sem reaparecer como saldo fantasma.
+        removed_from_source = available_qty if transfer.close_source_after_transfer else received_qty
+
+        transfer_date = transfer.transfer_date or local_today()
+        close_date = transfer_date - timedelta(days=1)
+
+        # Fecha o trecho anterior da origem e abre novo trecho apenas se ainda restou saldo.
+        add_allocation(
+            transfer.source_unit_id,
+            source_state['start_date'],
+            close_date,
+            available_qty,
+            source_state.get('notes') or 'Saldo anterior à transferência.',
+        )
+        remaining_qty = available_qty - removed_from_source
+        if remaining_qty > 0:
+            state[transfer.source_unit_id] = {
+                'qty': remaining_qty,
+                'start_date': transfer_date,
+                'notes': 'Saldo recalculado após transferência parcial.',
+            }
+        else:
+            state.pop(transfer.source_unit_id, None)
+
+        # Se o destino já tinha saldo desse lote, fecha o trecho anterior e reabre somado.
+        destination_state = state.get(transfer.destination_unit_id)
+        if destination_state:
+            add_allocation(
+                transfer.destination_unit_id,
+                destination_state['start_date'],
+                close_date,
+                destination_state['qty'],
+                destination_state.get('notes') or 'Saldo anterior à nova entrada.',
+            )
+            new_destination_qty = int(destination_state['qty']) + received_qty
+        else:
+            new_destination_qty = received_qty
+
+        state[transfer.destination_unit_id] = {
+            'qty': new_destination_qty,
+            'start_date': transfer_date,
+            'notes': 'Saldo recalculado automaticamente a partir das transferências.',
+        }
+
+    final_end_date = lot.end_date if lot.status == 'encerrado' else None
+    for unit_id, payload in state.items():
+        add_allocation(
+            unit_id,
+            payload['start_date'],
+            final_end_date,
+            payload['qty'],
+            payload.get('notes') or 'Saldo recalculado automaticamente.',
+        )
+
+    db.session.flush()
+    return warnings
+
+
+def rebuild_all_lot_allocations_from_transfer_history():
+    warnings = []
+    for lot in Lot.query.order_by(Lot.start_date.asc(), Lot.id.asc()).all():
+        warnings.extend(rebuild_lot_allocations_from_transfer_history(lot))
+        sync_lot_phase_from_allocations(lot, local_today())
+    return warnings
+
+
 def sync_lot_allocations_after_lot_edit(lot: Lot, old_unit_id=None, old_initial_count=None, old_start_date=None):
     """Keeps the live allocation map consistent after editing the core lot fields.
 
@@ -6308,33 +6470,10 @@ def sync_lot_allocations_after_lot_edit(lot: Lot, old_unit_id=None, old_initial_
             db.session.delete(extra)
         return
 
-    # With transfer history we preserve the movement log, but still fix the original allocation
-    # metadata. If the original allocation is still the only live saldo, its quantity is safe to update.
-    primary = next((a for a in allocations if a.notes and 'Alocação inicial' in a.notes), None) or (allocations[0] if allocations else None)
-    if not primary:
-        db.session.add(LotUnitAllocation(
-            lot_id=lot.id,
-            unit_id=lot.unit_id,
-            start_date=lot.start_date,
-            end_date=desired_end_date,
-            quantity_allocated=desired_qty,
-            notes='Alocação inicial do lote.'
-        ))
-        return
-
-    if primary.start_date == old_start_date or (primary.notes and 'Alocação inicial' in primary.notes):
-        primary.start_date = lot.start_date
-    if primary.unit_id == old_unit_id or (primary.notes and 'Alocação inicial' in primary.notes):
-        primary.unit_id = lot.unit_id
-
-    today = local_today()
-    active_allocations = [
-        a for a in allocations
-        if a.start_date <= today and (a.end_date is None or a.end_date >= today) and (a.quantity_allocated is None or a.quantity_allocated > 0)
-    ]
-    if len(active_allocations) == 1 and active_allocations[0].id == primary.id:
-        primary.quantity_allocated = desired_qty
-        primary.end_date = desired_end_date
+    # If there is movement history, the safest correction is to rebuild the derived saldo map.
+    # This also fixes edits to initial_count/unit/start_date after transfers already exist.
+    rebuild_lot_allocations_from_transfer_history(lot)
+    return
 
 
 def close_lot(lot: Lot, close_date: date, reason: str = 'encerrado_manual'):
@@ -10603,6 +10742,7 @@ def transfers_page():
         avg_weight_g = parse_float(request.form.get('avg_weight_g'))
         requested_source_phase = (request.form.get('source_phase') or '').strip()
         requested_destination_phase = (request.form.get('destination_phase') or '').strip()
+        close_source_after_transfer = request.form.get('close_source_allocation') == '1'
 
         source_allocation_id = parse_int(request.form.get('source_allocation_id'))
         source_allocation = db.session.get(LotUnitAllocation, source_allocation_id) if source_allocation_id else None
@@ -10646,6 +10786,8 @@ def transfers_page():
             if not tr:
                 flash('Transferência não encontrada.', 'warning')
                 return redirect(url_for('transfers_page'))
+
+            old_lot_id = tr.source_lot_id
             tr.transfer_date = transfer_date
             tr.source_unit_id = src_id
             tr.destination_unit_id = destination_unit_id
@@ -10654,11 +10796,23 @@ def transfers_page():
             tr.source_phase = source_phase
             tr.destination_phase = destination_phase
             tr.transferred_qty = transferred_qty
+            tr.close_source_after_transfer = close_source_after_transfer
             tr.avg_weight_g = avg_weight_g
             tr.notes = request.form.get('notes')
-            sync_lot_phase_from_allocations(src_lot, transfer_date)
+
+            db.session.flush()
+            affected_lot_ids = {lot_id for lot_id in (old_lot_id, src_lot.id) if lot_id}
+            rebuild_warnings = []
+            for lot_id in affected_lot_ids:
+                lot_to_sync = db.session.get(Lot, lot_id)
+                rebuild_warnings.extend(rebuild_lot_allocations_from_transfer_history(lot_to_sync))
+                sync_lot_phase_from_allocations(lot_to_sync, transfer_date)
+
             db.session.commit()
-            flash('Transferência atualizada. Observação: a edição altera o histórico; para corrigir saldo, ajuste a movimentação correspondente.', 'success')
+            if rebuild_warnings:
+                flash('Transferência atualizada e saldos recalculados, mas revise o histórico: ' + ' | '.join(rebuild_warnings[:3]), 'warning')
+            else:
+                flash('Transferência atualizada e saldos vivos recalculados automaticamente.', 'success')
             return redirect(url_for('transfers_page'))
 
         existing_allocation = find_active_allocation(src_lot.id, destination_unit_id, transfer_date)
@@ -10684,6 +10838,7 @@ def transfers_page():
             source_phase=source_phase,
             destination_phase=destination_phase,
             transferred_qty=transferred_qty,
+            close_source_after_transfer=close_source_after_transfer,
             avg_weight_g=avg_weight_g,
             notes=request.form.get('notes')
         )
@@ -10693,13 +10848,19 @@ def transfers_page():
         if source_allocation.quantity_allocated is not None:
             remaining_qty = max((source_allocation.quantity_allocated or 0) - transferred_qty, 0)
             source_allocation.quantity_allocated = remaining_qty
-        should_close_source = request.form.get('close_source_allocation') == '1' or remaining_qty == 0
+        should_close_source = close_source_after_transfer or remaining_qty == 0
+        tr.close_source_after_transfer = should_close_source
         if should_close_source:
             source_allocation.end_date = transfer_date
 
+        db.session.flush()
+        rebuild_warnings = rebuild_lot_allocations_from_transfer_history(src_lot)
         sync_lot_phase_from_allocations(src_lot, transfer_date)
         db.session.commit()
-        flash('Transferência registrada. O lote agora pode seguir no fluxo Berçário → Juvenil → Engorda, inclusive com divisões parciais.', 'success')
+        if rebuild_warnings:
+            flash('Transferência registrada e saldos recalculados, mas revise o histórico: ' + ' | '.join(rebuild_warnings[:3]), 'warning')
+        else:
+            flash('Transferência registrada. Os saldos vivos foram recalculados automaticamente.', 'success')
         return redirect(url_for('transfers_page'))
 
     units = Unit.query.filter_by(active=True).order_by(Unit.phase, Unit.name).all()
