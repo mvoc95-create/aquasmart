@@ -6318,20 +6318,33 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
     A tabela Transfer é o histórico oficial do que aconteceu. A tela "Saldos vivos estimados"
     lê LotUnitAllocation, então sempre que uma transferência é editada precisamos reconstruir
     essa tabela derivada para evitar saldo fantasma na origem ou no destino.
+
+    Regra importante: quando existe uma transferência com contagem real, ela precisa virar
+    o novo marco de população. Se o lote foi cadastrado originalmente já no destino
+    (caso comum quando o sistema começou a ser usado depois da estocagem no berçário),
+    a primeira transferência informa onde o lote estava antes. Nessa situação, a quantidade
+    transferida substitui a expectativa anterior em vez de manter o saldo inicial fantasma.
     """
     if not lot or not lot.id:
         return []
 
     warnings = []
     initial_qty = max(int(lot.initial_count or 0), 0)
-    state = {}
 
-    if lot.unit_id and initial_qty > 0:
-        state[lot.unit_id] = {
-            'qty': initial_qty,
-            'start_date': lot.start_date or local_today(),
-            'notes': 'Alocação inicial do lote.',
-        }
+    transfers = (
+        Transfer.query
+        .filter_by(source_lot_id=lot.id)
+        .order_by(Transfer.transfer_date.asc(), Transfer.id.asc())
+        .all()
+    )
+    valid_transfers = [
+        transfer for transfer in transfers
+        if max(int(transfer.transferred_qty or 0), 0) > 0
+        and transfer.source_unit_id
+        and transfer.destination_unit_id
+        and transfer.source_unit_id != transfer.destination_unit_id
+    ]
+    first_valid_transfer = valid_transfers[0] if valid_transfers else None
 
     # Remove o mapa derivado antigo. Ele será recriado abaixo com base no histórico oficial.
     LotUnitAllocation.query.filter_by(lot_id=lot.id).delete(synchronize_session=False)
@@ -6350,12 +6363,29 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             notes=notes,
         ))
 
-    transfers = (
-        Transfer.query
-        .filter_by(source_lot_id=lot.id)
-        .order_by(Transfer.transfer_date.asc(), Transfer.id.asc())
-        .all()
-    )
+    state = {}
+    inferred_first_source = False
+    initial_unit_id = lot.unit_id
+    initial_note = 'Alocação inicial do lote.'
+
+    if first_valid_transfer and first_valid_transfer.source_unit_id and first_valid_transfer.source_unit_id != lot.unit_id:
+        # O lote estava cadastrado em uma unidade diferente da origem real da primeira
+        # transferência. Usa a origem da transferência como ponto inicial operacional.
+        initial_unit_id = first_valid_transfer.source_unit_id
+        inferred_first_source = True
+        initial_note = 'Origem inicial reconstruída pela primeira transferência real.'
+
+    if initial_unit_id and (initial_qty > 0 or first_valid_transfer):
+        seed_qty = initial_qty
+        if seed_qty <= 0 and first_valid_transfer:
+            seed_qty = max(int(first_valid_transfer.transferred_qty or 0), 0)
+        if seed_qty > 0:
+            state[initial_unit_id] = {
+                'qty': seed_qty,
+                'start_date': lot.start_date or (first_valid_transfer.transfer_date if first_valid_transfer else local_today()),
+                'notes': initial_note,
+                'inferred_first_source': inferred_first_source,
+            }
 
     for transfer in transfers:
         qty_requested = max(int(transfer.transferred_qty or 0), 0)
@@ -6365,26 +6395,42 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             warnings.append(f'Transferência #{transfer.id} ignorada porque origem e destino são iguais.')
             continue
 
+        transfer_date = transfer.transfer_date or local_today()
+        close_date = transfer_date - timedelta(days=1)
         source_state = state.get(transfer.source_unit_id)
-        available_qty = int(source_state['qty']) if source_state else 0
-        if available_qty <= 0:
-            warnings.append(
-                f'Transferência #{transfer.id} não encontrou saldo disponível na origem; confira a ordem/data do histórico.'
-            )
-            continue
+        inferred_missing_source = False
 
-        received_qty = min(qty_requested, available_qty)
-        if received_qty < qty_requested:
+        if not source_state:
+            # Não ignora a transferência. Em versões anteriores, isso mantinha o saldo inicial
+            # no destino e fazia dashboard/biomassa/sobrevivência continuarem usando a expectativa.
+            # Aqui a própria transferência vira o marco real do lote.
+            source_state = {
+                'qty': max(qty_requested, initial_qty if not state else 0),
+                'start_date': lot.start_date or transfer_date,
+                'notes': 'Origem reconstruída automaticamente por transferência real sem saldo anterior.',
+                'inferred_first_source': True,
+            }
+            state[transfer.source_unit_id] = source_state
+            inferred_missing_source = True
+
+        available_qty = int(source_state['qty']) if source_state else 0
+        received_qty = qty_requested
+
+        if available_qty > 0 and qty_requested > available_qty and not source_state.get('inferred_first_source'):
+            received_qty = available_qty
             warnings.append(
                 f'Transferência #{transfer.id} pedia {qty_requested:,} un., mas só havia {available_qty:,} un. na origem; o saldo foi limitado ao disponível.'.replace(',', '.')
             )
 
-        # Quando a origem foi encerrada, a diferença entre o saldo estimado e o transferido
-        # é tratada como perda/ajuste de sobrevivência, sem reaparecer como saldo fantasma.
-        removed_from_source = available_qty if transfer.close_source_after_transfer else received_qty
-
-        transfer_date = transfer.transfer_date or local_today()
-        close_date = transfer_date - timedelta(days=1)
+        # Se a origem foi reconstruída/inferida pela própria transferência, considera que a
+        # contagem informada substitui a expectativa anterior. Assim 11.000 transferidos
+        # deixam de competir com 265.000 esperados no dashboard.
+        effective_close_source = bool(
+            transfer.close_source_after_transfer
+            or inferred_missing_source
+            or (source_state.get('inferred_first_source') and first_valid_transfer and transfer.id == first_valid_transfer.id)
+        )
+        removed_from_source = available_qty if effective_close_source else min(received_qty, available_qty)
 
         # Fecha o trecho anterior da origem e abre novo trecho apenas se ainda restou saldo.
         add_allocation(
@@ -6394,12 +6440,13 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             available_qty,
             source_state.get('notes') or 'Saldo anterior à transferência.',
         )
-        remaining_qty = available_qty - removed_from_source
+        remaining_qty = max(available_qty - removed_from_source, 0)
         if remaining_qty > 0:
             state[transfer.source_unit_id] = {
                 'qty': remaining_qty,
                 'start_date': transfer_date,
                 'notes': 'Saldo recalculado após transferência parcial.',
+                'inferred_first_source': False,
             }
         else:
             state.pop(transfer.source_unit_id, None)
@@ -6421,7 +6468,8 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
         state[transfer.destination_unit_id] = {
             'qty': new_destination_qty,
             'start_date': transfer_date,
-            'notes': 'Saldo recalculado automaticamente a partir das transferências.',
+            'notes': 'Saldo recalculado automaticamente a partir das transferências reais.',
+            'inferred_first_source': False,
         }
 
     final_end_date = lot.end_date if lot.status == 'encerrado' else None
@@ -7820,6 +7868,9 @@ def dashboard_data():
     growth_map = {lot.id: growth_weekly_pct(records_by_lot.get(lot.id, []), lot.id) for lot in active_lots}
 
     def active_qty_for_lot(lot: Lot):
+        live_count = allocation_live_count_for_lot(lot, on_date=today)
+        if live_count is not None:
+            return live_count
         allocated = sum((allocation.quantity_allocated or 0) for allocation in allocations_by_lot.get(lot.id, []))
         return allocated if allocated > 0 else (lot.initial_count or 0)
 
@@ -10969,6 +11020,17 @@ def transfers_page():
 
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'create')
+        if form_mode == 'rebuild_allocations':
+            rebuild_warnings = rebuild_all_lot_allocations_from_transfer_history()
+            for lot in Lot.query.all():
+                sync_lot_phase_from_allocations(lot, local_today())
+            db.session.commit()
+            if rebuild_warnings:
+                flash('Saldos recalculados, mas revise estes pontos: ' + ' | '.join(rebuild_warnings[:3]), 'warning')
+            else:
+                flash('Saldos vivos recalculados com base nas transferências reais.', 'success')
+            return redirect(url_for('transfers_page'))
+
         transfer_date = parse_date(request.form.get('transfer_date'), local_today())
         destination_unit_id = parse_int(request.form.get('destination_unit_id'))
         destination_unit = db.session.get(Unit, destination_unit_id) if destination_unit_id else None
