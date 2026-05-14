@@ -210,6 +210,10 @@ class Lot(db.Model):
     notes = db.Column(db.Text)
     larva_supplier = db.Column(db.String(120))
     entry_pl_stage = db.Column(db.Integer)
+    # Custo de aquisição das PLs/larvas vinculado ao lote.
+    # larva_unit_cost = R$/milheiro; larva_total_cost = custo total já calculado/ajustado.
+    larva_unit_cost = db.Column(db.Float)
+    larva_total_cost = db.Column(db.Float, default=0)
     unit = db.relationship('Unit')
 
 
@@ -6075,6 +6079,8 @@ def run_lightweight_migrations():
         add_column_if_missing('lot', lot_columns, 'closed_reason', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)', 'ALTER TABLE lot ADD COLUMN closed_reason VARCHAR(60)')
         add_column_if_missing('lot', lot_columns, 'larva_supplier', 'ALTER TABLE lot ADD COLUMN larva_supplier VARCHAR(120)', 'ALTER TABLE lot ADD COLUMN larva_supplier VARCHAR(120)')
         add_column_if_missing('lot', lot_columns, 'entry_pl_stage', 'ALTER TABLE lot ADD COLUMN entry_pl_stage INTEGER', 'ALTER TABLE lot ADD COLUMN entry_pl_stage INTEGER')
+        add_column_if_missing('lot', lot_columns, 'larva_unit_cost', 'ALTER TABLE lot ADD COLUMN larva_unit_cost FLOAT', 'ALTER TABLE lot ADD COLUMN larva_unit_cost DOUBLE PRECISION')
+        add_column_if_missing('lot', lot_columns, 'larva_total_cost', 'ALTER TABLE lot ADD COLUMN larva_total_cost FLOAT DEFAULT 0', 'ALTER TABLE lot ADD COLUMN larva_total_cost DOUBLE PRECISION DEFAULT 0')
 
 
     if 'lot_unit_allocation' in tables:
@@ -6686,9 +6692,55 @@ def build_allocation_rows(lot: Lot, on_date=None):
     return rows
 
 
+def lot_larva_cost(lot: Lot):
+    """Custo total das PLs/larvas do lote.
+
+    Prioriza o valor total informado no cadastro. Se o operador informar apenas
+    o custo por milheiro, calcula automaticamente pela quantidade inicial.
+    """
+    if not lot:
+        return 0.0
+    total = lot.larva_total_cost or 0
+    if total > 0:
+        return round(total, 2)
+    unit_cost = lot.larva_unit_cost or 0
+    if unit_cost > 0 and lot.initial_count:
+        return round((lot.initial_count / 1000) * unit_cost, 2)
+    return 0.0
+
+
+def calculate_larva_cost_for_unit(lot: Lot, unit_id: int, on_date: date | None = None):
+    """Rateia o custo das PLs para uma unidade/viveiro no momento da venda.
+
+    Quando um lote está dividido em mais de um viveiro, usa a quantidade alocada
+    para evitar jogar 100% do custo de larva em uma única despesca parcial.
+    """
+    if not lot or not unit_id:
+        return 0.0
+    total = lot_larva_cost(lot)
+    if total <= 0:
+        return 0.0
+    on_date = on_date or local_today()
+    allocation = find_active_allocation(lot.id, unit_id, on_date)
+    if allocation and allocation.quantity_allocated:
+        active_allocations = LotUnitAllocation.query.filter(
+            LotUnitAllocation.lot_id == lot.id,
+            LotUnitAllocation.start_date <= on_date,
+            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+            or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+        ).all()
+        denominator = sum((item.quantity_allocated or 0) for item in active_allocations) or lot.initial_count or 0
+        if denominator > 0:
+            return round(total * ((allocation.quantity_allocated or 0) / denominator), 2)
+    if lot.unit_id == unit_id:
+        return round(total, 2)
+    return 0.0
+
+
 def lot_financial_summary(lot: Lot):
     feed_cost = db.session.query(func.coalesce(func.sum(DailyManagement.feed_total_cost), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
     supply_cost = db.session.query(func.coalesce(func.sum(ManagementSupplyUsage.total_cost), 0)).join(DailyManagement, DailyManagement.id == ManagementSupplyUsage.management_id).filter(DailyManagement.lot_id == lot.id).scalar() or 0
+    larva_cost = lot_larva_cost(lot)
     fixed_cost = calculate_fixed_cost_for_lot(lot)
     current_units = lot_current_units(lot)
     allocation_rows = build_allocation_rows(lot)
@@ -6707,8 +6759,9 @@ def lot_financial_summary(lot: Lot):
         'lot': lot,
         'feed_cost': round(feed_cost, 2),
         'supply_cost': round(supply_cost, 2),
+        'larva_cost': larva_cost,
         'fixed_cost': fixed_cost,
-        'total_cost': round((feed_cost or 0) + (supply_cost or 0) + fixed_cost, 2),
+        'total_cost': round((feed_cost or 0) + (supply_cost or 0) + larva_cost + fixed_cost, 2),
         'current_units': current_units,
         'allocations': allocation_rows,
         'harvested_units': harvested_units,
@@ -6723,8 +6776,9 @@ def sale_financial_summary(sale: Sale):
     allocation = find_active_allocation(sale.lot_id, sale.unit_id, sale.sale_date)
     feed_cost = calculate_feed_cost_for_unit(sale.lot_id, sale.unit_id, sale.sale_date)
     supply_cost = calculate_supply_cost_for_unit(sale.lot_id, sale.unit_id, sale.sale_date)
+    larva_cost = calculate_larva_cost_for_unit(sale.lot, sale.unit_id, sale.sale_date)
     fixed_cost = calculate_fixed_cost_for_allocation(sale.lot, sale.unit_id, sale.lot.start_date, sale.sale_date)
-    total_cost = round(feed_cost + supply_cost + fixed_cost, 2)
+    total_cost = round(feed_cost + supply_cost + larva_cost + fixed_cost, 2)
     revenue = round((sale.quantity_kg or 0) * (sale.unit_price or 0), 2)
     harvested_units = sale.harvested_units or 0
     if not harvested_units and sale.average_weight_g:
@@ -6743,6 +6797,7 @@ def sale_financial_summary(sale: Sale):
         'density': allocation_density(allocation) if allocation else None,
         'feed_cost': feed_cost,
         'supply_cost': supply_cost,
+        'larva_cost': larva_cost,
         'fixed_cost': fixed_cost,
         'total_cost': total_cost,
         'revenue': revenue,
@@ -7792,6 +7847,7 @@ def dashboard_data():
     lot_summaries = [lot_financial_summary(lot) for lot in active_lots]
     total_feed_cost = round(sum(summary['feed_cost'] for summary in lot_summaries), 2)
     total_supply_cost = round(sum(summary.get('supply_cost', 0) for summary in lot_summaries), 2)
+    total_larva_cost = round(sum(summary.get('larva_cost', 0) for summary in lot_summaries), 2)
     total_fixed_cost = round(sum(summary['fixed_cost'] for summary in lot_summaries), 2)
     total_cost_active = round(sum(summary['total_cost'] for summary in lot_summaries), 2)
     estimated_cost_per_kg = round(total_cost_active / total_biomass_active, 2) if total_biomass_active > 0 else None
@@ -8013,6 +8069,7 @@ def dashboard_data():
         'financial': {
             'feed_cost': total_feed_cost,
             'supply_cost': total_supply_cost,
+            'larva_cost': total_larva_cost,
             'fixed_cost': total_fixed_cost,
             'estimated_cost_per_kg': estimated_cost_per_kg,
             'month_profit': total_profit_period,
@@ -8256,6 +8313,15 @@ def lots_page():
         lot.status = request.form.get('status') or lot.status or 'ativo'
         lot.larva_supplier = (request.form.get('larva_supplier') or '').strip() or None
         lot.entry_pl_stage = parse_int(request.form.get('entry_pl_stage'))
+        larva_unit_cost = parse_float(request.form.get('larva_unit_cost'))
+        larva_total_cost = parse_float(request.form.get('larva_total_cost'))
+        lot.larva_unit_cost = larva_unit_cost if larva_unit_cost is not None else None
+        if larva_total_cost is not None:
+            lot.larva_total_cost = larva_total_cost
+        elif larva_unit_cost and lot.initial_count:
+            lot.larva_total_cost = round((lot.initial_count / 1000) * larva_unit_cost, 2)
+        else:
+            lot.larva_total_cost = 0
         lot.notes = request.form.get('notes')
         if lot.status == 'encerrado' and request.form.get('end_date'):
             lot.end_date = parse_date(request.form.get('end_date'))
@@ -11297,6 +11363,7 @@ def managerial_reports_page():
     financial_totals = {
         'feed_cost': round(sum(summary['feed_cost'] for summary in lot_summaries), 2),
         'supply_cost': round(sum(summary.get('supply_cost', 0) for summary in lot_summaries), 2),
+        'larva_cost': round(sum(summary.get('larva_cost', 0) for summary in lot_summaries), 2),
         'fixed_cost': round(sum(summary['fixed_cost'] for summary in lot_summaries), 2),
         'total_cost': round(sum(summary['total_cost'] for summary in lot_summaries), 2),
         'revenue_period': round(sum(summary['revenue'] for summary in sales_summaries), 2),
@@ -11333,17 +11400,17 @@ def export_managerial_report(report_key):
             ws.append(['Insumo/material', row['name'], row['category'], row['stock_qty'], row['measure_unit'], row['minimum_stock_qty'], row.get('avg_unit_cost')])
     elif report_key == 'production':
         ws.title = 'Producao'
-        ws.append(['Lote', 'Status', 'Fornecedora', 'Unidades atuais', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'FCR real', 'Sobrevivência %'])
+        ws.append(['Lote', 'Status', 'Fornecedora', 'Unidades atuais', 'Custo ração', 'Custo insumos', 'Custo larva', 'Custo fixo', 'Custo total', 'FCR real', 'Sobrevivência %'])
         for summary in [lot_financial_summary(lot) for lot in Lot.query.order_by(Lot.start_date.desc()).all()]:
-            ws.append([summary['lot'].lot_code, summary['lot'].status, summary['lot'].larva_supplier, ', '.join(item['unit_name'] for item in summary['allocations']), summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
+            ws.append([summary['lot'].lot_code, summary['lot'].status, summary['lot'].larva_supplier, ', '.join(item['unit_name'] for item in summary['allocations']), summary['feed_cost'], summary.get('supply_cost', 0), summary.get('larva_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
     elif report_key == 'financial':
         ws.title = 'Financeiro'
-        ws.append(['Data', 'Lote', 'Viveiro', 'Receita', 'Custo ração', 'Custo insumos', 'Custo fixo', 'Custo total', 'Resultado'])
+        ws.append(['Data', 'Lote', 'Viveiro', 'Receita', 'Custo ração', 'Custo insumos', 'Custo larva', 'Custo fixo', 'Custo total', 'Resultado'])
         for sale in Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).order_by(Sale.sale_date.desc()).all():
             summary = sale_financial_summary(sale)
             if not summary:
                 continue
-            ws.append([sale.sale_date.strftime('%d/%m/%Y'), sale.lot.lot_code if sale.lot else '', sale.unit.name if sale.unit else '', summary['revenue'], summary['feed_cost'], summary.get('supply_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['profit']])
+            ws.append([sale.sale_date.strftime('%d/%m/%Y'), sale.lot.lot_code if sale.lot else '', sale.unit.name if sale.unit else '', summary['revenue'], summary['feed_cost'], summary.get('supply_cost', 0), summary.get('larva_cost', 0), summary['fixed_cost'], summary['total_cost'], summary['profit']])
     elif report_key == 'water_quality':
         ws.title = 'Qualidade agua'
         ws.append(['Data', 'Hora', 'Unidade', 'OD', 'Temperatura', 'pH', 'Salinidade', 'Alertas'])
@@ -11536,7 +11603,7 @@ def export_sales_history():
     ws.title = 'Historico despesca'
     headers = [
         'Data', 'Lote', 'Viveiro', 'Cliente', 'Canal', 'Qtd kg', 'Preco kg', 'Faturamento',
-        'Peso medio g', 'Unidades despescadas', 'Custo racao viveiro', 'Custo insumos viveiro', 'Custo fixo viveiro',
+        'Peso medio g', 'Unidades despescadas', 'Custo racao viveiro', 'Custo insumos viveiro', 'Custo larva viveiro', 'Custo fixo viveiro',
         'Custo total viveiro', 'Resultado', 'Status', 'FCR real lote', 'Sobrevivencia lote %'
     ]
     ws.append(headers)
@@ -11557,6 +11624,7 @@ def export_sales_history():
             summary['harvested_units'],
             summary['feed_cost'],
             summary.get('supply_cost', 0),
+            summary.get('larva_cost', 0),
             summary['fixed_cost'],
             summary['total_cost'],
             summary['profit'],
@@ -12680,7 +12748,9 @@ def harvest_decision_analysis(lot, base_price_10g=22.0, feed_cost_kg=None):
     feed_cost_kg = feed_cost_kg if feed_cost_override else feed_cost_info['cost']
     current_rec = feeding_recommendation_for_lot(lot)
     live_count = current_rec['live_count']
-    fixed_cost_total = calculate_fixed_cost_for_lot(lot)
+    current_cost_summary = lot_financial_summary(lot)
+    current_lot_cost = current_cost_summary['total_cost']
+    fixed_cost_total = current_cost_summary['fixed_cost']
     cycle_days = max((local_today() - lot.start_date).days, 1)
     fixed_cost_day = fixed_cost_total / cycle_days if cycle_days else 0
     scenarios = []
@@ -12701,7 +12771,7 @@ def harvest_decision_analysis(lot, base_price_10g=22.0, feed_cost_kg=None):
             'revenue': revenue,
             'extra_feed_cost': extra_feed_cost,
             'extra_fixed_cost': extra_fixed_cost,
-            'net_value': round(revenue - extra_feed_cost - extra_fixed_cost, 2),
+            'net_value': round(revenue - current_lot_cost - extra_feed_cost - extra_fixed_cost, 2),
             'daily_gain_g': projection['daily_gain_g'],
             'confidence': projection['model_confidence'],
         })
@@ -12715,6 +12785,8 @@ def harvest_decision_analysis(lot, base_price_10g=22.0, feed_cost_kg=None):
         'feed_cost_kg': feed_cost_kg,
         'feed_cost_source': 'informado manualmente' if feed_cost_override else feed_cost_info['source'],
         'feed_cost_rows': feed_cost_info.get('rows', 0),
+        'current_lot_cost': current_lot_cost,
+        'current_cost_summary': current_cost_summary,
         'scenarios': scenarios,
         'best': best,
         'decision': decision,
@@ -13175,10 +13247,10 @@ def export_managerial_report_pdf(report_key):
             rows.append(['Insumo', row['name'], row.get('stock_qty'), row.get('measure_unit'), row.get('minimum_stock_qty')])
         return build_pdf_response('Relatório de estoque', headers, rows, f'relatorio_estoque_{today.strftime("%Y%m%d")}.pdf')
     elif report_key == 'production':
-        headers = ['Lote', 'Fornecedor', 'Custo total', 'FCR', 'Sobrevivencia']
+        headers = ['Lote', 'Fornecedor', 'Custo larva', 'Custo total', 'FCR', 'Sobrevivencia']
         rows = []
         for summary in [lot_financial_summary(lot) for lot in Lot.query.order_by(Lot.start_date.desc()).all()]:
-            rows.append([summary['lot'].lot_code, summary['lot'].larva_supplier or '-', summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
+            rows.append([summary['lot'].lot_code, summary['lot'].larva_supplier or '-', summary.get('larva_cost', 0), summary['total_cost'], summary['fcr_real'], summary['survival_pct']])
         return build_pdf_response('Relatório de produção', headers, rows, f'relatorio_producao_{today.strftime("%Y%m%d")}.pdf')
     elif report_key == 'financial':
         headers = ['Data', 'Tipo', 'Categoria', 'Descrição', 'Valor', 'Status']
