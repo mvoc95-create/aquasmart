@@ -10,6 +10,10 @@
       <h2>Saldos vivos estimados por unidade</h2>
       <p class="muted">Esses saldos são atualizados a cada transferência. Use esta tabela para conferir onde está cada parte do lote antes de movimentar.</p>
     </div>
+    <form method="post" class="inline-form">
+      <input type="hidden" name="form_mode" value="rebuild_allocations">
+      <button type="submit" class="secondary-button small-button">Recalcular saldos</button>
+    </form>
   </div>
   <div class="table-wrap">
     <table>
@@ -121,8 +125,8 @@
 
   <label>Encerrar origem após a transferência?
     <select name="close_source_allocation">
-      <option value="0" {% if edit_transfer and not edit_transfer.close_source_after_transfer %}selected{% endif %}>Não, é transferência parcial</option>
-      <option value="1" {% if edit_transfer and edit_transfer.close_source_after_transfer %}selected{% endif %}>Sim, saiu tudo da origem</option>
+      <option value="0" {% if edit_transfer and not edit_transfer.close_source_after_transfer %}selected{% endif %}>Não, é divisão parcial e fica saldo na origem</option>
+      <option value="1" {% if not edit_transfer or (edit_transfer and edit_transfer.close_source_after_transfer) %}selected{% endif %}>Sim, a contagem real substitui o saldo anterior</option>
     </select>
   </label>
 
