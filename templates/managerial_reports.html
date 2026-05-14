@@ -38,7 +38,7 @@
 <div class="grid-2">
   <section class="panel">
     <div class="panel-head"><div><p class="panel-kicker">Produção</p><h2>Lotes ativos</h2></div></div>
-    <div class="table-wrap"><table><thead><tr><th>Lote</th><th>Fornecedor PL</th><th>FCR</th><th>Sobrevivência</th><th>Custo total</th></tr></thead><tbody>{% for row in lot_summaries %}<tr><td>{{ row.lot.lot_code }}</td><td>{{ row.lot.larva_supplier or '—' }}</td><td>{{ row.fcr_real or '—' }}</td><td>{{ row.survival_pct or '—' }}{% if row.survival_pct %}%{% endif %}</td><td>{{ row.total_cost|money }}</td></tr>{% else %}<tr><td colspan="5" class="empty-cell">Sem lotes ativos.</td></tr>{% endfor %}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Lote</th><th>Fornecedor PL</th><th>FCR</th><th>Sobrevivência</th><th>Custo larva</th><th>Custo total</th></tr></thead><tbody>{% for row in lot_summaries %}<tr><td>{{ row.lot.lot_code }}</td><td>{{ row.lot.larva_supplier or '—' }}</td><td>{{ row.fcr_real or '—' }}</td><td>{{ row.survival_pct or '—' }}{% if row.survival_pct %}%{% endif %}</td><td>{{ row.larva_cost|money }}</td><td>{{ row.total_cost|money }}</td></tr>{% else %}<tr><td colspan="6" class="empty-cell">Sem lotes ativos.</td></tr>{% endfor %}</tbody></table></div>
   </section>
   <section class="panel">
     <div class="panel-head"><div><p class="panel-kicker">Qualidade da água</p><h2>Últimos alertas</h2></div></div>

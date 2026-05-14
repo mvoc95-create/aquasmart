@@ -16,6 +16,8 @@
   <label>Peso médio inicial (g)<input type="number" step="0.001" name="estimated_weight_g" value="{{ edit_lot.estimated_weight_g if edit_lot else '' }}"></label>
   <label>Fornecedor da larva<input name="larva_supplier" value="{{ edit_lot.larva_supplier if edit_lot else '' }}"></label>
   <label>Idade inicial da PL<input type="number" min="1" name="entry_pl_stage" value="{{ edit_lot.entry_pl_stage if edit_lot and edit_lot.entry_pl_stage is not none else '' }}" placeholder="Ex.: 11"></label>
+  <label>Custo da PL (R$/milheiro)<input type="number" step="0.01" name="larva_unit_cost" value="{{ edit_lot.larva_unit_cost if edit_lot and edit_lot.larva_unit_cost is not none else '' }}" placeholder="Ex.: 18,00"></label>
+  <label>Custo total da larva<input type="number" step="0.01" name="larva_total_cost" value="{{ edit_lot.larva_total_cost if edit_lot and edit_lot.larva_total_cost is not none else '' }}" placeholder="Calculado se vazio"></label>
   {% if edit_lot %}<label>Status<select name="status"><option value="ativo" {% if edit_lot.status=='ativo' %}selected{% endif %}>Ativo</option><option value="encerrado" {% if edit_lot.status=='encerrado' %}selected{% endif %}>Encerrado</option></select></label>{% endif %}
   {% if edit_lot %}<label>Data fim<input type="date" name="end_date" value="{{ edit_lot.end_date.isoformat() if edit_lot.end_date else '' }}"></label>{% endif %}
   <label class="full">Observações<textarea name="notes">{{ edit_lot.notes if edit_lot else '' }}</textarea></label>
@@ -42,10 +44,10 @@
 <section class="panel">
 <div class="panel-head"><div><p class="panel-kicker">Consolidado</p><h2>Custo por lote</h2></div></div>
 <div class="table-wrap"><table>
-<thead><tr><th>Lote</th><th>Início</th><th>Status</th><th>Fornecedor</th><th>PL entrada</th><th>Alocações atuais</th><th>Ração</th><th>Insumos</th><th>Fixo rateado</th><th>Total</th><th>FCR real</th><th>Sobrevivência</th><th></th></tr></thead>
+<thead><tr><th>Lote</th><th>Início</th><th>Status</th><th>Fornecedor</th><th>PL entrada</th><th>Alocações atuais</th><th>Ração</th><th>Insumos</th><th>Larva</th><th>Fixo rateado</th><th>Total</th><th>FCR real</th><th>Sobrevivência</th><th></th></tr></thead>
 <tbody>
 {% for row in lot_summaries %}
-<tr><td>{{ row.lot.lot_code }}</td><td>{{ row.lot.start_date|brdate if row.lot.start_date else '—' }}</td><td>{{ row.lot.status|status_label }}</td><td>{{ row.lot.larva_supplier or '—' }}</td><td>{% if row.lot.entry_pl_stage is not none %}PL{{ row.lot.entry_pl_stage }}{% else %}—{% endif %}</td><td>{% for alloc in row.allocations %}<div>{{ alloc.unit_name }} — {{ alloc.allocated_qty }} PL{% if alloc.density is not none %} · {{ alloc.density }} PL/m²{% endif %}</div>{% else %}—{% endfor %}</td><td>{{ row.feed_cost|money }}</td><td>{{ row.supply_cost|money }}</td><td>{{ row.fixed_cost|money }}</td><td>{{ row.total_cost|money }}</td><td>{{ row.fcr_real if row.fcr_real is not none else '—' }}</td><td>{% if row.survival_pct is not none %}{{ row.survival_pct }}%{% else %}—{% endif %}</td><td><a class="link-button small-button" href="{{ url_for('lots_page', edit_lot_id=row.lot.id) }}">Editar</a></td></tr>
+<tr><td>{{ row.lot.lot_code }}</td><td>{{ row.lot.start_date|brdate if row.lot.start_date else '—' }}</td><td>{{ row.lot.status|status_label }}</td><td>{{ row.lot.larva_supplier or '—' }}</td><td>{% if row.lot.entry_pl_stage is not none %}PL{{ row.lot.entry_pl_stage }}{% else %}—{% endif %}</td><td>{% for alloc in row.allocations %}<div>{{ alloc.unit_name }} — {{ alloc.allocated_qty }} PL{% if alloc.density is not none %} · {{ alloc.density }} PL/m²{% endif %}</div>{% else %}—{% endfor %}</td><td>{{ row.feed_cost|money }}</td><td>{{ row.supply_cost|money }}</td><td>{{ row.larva_cost|money }}</td><td>{{ row.fixed_cost|money }}</td><td>{{ row.total_cost|money }}</td><td>{{ row.fcr_real if row.fcr_real is not none else '—' }}</td><td>{% if row.survival_pct is not none %}{{ row.survival_pct }}%{% else %}—{% endif %}</td><td><a class="link-button small-button" href="{{ url_for('lots_page', edit_lot_id=row.lot.id) }}">Editar</a></td></tr>
 {% endfor %}
 </tbody></table></div>
 </section>

@@ -28,11 +28,11 @@
 <section class="panel">
 <div class="panel-head"><div><p class="panel-kicker">Status final</p><h2>Fechamentos de despesca</h2></div></div>
 <div class="table-wrap"><table>
-<thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Faturamento</th><th>Ração</th><th>Insumos</th><th>Custo total</th><th>Resultado</th><th>Status</th><th>FCR</th><th>Sobrevivência</th></tr></thead>
+<thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Faturamento</th><th>Ração</th><th>Insumos</th><th>Larva</th><th>Custo total</th><th>Resultado</th><th>Status</th><th>FCR</th><th>Sobrevivência</th></tr></thead>
 <tbody>
 {% for row in row_summaries %}
-<tr><td>{{ row.sale.sale_date|brdate }}</td><td>{{ row.sale.lot.lot_code if row.sale.lot else '—' }}</td><td>{{ row.sale.unit.name if row.sale.unit else '—' }}</td><td>{{ row.revenue|money }}</td><td>{{ row.feed_cost|money }}</td><td>{{ row.supply_cost|money }}</td><td>{{ row.total_cost|money }}</td><td>{{ row.profit|money }}</td><td>{{ row.status }}</td><td>{{ row.fcr_real if row.fcr_real is not none else '—' }}</td><td>{% if row.survival_pct is not none %}{{ row.survival_pct }}%{% else %}—{% endif %}</td></tr>
-{% else %}<tr><td colspan="11" class="empty-cell">Nenhuma despesca registrada ainda.</td></tr>{% endfor %}
+<tr><td>{{ row.sale.sale_date|brdate }}</td><td>{{ row.sale.lot.lot_code if row.sale.lot else '—' }}</td><td>{{ row.sale.unit.name if row.sale.unit else '—' }}</td><td>{{ row.revenue|money }}</td><td>{{ row.feed_cost|money }}</td><td>{{ row.supply_cost|money }}</td><td>{{ row.larva_cost|money }}</td><td>{{ row.total_cost|money }}</td><td>{{ row.profit|money }}</td><td>{{ row.status }}</td><td>{{ row.fcr_real if row.fcr_real is not none else '—' }}</td><td>{% if row.survival_pct is not none %}{{ row.survival_pct }}%{% else %}—{% endif %}</td></tr>
+{% else %}<tr><td colspan="12" class="empty-cell">Nenhuma despesca registrada ainda.</td></tr>{% endfor %}
 </tbody></table></div>
 </section>
 </div>

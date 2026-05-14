@@ -172,8 +172,9 @@
 
     <section class="dashboard-section section-card">
       <div class="section-head compact"><h2>Financeiro</h2></div>
-      <div class="mini-kpis four">
+      <div class="mini-kpis five">
         <article class="mini-kpi"><small>Custo ração</small><strong>{{ data.financial.feed_cost|money }}</strong></article>
+        <article class="mini-kpi"><small>Custo larva</small><strong>{{ data.financial.larva_cost|money }}</strong></article>
         <article class="mini-kpi"><small>Custo fixo</small><strong>{{ data.financial.fixed_cost|money }}</strong></article>
         <article class="mini-kpi"><small>Custo estimado/kg</small><strong>{{ data.financial.estimated_cost_per_kg|money if data.financial.estimated_cost_per_kg is not none else '—' }}</strong></article>
         <article class="mini-kpi"><small>Lucro do período</small><strong class="{{ 'positive' if data.financial.month_profit >= 0 else 'negative' }}">{{ data.financial.month_profit|money }}</strong></article>

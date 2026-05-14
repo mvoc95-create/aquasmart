@@ -12,14 +12,14 @@
   </form>
 
   {% if analysis %}
-  <div class="hero-inline-note">Custo de ração usado: <strong>{{ analysis.feed_cost_kg|money }}/kg</strong> · {{ analysis.feed_cost_source }}. Ao trocar o lote, o sistema recalcula automaticamente esse custo.</div>
+  <div class="hero-inline-note">Custo de ração usado: <strong>{{ analysis.feed_cost_kg|money }}/kg</strong> · {{ analysis.feed_cost_source }}. Custo acumulado do lote já incluído no resultado: <strong>{{ analysis.current_lot_cost|money }}</strong>, incluindo larva/PL, ração, insumos e fixo.</div>
   <div class="kpi-grid">
     <article class="kpi-card"><span>Decisão sugerida</span><strong>{{ analysis.decision }}</strong></article>
     <article class="kpi-card"><span>Melhor cenário</span><strong>{{ analysis.best.days_wait }} dias</strong></article>
-    <article class="kpi-card"><span>Receita líquida do melhor cenário</span><strong>{{ analysis.best.net_value|money }}</strong></article>
+    <article class="kpi-card"><span>Resultado líquido do melhor cenário</span><strong>{{ analysis.best.net_value|money }}</strong></article>
     <article class="kpi-card"><span>Preço base 10 g</span><strong>{{ analysis.base_price_10g|money }}</strong></article>
   </div>
-  <div class="hero-inline-note">A tabela abaixo usa o peso projetado pelo modelo adaptativo, aplica a regra de preço por grama e desconta ração extra + custo fixo adicional do período.</div>
+  <div class="hero-inline-note">A tabela abaixo usa o peso projetado pelo modelo adaptativo, aplica a regra de preço por grama e desconta o custo acumulado do lote + ração extra + custo fixo adicional do período.</div>
   <div class="table-wrap">
     <table>
       <thead><tr><th>Cenário</th><th>Data</th><th>Peso projetado</th><th>Preço/kg</th><th>Biomassa</th><th>Receita</th><th>Ração extra</th><th>Custo fixo extra</th><th>Valor líquido</th><th>Ganho incremental</th><th>Confiança</th></tr></thead>
