@@ -119,14 +119,12 @@
     <input type="number" step="0.001" name="avg_weight_g" value="{{ edit_transfer.avg_weight_g if edit_transfer else '' }}">
   </label>
 
-  {% if not edit_transfer %}
   <label>Encerrar origem após a transferência?
     <select name="close_source_allocation">
-      <option value="0">Não, é transferência parcial</option>
-      <option value="1">Sim, saiu tudo da origem</option>
+      <option value="0" {% if edit_transfer and not edit_transfer.close_source_after_transfer %}selected{% endif %}>Não, é transferência parcial</option>
+      <option value="1" {% if edit_transfer and edit_transfer.close_source_after_transfer %}selected{% endif %}>Sim, saiu tudo da origem</option>
     </select>
   </label>
-  {% endif %}
 
   <label class="full">Observação
     <textarea name="notes" placeholder="Ex.: transferência para Juvenil 01; lote dividido entre dois viveiros; contagem por biometria etc.">{{ edit_transfer.notes if edit_transfer else '' }}</textarea>
