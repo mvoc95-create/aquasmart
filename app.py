@@ -3278,6 +3278,12 @@ NURSERY_PROTOCOL_BASE_POPULATION = NURSERY_PROTOCOLS[DEFAULT_NURSERY_PROTOCOL_KE
 NURSERY_PROTOCOL_ROWS = NURSERY_PROTOCOLS[DEFAULT_NURSERY_PROTOCOL_KEY]['rows']
 
 NURSERY_FEED_STOCK_ALIASES = {
+    # Rações finas do protocolo: equivalências com os nomes reais do estoque.
+    # Isso evita que uma linha "225" seja vinculada por engano ao produto "450".
+    'nutrisphera 225': ['NutriSphera 225', 'NUTRISFERA - BERÇÁRIO 225', 'NUTRISFERA BERÇÁRIO 225', 'NUTRISFERA BERCARIO 225'],
+    'nutrisfera 225': ['NutriSphera 225', 'NUTRISFERA - BERÇÁRIO 225', 'NUTRISFERA BERÇÁRIO 225', 'NUTRISFERA BERCARIO 225'],
+    'nutrisphera 450': ['NutriSphera 450', 'NUTRISFERA - BERÇÁRIO 450', 'NUTRISFERA BERÇÁRIO 450', 'NUTRISFERA BERCARIO 450'],
+    'nutrisfera 450': ['NutriSphera 450', 'NUTRISFERA - BERÇÁRIO 450', 'NUTRISFERA BERÇÁRIO 450', 'NUTRISFERA BERCARIO 450'],
     'triturada 1': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
     'triturada 2': ['SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2'],
     'triturada 500 900': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
@@ -5359,6 +5365,28 @@ def nursery_feed_stock_alias_labels(label: str):
     return [item for item in dict.fromkeys(aliases) if (item or '').strip()]
 
 
+def nursery_feed_size_tokens(value: str):
+    """Extrai identificadores de tamanho usados nas rações do berçário.
+
+    O objetivo é diferenciar NutriSphera 225 de NutriSphera 450. Sem essa trava,
+    a busca por similaridade pode achar "NutriSphera 450" só porque o produto
+    também contém "NutriSphera" e "berçário".
+    """
+    tokens = nursery_feed_alias_tokens(value)
+    size_tokens = set()
+    if 'nutrisfera' in tokens or 'nutrisphera' in tokens:
+        size_tokens.update(token for token in tokens if token in {'225', '450'})
+    return size_tokens
+
+
+def nursery_feed_size_compatible(label: str, product_text: str) -> bool:
+    label_sizes = nursery_feed_size_tokens(label)
+    product_sizes = nursery_feed_size_tokens(product_text)
+    if label_sizes and product_sizes and not label_sizes.intersection(product_sizes):
+        return False
+    return True
+
+
 def find_nursery_feed_product_by_alias(label: str, products, exclude_product_id=None):
     alias_norms = [normalize_text(item) for item in nursery_feed_stock_alias_labels(label)]
     alias_norms = [item for item in alias_norms if item]
@@ -5369,6 +5397,9 @@ def find_nursery_feed_product_by_alias(label: str, products, exclude_product_id=
     for product in products:
         if exclude_product_id is not None and product.id == exclude_product_id:
             continue
+        product_display_text = f'{product.full_name} {product.brand or ""} {product.feed_type or ""} {product.technical_summary or ""}'
+        if not nursery_feed_size_compatible(label, product_display_text):
+            continue
         product_norms = [
             normalize_text(product.full_name),
             normalize_text(product.brand or ''),
@@ -5376,6 +5407,8 @@ def find_nursery_feed_product_by_alias(label: str, products, exclude_product_id=
         ]
         product_norms = [item for item in product_norms if item]
         for alias_norm in alias_norms:
+            # Correspondência exata continua preferida. A correspondência parcial só vale
+            # quando o número/tamanho da ração é compatível.
             if any(alias_norm == prod_norm or alias_norm in prod_norm or prod_norm in alias_norm for prod_norm in product_norms):
                 candidate = (product.active, nursery_product_stock(product.id), product.full_name.lower(), product)
                 if best is None or candidate > best:
@@ -5475,6 +5508,9 @@ def nursery_product_match_score(label: str, product) -> tuple[int, bool]:
     numeric_tokens = {token for token in label_tokens if token.replace('.', '', 1).isdigit()}
 
     product_text = f'{product.brand} {product.feed_type} {product.technical_summary or ""}'
+    product_display_text = f'{product.full_name} {product_text}'
+    if not nursery_feed_size_compatible(label, product_display_text):
+        return -999, False
     product_tokens = nursery_feed_alias_tokens(product_text)
     product_numbers = {token for token in product_tokens if token.replace('.', '', 1).isdigit()}
     product_is_nursery = 'bercario' in product_tokens or is_auto_nursery_protocol_product(product)
@@ -5531,6 +5567,9 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
         score, product_is_nursery = nursery_product_match_score(label, product)
         is_auto_protocol = is_auto_nursery_protocol_product(product)
 
+        if score < 0:
+            continue
+
         if product_is_nursery and not is_auto_protocol:
             scored_real_nursery.append((score, nursery_product_stock(product.id), product.active, product.full_name.lower(), product))
 
@@ -5556,7 +5595,11 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
     # com esse nome. Para nomes reais definidos pelo estoque/protocolo, cria o produto correto.
     real_protocol_stock_labels = {
         normalize_text('NutriSphera 225'),
+        normalize_text('NUTRISFERA - BERÇÁRIO 225'),
+        normalize_text('NUTRISFERA BERCARIO 225'),
         normalize_text('NutriSphera 450'),
+        normalize_text('NUTRISFERA - BERÇÁRIO 450'),
+        normalize_text('NUTRISFERA BERCARIO 450'),
         normalize_text('AQUAVITA 40#1'),
         normalize_text('SAMARIA 40#2'),
     }
@@ -9106,16 +9149,49 @@ def complete_operation_task_into_management(task):
     db.session.add(management)
     return 'created', 'Rotina operacional lançada no manejo.'
 
+def delete_previous_imported_nursery_tasks(target_date, unit_id):
+    """Remove somente itens criados automaticamente pelo botão de importação.
+
+    Assim, ao clicar novamente em "Puxar alimentação do berçário", a Rotina do Dia
+    vira um espelho limpo do protocolo atual, sem manter linhas antigas ou mapeadas errado.
+    """
+    imported_markers = [
+        'Importado da aba Alimentação berçário',
+        'Importado do manejo da água/controle',
+    ]
+    query = OperationalTask.query.filter(
+        OperationalTask.operation_date == target_date,
+        OperationalTask.unit_id == unit_id,
+    )
+    deleted = 0
+    for task in query.all():
+        notes = task.notes or ''
+        if any(marker in notes for marker in imported_markers):
+            db.session.delete(task)
+            deleted += 1
+    if deleted:
+        db.session.flush()
+    return deleted
+
+
 def import_nursery_feed_plan_to_operation_schedule(target_date):
     plans = build_nursery_digest_for_date(target_date)
     created = 0
     skipped = 0
+
     for plan in plans:
         unit = plan.get('unit')
         if not unit:
             skipped += 1
             continue
+
+        # O botão "Puxar alimentação" deve sincronizar a rotina com o protocolo do dia.
+        # Antes, linhas antigas importadas podiam ficar presas e bloquear uma mistura nova.
+        delete_previous_imported_nursery_tasks(target_date, unit.id)
+
         total_day_g = sum(int(item.get('grams') or 0) for item in plan.get('mixes', []))
+        schedule_count = len(plan.get('schedule', []))
+
         if total_day_g <= 0:
             skipped += 1
         else:
@@ -9124,24 +9200,29 @@ def import_nursery_feed_plan_to_operation_schedule(target_date):
                 portion_g = int(schedule_item.get('grams') or 0)
                 if portion_g <= 0:
                     continue
+
                 for mix in plan.get('mixes', []):
-                    label = mix.get('label') or 'Ração berçário'
+                    source_label = (mix.get('label') or 'Ração berçário').strip()
                     mix_total_g = int(mix.get('grams') or 0)
                     portion_mix_g = round((portion_g * mix_total_g) / total_day_g, 1)
                     if portion_mix_g <= 0:
                         continue
-                    product = find_or_create_nursery_feed_product(label, create_missing=True)
-                    display_label = product.full_name if product else label
+
+                    product = find_or_create_nursery_feed_product(source_label, create_missing=True)
+                    display_label = product.full_name if product else source_label
+
                     existing = OperationalTask.query.filter_by(
                         operation_date=target_date,
                         scheduled_time=scheduled,
                         category='bercario',
                         unit_id=unit.id,
+                        feed_product_id=product.id if product else None,
                         ration_label=display_label,
                     ).first()
                     if existing:
                         skipped += 1
                         continue
+
                     task = OperationalTask(
                         operation_date=target_date,
                         scheduled_time=scheduled,
@@ -9154,8 +9235,12 @@ def import_nursery_feed_plan_to_operation_schedule(target_date):
                         ration_label=display_label,
                         quantity=portion_mix_g,
                         measure_unit='g',
-                        frequency=f"{len(plan.get('schedule', []))}x ao dia",
-                        notes=f"Importado da aba Alimentação berçário ({plan.get('protocol_name', 'protocolo')}). O sistema converte g para kg ao lançar no manejo.",
+                        frequency=f"{schedule_count}x ao dia",
+                        notes=(
+                            f"Importado da aba Alimentação berçário ({plan.get('protocol_name', 'protocolo')}). "
+                            f"Mix original: {source_label}. "
+                            "O sistema converte g para kg ao lançar no manejo."
+                        ),
                         updated_at=datetime.utcnow(),
                     )
                     db.session.add(task)
@@ -9203,6 +9288,7 @@ def import_nursery_feed_plan_to_operation_schedule(target_date):
             )
             db.session.add(task)
             created += 1
+
     return created, skipped
 
 
