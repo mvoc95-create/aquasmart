@@ -707,3 +707,136 @@ button:hover{transform:translateY(-1px)}
 .unit-detail-list strong{color:#0b6fd3;font-weight:950}
 .unit-detail-list span{color:#0f172a;font-weight:850;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .unit-detail-list em{font-style:normal;color:#64748b;font-weight:800;text-align:right}
+
+/* Edição rápida dos itens na Rotina do Dia */
+.unit-detail-item {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: #fff;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+}
+
+.unit-detail-main {
+  display: grid;
+  grid-template-columns: 72px minmax(180px, 1fr) minmax(95px, auto) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.unit-detail-main > strong {
+  font-size: 0.82rem;
+  color: #0f172a;
+}
+
+.unit-detail-main > span {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.unit-detail-main > em {
+  font-style: normal;
+  color: #64748b;
+  font-weight: 700;
+  text-align: right;
+}
+
+.unit-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-edit-details {
+  position: relative;
+}
+
+.task-edit-details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.task-edit-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.routine-inline-edit-form {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(760px, calc(100vw - 52px));
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  background: #ffffff;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+  z-index: 20;
+}
+
+.routine-inline-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.routine-inline-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.routine-inline-grid label.wide {
+  grid-column: span 2;
+}
+
+.routine-inline-grid input,
+.routine-inline-grid select,
+.routine-inline-grid textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+.routine-inline-grid textarea {
+  resize: vertical;
+}
+
+.routine-inline-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+@media (max-width: 820px) {
+  .unit-detail-main {
+    grid-template-columns: 64px 1fr;
+  }
+  .unit-detail-main > em,
+  .unit-detail-actions {
+    grid-column: 1 / -1;
+    text-align: left;
+    justify-content: flex-start;
+  }
+  .routine-inline-edit-form {
+    left: 0;
+    right: auto;
+  }
+  .routine-inline-grid {
+    grid-template-columns: 1fr;
+  }
+  .routine-inline-grid label.wide {
+    grid-column: auto;
+  }
+}
