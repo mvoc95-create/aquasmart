@@ -9948,6 +9948,7 @@ def delete_auto_tray_check_for_feeding_task(task):
         return True
     return False
 
+
 def build_operation_unit_cards(tasks, completed_task_ids=None):
     """Agrupa a Rotina do Dia por viveiro/berçário para evitar uma lista sem fim por horário."""
     completed_task_ids = completed_task_ids or set()
@@ -9962,6 +9963,7 @@ def build_operation_unit_cards(tasks, completed_task_ids=None):
             grouped[key] = {
                 'key': key,
                 'unit': task.unit,
+                'unit_id': task.unit_id,
                 'unit_name': unit_name,
                 'phase': phase,
                 'color': colors[(len(grouped)) % len(colors)],
@@ -9999,7 +10001,16 @@ def build_operation_unit_cards(tasks, completed_task_ids=None):
                 'total_quantity': 0.0,
                 'can_sum': True,
                 'frequency': task.frequency,
+                'task_ids': [],
+                'category': task.category,
+                'priority': task.priority,
+                'title': task.title,
+                'feed_product_id': task.feed_product_id,
+                'supply_product_id': task.supply_product_id,
+                'ration_label': task.ration_label or label,
+                'notes': task.notes or '',
             })
+            bucket['task_ids'].append(task.id)
             bucket['count'] += 1
             if not bucket.get('frequency') and task.frequency:
                 bucket['frequency'] = task.frequency
@@ -10011,7 +10022,7 @@ def build_operation_unit_cards(tasks, completed_task_ids=None):
             except (TypeError, ValueError):
                 bucket['can_sum'] = False
 
-        elif task.category == 'aditivo':
+        elif task.category in ('aditivo', 'troca_agua'):
             label = supply_label_for_task(task)
             bucket = card['additive_map'].setdefault(label, {
                 'label': label,
@@ -10022,7 +10033,16 @@ def build_operation_unit_cards(tasks, completed_task_ids=None):
                 'total_quantity': 0.0,
                 'can_sum': True,
                 'frequency': task.frequency,
+                'task_ids': [],
+                'category': task.category,
+                'priority': task.priority,
+                'title': task.title,
+                'feed_product_id': task.feed_product_id,
+                'supply_product_id': task.supply_product_id,
+                'ration_label': task.ration_label or label,
+                'notes': task.notes or '',
             })
+            bucket['task_ids'].append(task.id)
             bucket['count'] += 1
             if not bucket.get('frequency') and task.frequency:
                 bucket['frequency'] = task.frequency
@@ -10039,10 +10059,18 @@ def build_operation_unit_cards(tasks, completed_task_ids=None):
             bucket = card['activity_map'].setdefault(title, {
                 'title': title,
                 'count': 0,
-                'category': operation_category_label(task.category),
+                'category': task.category,
+                'category_label': operation_category_label(task.category),
                 'next_time': None,
                 'priority': task.priority,
+                'task_ids': [],
+                'quantity': task.quantity,
+                'measure_unit': task.measure_unit or 'un',
+                'frequency': task.frequency,
+                'ration_label': task.ration_label or '',
+                'notes': task.notes or '',
             })
+            bucket['task_ids'].append(task.id)
             bucket['count'] += 1
             if task.scheduled_time and not bucket['next_time']:
                 bucket['next_time'] = task.scheduled_time.strftime('%H:%M')
@@ -10213,37 +10241,123 @@ def batch_week_operation_schedule():
         return redirect(url_for('operation_schedule_page', operation_date=start_date.isoformat()))
     units = selected_operation_units_from_form(default_all=True)
     if not units:
-        flash('Nenhum viveiro ativo encontrado para programar a semana.', 'warning')
+        flash('Nenhum viveiro/berçário ativo foi selecionado para programar a semana.', 'warning')
         return redirect(url_for('operation_schedule_page', operation_date=start_date.isoformat()))
-    category = request.form.get('category') or 'rotina'
-    priority = normalize_operation_priority(request.form.get('priority'))
-    scheduled_time = parse_time(request.form.get('scheduled_time'))
-    title = (request.form.get('title') or '').strip()
-    feed_product = db.session.get(FeedProduct, request.form.get('feed_product_id', type=int)) if request.form.get('feed_product_id', type=int) else None
-    supply_product = db.session.get(SupplyProduct, request.form.get('supply_product_id', type=int)) if request.form.get('supply_product_id', type=int) else None
-    ration_label = (request.form.get('ration_label') or '').strip()
-    quantity = parse_float(request.form.get('quantity'))
-    measure_unit = (request.form.get('measure_unit') or ('g' if category == 'bercario' else 'kg')).strip()
-    frequency = (request.form.get('frequency') or '').strip()
-    notes = (request.form.get('notes') or '').strip()
-    current = start_date
+
+    categories = request.form.getlist('row_category')
+    start_times = request.form.getlist('row_start_time') or request.form.getlist('row_scheduled_time')
+    priorities = request.form.getlist('row_priority')
+    titles = request.form.getlist('row_title')
+    feed_ids = request.form.getlist('row_feed_product_id')
+    supply_ids = request.form.getlist('row_supply_product_id')
+    ration_labels = request.form.getlist('row_ration_label')
+    total_quantities = request.form.getlist('row_total_quantity') or request.form.getlist('row_quantity')
+    measure_units = request.form.getlist('row_measure_unit')
+    frequency_counts = request.form.getlist('row_frequency_count')
+    interval_minutes_list = request.form.getlist('row_interval_minutes')
+    notes_list = request.form.getlist('row_notes')
+
+    total_rows = max(
+        len(categories), len(start_times), len(priorities), len(titles), len(feed_ids), len(supply_ids),
+        len(ration_labels), len(total_quantities), len(measure_units), len(frequency_counts),
+        len(interval_minutes_list), len(notes_list), 0
+    )
+    if total_rows == 0:
+        flash('Adicione pelo menos uma ação na programação semanal.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=start_date.isoformat()))
+
     created = 0
+    auto_created = 0
+    skipped = 0
+
+    def row_value(values, index, default=''):
+        return values[index] if index < len(values) else default
+
+    def safe_frequency_count(raw_value):
+        count = parse_int(raw_value)
+        if not count or count < 1:
+            return 1
+        return min(count, 12)
+
+    def safe_interval_minutes(raw_value, frequency_count):
+        minutes = parse_int(raw_value)
+        if minutes is None:
+            minutes = 180 if frequency_count > 1 else 0
+        return max(0, min(minutes, 720))
+
+    current = start_date
     while current <= end_date:
         if current.weekday() in selected_weekdays:
-            for unit in units:
-                task = create_operational_task_for_unit(
-                    current, unit, category, priority, scheduled_time, title,
-                    feed_product, supply_product, ration_label, quantity, measure_unit, frequency, notes,
-                )
-                db.session.add(task)
-                db.session.flush()
-                if category == 'alimentacao':
-                    ensure_auto_tray_check_after_feeding(task)
-                created += 1
+            for idx in range(total_rows):
+                category = row_value(categories, idx, 'rotina') or 'rotina'
+                priority = normalize_operation_priority(row_value(priorities, idx, 'media'))
+                start_time = parse_time(row_value(start_times, idx, ''))
+                title = (row_value(titles, idx, '') or '').strip()
+                ration_label = (row_value(ration_labels, idx, '') or '').strip()
+                total_quantity = parse_float(row_value(total_quantities, idx, ''))
+                measure_unit = (row_value(measure_units, idx, 'kg') or ('g' if category == 'bercario' else 'kg')).strip()
+                frequency_count = safe_frequency_count(row_value(frequency_counts, idx, '1'))
+                interval_minutes = safe_interval_minutes(row_value(interval_minutes_list, idx, ''), frequency_count)
+                user_notes = (row_value(notes_list, idx, '') or '').strip()
+                feed_product_id = parse_int(row_value(feed_ids, idx, ''))
+                supply_product_id = parse_int(row_value(supply_ids, idx, ''))
+                feed_product = db.session.get(FeedProduct, feed_product_id) if feed_product_id else None
+                supply_product = db.session.get(SupplyProduct, supply_product_id) if supply_product_id else None
+
+                if not any([title, ration_label, total_quantity, feed_product, supply_product, user_notes]):
+                    skipped += 1
+                    continue
+                if not start_time:
+                    skipped += 1
+                    continue
+                if category != 'rotina' and (total_quantity is None or total_quantity <= 0):
+                    skipped += 1
+                    continue
+
+                portion_quantity = None
+                if total_quantity is not None:
+                    portion_quantity = round(total_quantity / frequency_count, 4) if frequency_count > 1 else total_quantity
+
+                frequency_label = f'{frequency_count}x ao dia'
+                if frequency_count > 1 and interval_minutes:
+                    hours = interval_minutes // 60
+                    minutes = interval_minutes % 60
+                    interval_label = f'{hours}h{minutes:02d}' if minutes else f'{hours}h'
+                    frequency_label = f'{frequency_label} · intervalo {interval_label}'
+                system_note = ''
+                if frequency_count > 1:
+                    system_note = f'Gerado automaticamente pela programação semanal: total {format_decimal_pt(total_quantity)} {measure_unit}, {frequency_count} ocorrência(s), intervalo de {interval_minutes} min.'
+                notes = user_notes
+                if system_note:
+                    notes = f'{user_notes}\n{system_note}' if user_notes else system_note
+
+                for unit in units:
+                    for occurrence in range(frequency_count):
+                        scheduled_time = time_plus_minutes(start_time, occurrence * interval_minutes) if occurrence else start_time
+                        task = create_operational_task_for_unit(
+                            current, unit, category, priority, scheduled_time, title,
+                            feed_product, supply_product, ration_label, portion_quantity, measure_unit, frequency_label, notes,
+                        )
+                        db.session.add(task)
+                        db.session.flush()
+                        created += 1
+                        if category == 'alimentacao' and ensure_auto_tray_check_after_feeding(task):
+                            auto_created += 1
         current += timedelta(days=1)
-    db.session.commit()
-    flash(f'Programação semanal criada: {created} item(ns) gerados.', 'success')
+
+    if created:
+        db.session.commit()
+        msg = f'Programação semanal criada: {created} item(ns) gerados.'
+        if auto_created:
+            msg += f' {auto_created} verificação(ões) de bandeja foram geradas automaticamente.'
+        flash(msg, 'success')
+        if skipped:
+            flash(f'{skipped} linha(s)/ocorrência(s) vazia(s), sem horário ou incompletas foram ignoradas.', 'info')
+    else:
+        db.session.rollback()
+        flash('Nenhuma rotina semanal foi criada. Preencha pelo menos uma linha completa.', 'warning')
     return redirect(url_for('operation_schedule_page', operation_date=start_date.isoformat()))
+
 
 @app.post('/operation-schedule/import-nursery')
 @login_required
@@ -10389,6 +10503,172 @@ def delete_operation_task(task_id):
     db.session.commit()
     flash('Item removido da rotina operacional.', 'success')
     return redirect(url_for('operation_schedule_page', operation_date=operation_date.isoformat()))
+
+
+def operation_task_ids_from_form():
+    ids = [parse_int(value) for value in request.form.getlist('task_ids')]
+    return [value for value in ids if value]
+
+
+def operation_tasks_from_form_ids():
+    ids = operation_task_ids_from_form()
+    if not ids:
+        return []
+    return (
+        OperationalTask.query
+        .options(joinedload(OperationalTask.unit), joinedload(OperationalTask.feed_product), joinedload(OperationalTask.supply_product))
+        .filter(OperationalTask.id.in_(ids))
+        .order_by(OperationalTask.operation_date.asc(), OperationalTask.scheduled_time.asc().nullslast(), OperationalTask.id.asc())
+        .all()
+    )
+
+
+@app.post('/operation-schedule/card/edit')
+@login_required
+@requires_permission('management_manage')
+def edit_operation_card():
+    selected_date = parse_date(request.form.get('current_operation_date'), local_today())
+    tasks = operation_tasks_from_form_ids()
+    if not tasks:
+        flash('Card da rotina não encontrado para edição.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+    new_date = parse_date(request.form.get('operation_date'), selected_date)
+    new_unit_id = request.form.get('unit_id', type=int)
+    new_unit = db.session.get(Unit, new_unit_id) if new_unit_id else None
+    if not new_unit or not new_unit.active:
+        flash('Selecione uma unidade ativa para mover/editar o card.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+    for task in tasks:
+        task.operation_date = new_date
+        task.unit_id = new_unit.id
+        task.updated_at = datetime.utcnow()
+    db.session.flush()
+    for task in tasks:
+        if task.category == 'alimentacao':
+            ensure_auto_tray_check_after_feeding(task)
+    db.session.commit()
+    flash(f'Card atualizado: {len(tasks)} item(ns) movidos para {new_unit.name}.', 'success')
+    return redirect(url_for('operation_schedule_page', operation_date=new_date.isoformat()))
+
+
+@app.post('/operation-schedule/card/delete')
+@login_required
+@requires_permission('management_manage')
+def delete_operation_card():
+    selected_date = parse_date(request.form.get('operation_date'), local_today())
+    tasks = operation_tasks_from_form_ids()
+    if not tasks:
+        unit_id = request.form.get('unit_id', type=int)
+        query = OperationalTask.query.filter(
+            OperationalTask.operation_date == selected_date,
+            OperationalTask.active.is_(True),
+        )
+        if unit_id:
+            query = query.filter(OperationalTask.unit_id == unit_id)
+        else:
+            query = query.filter(OperationalTask.unit_id.is_(None))
+        tasks = query.all()
+    if not tasks:
+        flash('Card da rotina não encontrado para exclusão.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+    by_id = {task.id: task for task in tasks}
+    for task in list(tasks):
+        if task.category == 'alimentacao':
+            auto_task = auto_tray_check_for_feeding_task(task)
+            if auto_task:
+                by_id[auto_task.id] = auto_task
+    for task in by_id.values():
+        db.session.delete(task)
+    db.session.commit()
+    flash(f'Card excluído da Rotina do Dia: {len(by_id)} item(ns) removido(s).', 'success')
+    return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+
+@app.post('/operation-schedule/group/edit')
+@login_required
+@requires_permission('management_manage')
+def edit_operation_group():
+    selected_date = parse_date(request.form.get('current_operation_date'), local_today())
+    tasks = operation_tasks_from_form_ids()
+    if not tasks:
+        flash('Grupo da rotina não encontrado para edição.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+    category = request.form.get('category') or tasks[0].category
+    priority = normalize_operation_priority(request.form.get('priority') or tasks[0].priority)
+    unit_id = request.form.get('unit_id', type=int)
+    new_unit = db.session.get(Unit, unit_id) if unit_id else None
+    feed_product_id = request.form.get('feed_product_id', type=int)
+    supply_product_id = request.form.get('supply_product_id', type=int)
+    ration_label = (request.form.get('ration_label') or '').strip() or None
+    title = (request.form.get('title') or '').strip()
+    measure_unit = (request.form.get('measure_unit') or '').strip() or None
+    frequency = (request.form.get('frequency') or '').strip()
+    notes = (request.form.get('notes') or '').strip()
+    quantity = parse_float(request.form.get('quantity'))
+
+    if unit_id and (not new_unit or not new_unit.active):
+        flash('Unidade selecionada para o grupo não está ativa.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+    for task in tasks:
+        old_category = task.category
+        task.category = category
+        task.priority = priority
+        task.priority_order = OPERATION_PRIORITY_ORDER[priority]
+        if unit_id:
+            task.unit_id = unit_id
+        if title:
+            task.title = title
+        elif category in ('alimentacao', 'bercario'):
+            task.title = f'Alimentação {task.unit.name}' if task.unit else 'Alimentação'
+        elif category == 'aditivo' and ration_label:
+            task.title = f'Aplicar {ration_label}'
+        task.feed_product_id = feed_product_id if feed_product_id else None
+        task.supply_product_id = supply_product_id if supply_product_id else None
+        clear_product_links_by_category(task)
+        task.ration_label = ration_label
+        task.quantity = quantity
+        if measure_unit:
+            task.measure_unit = measure_unit
+        task.frequency = frequency
+        task.notes = notes
+        task.active = True
+        task.updated_at = datetime.utcnow()
+        if old_category == 'alimentacao' and category != 'alimentacao':
+            delete_auto_tray_check_for_feeding_task(task)
+    db.session.flush()
+    for task in tasks:
+        if task.category == 'alimentacao':
+            ensure_auto_tray_check_after_feeding(task)
+    db.session.commit()
+    flash(f'Grupo atualizado: {len(tasks)} item(ns) alterado(s).', 'success')
+    return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+
+
+@app.post('/operation-schedule/group/delete')
+@login_required
+@requires_permission('management_manage')
+def delete_operation_group():
+    selected_date = parse_date(request.form.get('operation_date'), local_today())
+    tasks = operation_tasks_from_form_ids()
+    if not tasks:
+        flash('Grupo da rotina não encontrado para exclusão.', 'warning')
+        return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
+    by_id = {task.id: task for task in tasks}
+    for task in list(tasks):
+        if task.category == 'alimentacao':
+            auto_task = auto_tray_check_for_feeding_task(task)
+            if auto_task:
+                by_id[auto_task.id] = auto_task
+    for task in by_id.values():
+        db.session.delete(task)
+    db.session.commit()
+    flash(f'Grupo removido da rotina: {len(by_id)} item(ns) excluído(s).', 'success')
+    return redirect(url_for('operation_schedule_page', operation_date=selected_date.isoformat()))
 
 
 @app.route('/painel-tv')
