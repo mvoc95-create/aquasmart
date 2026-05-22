@@ -4,18 +4,30 @@
 {% block content %}
 <div class="grid-2 intelligence-layout">
   <section class="panel">
-    <div class="panel-head"><div><p class="panel-kicker">Entrada</p><h2>Registrar biometria</h2></div></div>
+    <div class="panel-head">
+      <div>
+        <p class="panel-kicker">{{ 'Edição' if edit_sample else 'Entrada' }}</p>
+        <h2>{{ 'Editar biometria' if edit_sample else 'Registrar biometria' }}</h2>
+      </div>
+      {% if edit_sample %}
+      <a class="secondary-link-button small-button" href="{{ url_for('biometrics_page', history_unit_id=history_unit_id) if history_unit_id else url_for('biometrics_page') }}">Cancelar edição</a>
+      {% endif %}
+    </div>
+    {% if edit_sample %}
+    <p class="empty-state compact-state">Editando biometria de {{ edit_sample.sample_date|brdate }} — altere a data ou os campos necessários e salve. O manejo diário será resincronizado automaticamente.</p>
+    {% endif %}
     <form method="post" class="form-grid">
-      <label>Data<input type="date" name="sample_date" value="{{ today.isoformat() }}" required id="biometry-sample-date"></label>
-      <label>Viveiro<select name="unit_id" required id="biometry-unit-select"><option value="">Selecione</option>{% for unit in units %}<option value="{{ unit.id }}">{{ unit.name }}</option>{% endfor %}</select></label>
-      <label>Lote<select name="lot_id" required id="biometry-lot-select"><option value="">Selecione um viveiro primeiro</option>{% for lot in lots %}<option value="{{ lot.id }}">{{ lot.lot_code }}</option>{% endfor %}</select></label>
-      <p class="inline-hint full" id="biometry-lot-hint">Ao escolher o viveiro, o lote ativo daquela unidade será selecionado automaticamente.</p>
-      <label>Amostra (un.)<input type="number" name="sample_size" value="100"></label>
-      <label>Peso médio (g)<input type="number" step="0.001" name="average_weight_g" placeholder="Ex.: 0,125 ou 0.125" required></label>
-      <label>CV (%)<input type="number" step="0.01" name="cv_pct"></label>
-      <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg" placeholder="Se deixar vazio, o sistema calcula"></label>
-      <label class="full">Observações<textarea name="notes" placeholder="Ex.: amostra bem uniforme, presença de indivíduos menores no canto norte"></textarea></label>
-      <div class="form-actions"><button type="submit">Salvar biometria e sincronizar manejo</button></div>
+      {% if edit_sample %}<input type="hidden" name="biometrics_id" value="{{ edit_sample.id }}">{% endif %}
+      <label>Data<input type="date" name="sample_date" value="{{ edit_sample.sample_date.isoformat() if edit_sample else today.isoformat() }}" required id="biometry-sample-date"></label>
+      <label>Viveiro<select name="unit_id" required id="biometry-unit-select"><option value="">Selecione</option>{% for unit in units %}<option value="{{ unit.id }}" {% if edit_sample and edit_sample.unit_id == unit.id %}selected{% endif %}>{{ unit.name }}</option>{% endfor %}</select></label>
+      <label>Lote<select name="lot_id" required id="biometry-lot-select" data-edit-mode="{{ 1 if edit_sample else 0 }}"><option value="">Selecione um viveiro primeiro</option>{% for lot in lots %}<option value="{{ lot.id }}" {% if edit_sample and edit_sample.lot_id == lot.id %}selected{% endif %}>{{ lot.lot_code }}</option>{% endfor %}</select></label>
+      <p class="inline-hint full" id="biometry-lot-hint">{% if edit_sample %}O lote atual da biometria foi mantido. Se mudar viveiro/data, o sistema tenta puxar o lote ativo daquela unidade.{% else %}Ao escolher o viveiro, o lote ativo daquela unidade será selecionado automaticamente.{% endif %}</p>
+      <label>Amostra (un.)<input type="number" name="sample_size" value="{{ edit_sample.sample_size if edit_sample else 100 }}"></label>
+      <label>Peso médio (g)<input type="number" step="0.001" name="average_weight_g" value="{{ edit_sample.average_weight_g if edit_sample else '' }}" placeholder="Ex.: 0,125 ou 0.125" required></label>
+      <label>CV (%)<input type="number" step="0.01" name="cv_pct" value="{{ edit_sample.cv_pct if edit_sample and edit_sample.cv_pct is not none else '' }}"></label>
+      <label>Biomassa estimada (kg)<input type="number" step="0.01" name="estimated_biomass_kg" value="{{ edit_sample.estimated_biomass_kg if edit_sample and edit_sample.estimated_biomass_kg is not none else '' }}" placeholder="Se deixar vazio, o sistema calcula"></label>
+      <label class="full">Observações<textarea name="notes" placeholder="Ex.: amostra bem uniforme, presença de indivíduos menores no canto norte">{{ edit_sample.notes if edit_sample and edit_sample.notes else '' }}</textarea></label>
+      <div class="form-actions"><button type="submit">{{ 'Salvar alterações' if edit_sample else 'Salvar biometria e sincronizar manejo' }}</button></div>
     </form>
   </section>
 
@@ -60,7 +72,7 @@
   <p class="empty-state compact-state">Exibindo as últimas 60 biometrias{% if history_unit_id %} do viveiro selecionado{% endif %}.</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Amostra</th><th>Peso médio</th><th>Peso esperado</th><th>Desvio</th><th>CV</th><th>Biomassa</th><th>Ganho semanal</th><th>Sync manejo</th></tr></thead>
+      <thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Amostra</th><th>Peso médio</th><th>Peso esperado</th><th>Desvio</th><th>CV</th><th>Biomassa</th><th>Ganho semanal</th><th>Sync manejo</th><th>Ações</th></tr></thead>
       <tbody>
         {% for item in rows %}
         <tr>
@@ -75,8 +87,9 @@
           <td>{{ item.row.estimated_biomass_kg or '—' }}</td>
           <td>{% if item.row.weekly_gain_g is not none %}{{ '%.3f'|format(item.row.weekly_gain_g) }}{% else %}—{% endif %}</td>
           <td>{% if item.linked_management %}<span class="pill pill-success">Sim</span>{% else %}<span class="pill pill-danger">Não</span>{% endif %}</td>
+          <td><a class="secondary-link-button small-button" href="{{ url_for('biometrics_page', edit_id=item.row.id, history_unit_id=history_unit_id) if history_unit_id else url_for('biometrics_page', edit_id=item.row.id) }}">Editar</a></td>
         </tr>
-        {% else %}<tr><td colspan="11" class="empty-cell">Nenhuma biometria registrada.</td></tr>{% endfor %}
+        {% else %}<tr><td colspan="12" class="empty-cell">Nenhuma biometria registrada.</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -89,6 +102,7 @@
     const lotSelect = document.getElementById('biometry-lot-select');
     const dateInput = document.getElementById('biometry-sample-date');
     const hint = document.getElementById('biometry-lot-hint');
+    const editMode = lotSelect && lotSelect.dataset.editMode === '1';
 
     function selectedDateValue() {
       return dateInput && dateInput.value ? dateInput.value : '{{ today.isoformat() }}';
@@ -125,7 +139,7 @@
 
     if (unitSelect) unitSelect.addEventListener('change', refreshLotFromUnit);
     if (dateInput) dateInput.addEventListener('change', refreshLotFromUnit);
-    refreshLotFromUnit();
+    if (!editMode) refreshLotFromUnit();
   })();
 </script>
 {% endblock %}

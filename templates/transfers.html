@@ -33,7 +33,7 @@
         <tr>
           <td>{{ a.lot.lot_code if a.lot else '—' }}</td>
           <td>{{ a.unit.name if a.unit else '—' }}</td>
-          <td>{{ a.unit.phase|phase_label if a.unit else '—' }}</td>
+          <td>{{ (a.operational_phase or (a.unit.phase if a.unit else ''))|phase_label if (a.operational_phase or a.unit) else '—' }}</td>
           <td>{{ a.start_date|brdate }}</td>
           <td>{{ '{:,.0f}'.format(a.quantity_allocated or 0).replace(',', '.') }}</td>
           <td>{% if a.unit and a.unit.area_m2 and a.quantity_allocated %}{{ ((a.quantity_allocated or 0) / a.unit.area_m2)|round(1) }} cam/m²{% else %}—{% endif %}</td>
@@ -85,7 +85,7 @@
       <select name="source_allocation_id" id="source_allocation_id" required>
         <option value="">Selecione o lote/unidade de origem</option>
         {% for a in allocations %}
-        <option value="{{ a.id }}" data-phase="{{ a.unit.phase if a.unit else '' }}">{{ a.lot.lot_code if a.lot else 'Lote' }} · {{ a.unit.name if a.unit else 'Unidade' }} · {{ a.unit.phase|phase_label if a.unit else '' }} · saldo {{ '{:,.0f}'.format(a.quantity_allocated or 0).replace(',', '.') }}</option>
+        <option value="{{ a.id }}" data-phase="{{ a.operational_phase or (a.unit.phase if a.unit else '') }}">{{ a.lot.lot_code if a.lot else 'Lote' }} · {{ a.unit.name if a.unit else 'Unidade' }} · {{ (a.operational_phase or (a.unit.phase if a.unit else ''))|phase_label if (a.operational_phase or a.unit) else '' }} · saldo {{ '{:,.0f}'.format(a.quantity_allocated or 0).replace(',', '.') }}</option>
         {% endfor %}
       </select>
     </label>
@@ -186,28 +186,73 @@
 </div>
 <script>
 (function () {
-  function setPhaseFromSelect(selectId, phaseId) {
+  const nextPhase = { bercario: 'juvenil', juvenil: 'engorda' };
+
+  function selectedDataPhase(selectId) {
     const select = document.getElementById(selectId);
-    const phase = document.getElementById(phaseId);
-    if (!select || !phase) return;
+    if (!select) return '';
     const opt = select.options[select.selectedIndex];
-    const value = opt ? opt.dataset.phase : '';
-    if (value) phase.value = value;
+    return opt ? (opt.dataset.phase || '') : '';
   }
+
+  function setSelectValue(selectId, value) {
+    const select = document.getElementById(selectId);
+    if (!select || !value) return;
+    select.value = value;
+  }
+
+  function updateSourcePhaseFromOrigin() {
+    const originSelectId = document.getElementById('source_allocation_id') ? 'source_allocation_id' : 'source_unit_id';
+    setSelectValue('source_phase', selectedDataPhase(originSelectId));
+  }
+
+  function suggestDestinationPhase(force = false) {
+    const destinationPhase = document.getElementById('destination_phase');
+    const sourcePhase = document.getElementById('source_phase');
+    if (!destinationPhase || !sourcePhase) return;
+
+    const suggested = nextPhase[sourcePhase.value] || selectedDataPhase('destination_unit_id');
+    if (!suggested) return;
+
+    // Em cadastro novo, o padrão operacional é a próxima fase do fluxo trifásico.
+    // Ex.: Berçário -> Juvenil mesmo que a estufa/viveiro esteja cadastrado como Engorda.
+    if (force || !destinationPhase.dataset.manualEdited) {
+      destinationPhase.value = suggested;
+    }
+  }
+
   const sourceAllocation = document.getElementById('source_allocation_id');
   const sourceUnit = document.getElementById('source_unit_id');
+  const sourcePhase = document.getElementById('source_phase');
   const destinationUnit = document.getElementById('destination_unit_id');
+  const destinationPhase = document.getElementById('destination_phase');
+
   if (sourceAllocation) {
-    sourceAllocation.addEventListener('change', function () { setPhaseFromSelect('source_allocation_id', 'source_phase'); });
-    setPhaseFromSelect('source_allocation_id', 'source_phase');
+    sourceAllocation.addEventListener('change', function () {
+      updateSourcePhaseFromOrigin();
+      suggestDestinationPhase(true);
+    });
+    updateSourcePhaseFromOrigin();
   }
   if (sourceUnit) {
-    sourceUnit.addEventListener('change', function () { setPhaseFromSelect('source_unit_id', 'source_phase'); });
-    setPhaseFromSelect('source_unit_id', 'source_phase');
+    sourceUnit.addEventListener('change', function () {
+      updateSourcePhaseFromOrigin();
+      suggestDestinationPhase(true);
+    });
+    updateSourcePhaseFromOrigin();
+  }
+  if (sourcePhase) {
+    sourcePhase.addEventListener('change', function () { suggestDestinationPhase(true); });
   }
   if (destinationUnit) {
-    destinationUnit.addEventListener('change', function () { setPhaseFromSelect('destination_unit_id', 'destination_phase'); });
-    setPhaseFromSelect('destination_unit_id', 'destination_phase');
+    destinationUnit.addEventListener('change', function () { suggestDestinationPhase(false); });
+  }
+  if (destinationPhase) {
+    destinationPhase.addEventListener('change', function () { destinationPhase.dataset.manualEdited = 'true'; });
+  }
+
+  if (!document.querySelector('input[name="transfer_id"]')) {
+    suggestDestinationPhase(true);
   }
 })();
 </script>
