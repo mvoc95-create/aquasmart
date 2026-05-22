@@ -1,12 +1,17 @@
 {% extends 'base.html' %}
-{% block page_title %}Alimentação berçário{% endblock %}
-{% block page_subtitle %}Organizei esta tela para separar melhor o planejamento, o lançamento real e a mensagem do WhatsApp.{% endblock %}
+{% set phase_label = phase_label|default('berçário') %}
+{% set phase_label_plural = phase_label_plural|default('berçários') %}
+{% set phase_label_title = phase_label_title|default('Berçário') %}
+{% set feed_endpoint = feed_endpoint|default('nursery_feed_page') %}
+{% set delete_endpoint = delete_endpoint|default('delete_nursery_feed_entry') %}
+{% block page_title %}Alimentação {{ phase_label }}{% endblock %}
+{% block page_subtitle %}Planejamento, lançamento real e mensagem do WhatsApp para a alimentação de {{ phase_label }}.{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-head">
     <div>
       <p class="panel-kicker">Data de trabalho</p>
-      <h2>Planejamento automático do berçário</h2>
+      <h2>Planejamento automático do {{ phase_label }}</h2>
       <p class="helper-text">Veja o protocolo do dia, salve o lançamento real e, se precisar, abra a mensagem pronta para o WhatsApp.</p>
     </div>
   </div>
@@ -17,7 +22,7 @@
 
   {% if plans %}
   <div class="nursery-overview-row">
-    <div class="summary-chip"><strong>{{ plans|length }}</strong><span>berçário{% if plans|length != 1 %}s{% endif %} ativo{% if plans|length != 1 %}s{% endif %}</span></div>
+    <div class="summary-chip"><strong>{{ plans|length }}</strong><span>{{ phase_label_plural if plans|length != 1 else phase_label }} ativo{% if plans|length != 1 %}s{% endif %}</span></div>
     <div class="summary-chip"><strong>{{ '%.3f'|format((plans|sum(attribute='total_day_kg'))) }}</strong><span>kg programados no dia</span></div>
   </div>
   {% endif %}
@@ -33,7 +38,7 @@
     </summary>
     <div class="action-row nursery-copy-row">
       <button type="button" class="secondary-button copy-message-btn" data-copy-target="#combined-message">Copiar mensagem consolidada do dia</button>
-      <span class="helper-text">Usa todos os berçários ativos do dia.</span>
+      <span class="helper-text">Usa todos os {{ phase_label_plural }} ativos do dia.</span>
     </div>
     <textarea id="combined-message" class="message-preview" readonly>{{ combined_message }}</textarea>
   </details>
@@ -47,7 +52,7 @@
     <div>
       <p class="panel-kicker">{{ plan.unit.name }}</p>
       <h2>Lote {{ plan.lot.lot_code }} · PL{{ plan.stage_today }}</h2>
-      <p class="helper-text">{{ plan.protocol_name }} · Dia {{ plan.day_index }} no berçário · População estimada {{ '{:,.0f}'.format(plan.projected_population).replace(',', '.') }} PL · Biomassa {{ '%.2f'|format(plan.biomass_kg) }} kg</p>
+      <p class="helper-text">{{ plan.protocol_name }} · Dia {{ plan.day_index }} do protocolo · População estimada {{ '{:,.0f}'.format(plan.projected_population).replace(',', '.') }} PL · Biomassa {{ '%.2f'|format(plan.biomass_kg) }} kg</p>
     </div>
     <div class="action-row">
       <button type="button" class="secondary-button copy-message-btn" data-copy-target="#msg-{{ plan.unit.id }}">Copiar mensagem</button>
@@ -119,7 +124,7 @@
       <div>
         <p class="panel-kicker">Lançamento real</p>
         <h3>{{ 'Editar alimentação salva' if plan.existing_entry else 'Salvar alimentação do dia' }}</h3>
-        <p class="helper-text">Aqui é onde você confirma o que realmente foi ofertado no berçário.</p>
+        <p class="helper-text">Aqui é onde você confirma o que realmente foi ofertado no {{ phase_label }}.</p>
       </div>
     </div>
     <form method="post" id="{{ entry_form_id }}" class="form-grid compact-grid nursery-entry-form">
@@ -160,17 +165,17 @@
   </details>
 </section>
 {% else %}
-<section class="panel"><div class="empty-state"><h3>Nenhum berçário ativo pronto para calcular</h3><p>Confira se há lotes ativos alocados em unidades de berçário e se o lote tem a idade inicial da PL preenchida.</p></div></section>
+<section class="panel"><div class="empty-state"><h3>Nenhum {{ phase_label }} ativo pronto para calcular</h3><p>Confira se há lotes ativos alocados em unidades de {{ phase_label }} e se o lote tem a idade inicial da PL preenchida.</p></div></section>
 {% endfor %}
 </div>
 
 <section class="panel" style="margin-top:1rem;">
   <div class="panel-head"><div><p class="panel-kicker">Histórico</p><h2>Últimos lançamentos</h2></div></div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Berçário</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Ajuste</th><th>Aditivos água</th><th>Obs.</th><th></th></tr></thead>
+    <thead><tr><th>Data</th><th>{{ phase_label_title }}</th><th>Lote</th><th>Qtd. dia (kg)</th><th>Score</th><th>Ajuste</th><th>Aditivos água</th><th>Obs.</th><th></th></tr></thead>
     <tbody>
     {% for e in entries %}
-    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ '%.1f'|format(e.intestinal_score) if e.intestinal_score is not none else '—' }}</td><td>{% if e.score_adjustment_pct is not none %}{% if e.score_adjustment_pct > 0 %}+{% endif %}{{ '%.1f'|format(e.score_adjustment_pct) }}%{% else %}—{% endif %}</td><td>{{ (nursery_entry_water_items(e)|map(attribute='label')|list|join(', ')) or '—' }}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for('nursery_feed_page', edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for('delete_nursery_feed_entry', entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento do berçário? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
+    <tr><td>{{ e.feed_date|brdate }}</td><td>{{ e.unit.name if e.unit else '—' }}</td><td>{{ e.lot.lot_code if e.lot else '—' }}</td><td>{{ '%.3f'|format(e.quantity_kg or 0) }}</td><td>{{ '%.1f'|format(e.intestinal_score) if e.intestinal_score is not none else '—' }}</td><td>{% if e.score_adjustment_pct is not none %}{% if e.score_adjustment_pct > 0 %}+{% endif %}{{ '%.1f'|format(e.score_adjustment_pct) }}%{% else %}—{% endif %}</td><td>{{ (nursery_entry_water_items(e)|map(attribute='label')|list|join(', ')) or '—' }}</td><td>{{ e.notes or '—' }}</td><td class="actions-cell"><div class="action-stack"><a class="link-button small-button" href="{{ url_for(feed_endpoint, edit_id=e.id, feed_date=e.feed_date.isoformat()) }}">Editar</a><form method="post" action="{{ url_for(delete_endpoint, entry_id=e.id) }}" onsubmit="return confirm('Excluir este lançamento de {{ phase_label }}? Os registros criados no manejo diário também serão removidos.');"><button type="submit" class="danger-button small-button">Excluir</button></form></div></td></tr>
     {% else %}<tr><td colspan="9" class="empty-cell">Nenhum lançamento ainda.</td></tr>{% endfor %}
     </tbody></table></div>
 </section>

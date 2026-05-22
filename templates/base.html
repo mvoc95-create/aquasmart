@@ -48,7 +48,7 @@
           </div>
         </details>
 
-        <details class="nav-group" {% if current_endpoint in ['water_page', 'water_quality_page', 'management_page', 'nursery_feed_page', 'biometrics_page', 'transfers_page'] %}open{% endif %}>
+        <details class="nav-group" {% if current_endpoint in ['water_page', 'water_quality_page', 'management_page', 'nursery_feed_page', 'juvenile_feed_page', 'biometrics_page', 'transfers_page'] %}open{% endif %}>
           <summary class="nav-group-summary">
             <span class="nav-group-label"><i class="fa-solid fa-wave-square"></i><span>Operação</span></span>
             <i class="fa-solid fa-chevron-right nav-group-chevron"></i>
@@ -61,6 +61,7 @@
             {% if current_user.is_authenticated and current_user.has_permission('management_manage') %}
             <a class="nav-sublink {{ 'active' if current_endpoint == 'management_page' else '' }}" href="{{ url_for('management_page') }}">Manejo diário</a>
             <a class="nav-sublink {{ 'active' if current_endpoint == 'nursery_feed_page' else '' }}" href="{{ url_for('nursery_feed_page') }}">Alimentação berçário</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'juvenile_feed_page' else '' }}" href="{{ url_for('juvenile_feed_page') }}">Alimentação juvenil</a>
             <a class="nav-sublink {{ 'active' if current_endpoint == 'biometrics_page' else '' }}" href="{{ url_for('biometrics_page') }}">Biometrias</a>
             {% endif %}
             {% if current_user.is_authenticated and current_user.has_permission('transfers_manage') %}
