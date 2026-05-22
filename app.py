@@ -18,7 +18,7 @@ from flask_login import (
     logout_user,
 )
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import case, func, inspect, text, or_
+from sqlalchemy import and_, case, func, inspect, text, or_
 from sqlalchemy.orm import joinedload
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
@@ -224,6 +224,11 @@ class LotUnitAllocation(db.Model):
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date)
     quantity_allocated = db.Column(db.Integer)
+    # Fase operacional da alocação.
+    # Ex.: uma estufa cadastrada como "engorda" pode receber um lote como Juvenil.
+    # A alimentação e o mapa de saldos devem seguir esta fase da transferência, não apenas
+    # a fase fixa cadastrada na unidade física.
+    operational_phase = db.Column(db.String(30))
     notes = db.Column(db.Text)
     lot = db.relationship('Lot')
     unit = db.relationship('Unit')
@@ -560,6 +565,38 @@ def brdate_filter(value):
 @app.template_filter('phase_label')
 def phase_label(value):
     return {'bercario': 'Berçário', 'juvenil': 'Juvenil', 'engorda': 'Engorda'}.get(value, value)
+
+
+VALID_OPERATIONAL_PHASES = {'bercario', 'juvenil', 'engorda'}
+
+
+def normalize_phase_value(value):
+    text = (value or '').strip().lower()
+    text = text.replace('ç', 'c').replace('á', 'a').replace('ã', 'a').replace('é', 'e')
+    if text in VALID_OPERATIONAL_PHASES:
+        return text
+    return None
+
+
+def allocation_operational_phase(allocation):
+    if not allocation:
+        return None
+    explicit_phase = normalize_phase_value(getattr(allocation, 'operational_phase', None))
+    if explicit_phase:
+        return explicit_phase
+    unit = getattr(allocation, 'unit', None)
+    return normalize_phase_value(getattr(unit, 'phase', None))
+
+
+def feeding_entry_operational_phase(entry):
+    if not entry:
+        return None
+    allocation = find_active_allocation(entry.lot_id, entry.unit_id, entry.feed_date) if entry.lot_id and entry.unit_id and entry.feed_date else None
+    phase = allocation_operational_phase(allocation)
+    if phase:
+        return phase
+    unit = entry.unit if getattr(entry, 'unit', None) else (db.session.get(Unit, entry.unit_id) if entry.unit_id else None)
+    return normalize_phase_value(getattr(unit, 'phase', None))
 
 
 @app.template_filter('shift_label')
@@ -5289,8 +5326,8 @@ def build_even_schedule(total_day_g: int, feedings_per_day: int):
 
 
 def entry_phase_label(entry):
-    unit = entry.unit if entry and entry.unit else (db.session.get(Unit, entry.unit_id) if entry and entry.unit_id else None)
-    if unit and unit.phase == 'juvenil':
+    phase = feeding_entry_operational_phase(entry)
+    if phase == 'juvenil':
         return 'juvenil'
     return 'berçário'
 
@@ -5972,13 +6009,20 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
 
 def build_stage_feed_digest_for_date(target_date: date | None = None, phase: str = 'bercario'):
     target_date = target_date or local_today()
+    phase = normalize_phase_value(phase) or 'bercario'
     plans = []
-    units = Unit.query.filter_by(active=True, phase=phase).order_by(Unit.name).all()
-    for unit in units:
-        lot = active_lot_for_unit(unit.id, on_date=target_date)
-        if not lot or lot.status != 'ativo':
+    seen = set()
+    allocations = active_allocations_for_operational_phase(phase, on_date=target_date)
+    for allocation in allocations:
+        unit = allocation.unit
+        lot = allocation.lot
+        if not unit or not unit.active or not lot or lot.status != 'ativo':
             continue
-        entry = NurseryFeeding.query.filter_by(feed_date=target_date, unit_id=unit.id).order_by(NurseryFeeding.id.desc()).first()
+        key = (unit.id, lot.id)
+        if key in seen:
+            continue
+        seen.add(key)
+        entry = NurseryFeeding.query.filter_by(feed_date=target_date, unit_id=unit.id, lot_id=lot.id).order_by(NurseryFeeding.id.desc()).first()
         adjustment = nursery_cumulative_adjustments(lot.id, target_date)
         plan = build_nursery_protocol_for_date(
             lot,
@@ -5989,6 +6033,7 @@ def build_stage_feed_digest_for_date(target_date: date | None = None, phase: str
         )
         if plan:
             plan['existing_entry'] = entry
+            plan['allocation'] = allocation
             plans.append(plan)
     return plans
 
@@ -6321,6 +6366,7 @@ def run_lightweight_migrations():
     if 'lot_unit_allocation' in tables:
         allocation_columns = get_columns('lot_unit_allocation')
         add_column_if_missing('lot_unit_allocation', allocation_columns, 'quantity_allocated', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER')
+        add_column_if_missing('lot_unit_allocation', allocation_columns, 'operational_phase', 'ALTER TABLE lot_unit_allocation ADD COLUMN operational_phase VARCHAR(30)', 'ALTER TABLE lot_unit_allocation ADD COLUMN operational_phase VARCHAR(30)')
 
     if 'transfer' in tables:
         transfer_columns = get_columns('transfer')
@@ -6493,13 +6539,16 @@ def backfill_lot_allocations_and_status():
                 start_date=lot.start_date,
                 end_date=lot.end_date,
                 quantity_allocated=lot.initial_count,
+                operational_phase=normalize_phase_value(lot.phase) or (lot.unit.phase if lot.unit else None),
                 notes='Alocação inicial criada automaticamente.'
             ))
             created += 1
         else:
-            for allocation in LotUnitAllocation.query.filter_by(lot_id=lot.id).all():
+            for allocation in LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter_by(lot_id=lot.id).all():
                 if allocation.quantity_allocated is None:
                     allocation.quantity_allocated = lot.initial_count
+                if not normalize_phase_value(getattr(allocation, 'operational_phase', None)):
+                    allocation.operational_phase = normalize_phase_value(lot.phase) or (allocation.unit.phase if allocation.unit else None)
         if lot.status == 'encerrado' and lot.end_date is None:
             last_sale = Sale.query.filter_by(lot_id=lot.id).order_by(Sale.sale_date.desc(), Sale.id.desc()).first()
             lot.end_date = last_sale.sale_date if last_sale else local_today()
@@ -6559,6 +6608,10 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
     (caso comum quando o sistema começou a ser usado depois da estocagem no berçário),
     a primeira transferência informa onde o lote estava antes. Nessa situação, a quantidade
     transferida substitui a expectativa anterior em vez de manter o saldo inicial fantasma.
+
+    A fase operacional da alocação vem da transferência. Isso permite que uma unidade física
+    cadastrada como Engorda seja usada temporariamente como Juvenil, e a tela Alimentação
+    Juvenil passe a enxergar o lote corretamente.
     """
     if not lot or not lot.id:
         return []
@@ -6584,7 +6637,14 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
     # Remove o mapa derivado antigo. Ele será recriado abaixo com base no histórico oficial.
     LotUnitAllocation.query.filter_by(lot_id=lot.id).delete(synchronize_session=False)
 
-    def add_allocation(unit_id, start_date, end_date, qty, notes):
+    def phase_for_unit(unit_id, fallback=None):
+        fallback = normalize_phase_value(fallback)
+        if fallback:
+            return fallback
+        unit = db.session.get(Unit, unit_id) if unit_id else None
+        return normalize_phase_value(unit.phase if unit else None)
+
+    def add_allocation(unit_id, start_date, end_date, qty, notes, operational_phase=None):
         if not unit_id or not start_date or not qty or qty <= 0:
             return
         if end_date and end_date < start_date:
@@ -6595,18 +6655,21 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             start_date=start_date,
             end_date=end_date,
             quantity_allocated=int(qty),
+            operational_phase=phase_for_unit(unit_id, operational_phase),
             notes=notes,
         ))
 
     state = {}
     inferred_first_source = False
     initial_unit_id = lot.unit_id
+    initial_phase = phase_for_unit(lot.unit_id, lot.phase)
     initial_note = 'Alocação inicial do lote.'
 
     if first_valid_transfer and first_valid_transfer.source_unit_id and first_valid_transfer.source_unit_id != lot.unit_id:
         # O lote estava cadastrado em uma unidade diferente da origem real da primeira
         # transferência. Usa a origem da transferência como ponto inicial operacional.
         initial_unit_id = first_valid_transfer.source_unit_id
+        initial_phase = phase_for_unit(first_valid_transfer.source_unit_id, first_valid_transfer.source_phase)
         inferred_first_source = True
         initial_note = 'Origem inicial reconstruída pela primeira transferência real.'
 
@@ -6618,6 +6681,7 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             state[initial_unit_id] = {
                 'qty': seed_qty,
                 'start_date': lot.start_date or (first_valid_transfer.transfer_date if first_valid_transfer else local_today()),
+                'phase': initial_phase,
                 'notes': initial_note,
                 'inferred_first_source': inferred_first_source,
             }
@@ -6632,6 +6696,8 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
 
         transfer_date = transfer.transfer_date or local_today()
         close_date = transfer_date - timedelta(days=1)
+        source_phase = phase_for_unit(transfer.source_unit_id, transfer.source_phase)
+        destination_phase = phase_for_unit(transfer.destination_unit_id, transfer.destination_phase)
         source_state = state.get(transfer.source_unit_id)
         inferred_missing_source = False
 
@@ -6642,11 +6708,14 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             source_state = {
                 'qty': max(qty_requested, initial_qty if not state else 0),
                 'start_date': lot.start_date or transfer_date,
+                'phase': source_phase,
                 'notes': 'Origem reconstruída automaticamente por transferência real sem saldo anterior.',
                 'inferred_first_source': True,
             }
             state[transfer.source_unit_id] = source_state
             inferred_missing_source = True
+        elif not source_state.get('phase'):
+            source_state['phase'] = source_phase
 
         available_qty = int(source_state['qty']) if source_state else 0
         received_qty = qty_requested
@@ -6679,12 +6748,14 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             close_date,
             available_qty,
             source_state.get('notes') or 'Saldo anterior à transferência.',
+            source_state.get('phase') or source_phase,
         )
         remaining_qty = max(available_qty - removed_from_source, 0)
         if remaining_qty > 0:
             state[transfer.source_unit_id] = {
                 'qty': remaining_qty,
                 'start_date': transfer_date,
+                'phase': source_state.get('phase') or source_phase,
                 'notes': 'Saldo recalculado após transferência parcial.',
                 'inferred_first_source': False,
             }
@@ -6700,6 +6771,7 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
                 close_date,
                 destination_state['qty'],
                 destination_state.get('notes') or 'Saldo anterior à nova entrada.',
+                destination_state.get('phase') or destination_phase,
             )
             new_destination_qty = int(destination_state['qty']) + received_qty
         else:
@@ -6708,6 +6780,7 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
         state[transfer.destination_unit_id] = {
             'qty': new_destination_qty,
             'start_date': transfer_date,
+            'phase': destination_phase,
             'notes': 'Saldo recalculado automaticamente a partir das transferências reais.',
             'inferred_first_source': False,
         }
@@ -6720,11 +6793,11 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             final_end_date,
             payload['qty'],
             payload.get('notes') or 'Saldo recalculado automaticamente.',
+            payload.get('phase'),
         )
 
     db.session.flush()
     return warnings
-
 
 def rebuild_all_lot_allocations_from_transfer_history():
     warnings = []
@@ -6759,6 +6832,7 @@ def sync_lot_allocations_after_lot_edit(lot: Lot, old_unit_id=None, old_initial_
         primary.start_date = lot.start_date
         primary.end_date = desired_end_date
         primary.quantity_allocated = desired_qty
+        primary.operational_phase = normalize_phase_value(lot.phase) or (lot.unit.phase if lot.unit else None)
         primary.notes = 'Alocação inicial do lote.'
         for extra in allocations[1:]:
             db.session.delete(extra)
@@ -6842,9 +6916,60 @@ def active_allocation_rows(on_date=None):
             Lot.start_date <= on_date,
             or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
         )
-        .order_by(Lot.lot_code.asc(), Unit.phase.asc(), Unit.name.asc(), LotUnitAllocation.start_date.asc())
+        .order_by(Lot.lot_code.asc(), LotUnitAllocation.operational_phase.asc(), Unit.name.asc(), LotUnitAllocation.start_date.asc())
         .all()
     )
+
+
+def active_allocations_for_operational_phase(phase: str, on_date=None):
+    """Active allocations by operational phase, not only by the fixed unit phase.
+
+    This is what makes Alimentação Juvenil find a lot transferred as Juvenil into an
+    estufa/viveiro whose master registration is still "engorda".
+    """
+    phase = normalize_phase_value(phase)
+    if not phase:
+        return []
+    on_date = on_date or local_today()
+    return (
+        LotUnitAllocation.query.options(joinedload(LotUnitAllocation.lot), joinedload(LotUnitAllocation.unit))
+        .join(Lot, Lot.id == LotUnitAllocation.lot_id)
+        .join(Unit, Unit.id == LotUnitAllocation.unit_id)
+        .filter(
+            LotUnitAllocation.start_date <= on_date,
+            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+            or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+            Lot.status == 'ativo',
+            Lot.start_date <= on_date,
+            or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
+            or_(
+                LotUnitAllocation.operational_phase == phase,
+                and_(
+                    or_(LotUnitAllocation.operational_phase.is_(None), LotUnitAllocation.operational_phase == ''),
+                    Unit.phase == phase,
+                ),
+            ),
+        )
+        .order_by(Unit.name.asc(), Lot.start_date.desc(), LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc())
+        .all()
+    )
+
+
+def active_units_for_operational_phase(phase: str, on_date=None):
+    seen = set()
+    units = []
+    for allocation in active_allocations_for_operational_phase(phase, on_date=on_date):
+        if allocation.unit and allocation.unit.id not in seen:
+            seen.add(allocation.unit.id)
+            units.append(allocation.unit)
+    return units
+
+
+def unit_is_active_in_operational_phase(unit_id: int, phase: str, on_date=None):
+    phase = normalize_phase_value(phase)
+    if not unit_id or not phase:
+        return False
+    return any(allocation.unit_id == unit_id for allocation in active_allocations_for_operational_phase(phase, on_date=on_date))
 
 
 def sync_lot_phase_from_allocations(lot: Lot, on_date=None):
@@ -6866,7 +6991,7 @@ def sync_lot_phase_from_allocations(lot: Lot, on_date=None):
     if not allocations:
         return
     most_advanced = max(
-        (allocation.unit.phase for allocation in allocations if allocation.unit and allocation.unit.phase),
+        (allocation_operational_phase(allocation) for allocation in allocations if allocation_operational_phase(allocation)),
         key=lambda phase: phase_rank.get(phase, 0),
         default=lot.phase,
     )
@@ -6875,7 +7000,7 @@ def sync_lot_phase_from_allocations(lot: Lot, on_date=None):
         preferred = max(
             allocations,
             key=lambda allocation: (
-                phase_rank.get(allocation.unit.phase if allocation.unit else '', 0),
+                phase_rank.get(allocation_operational_phase(allocation) or '', 0),
                 allocation.start_date or date.min,
                 allocation.id or 0,
             ),
@@ -8619,7 +8744,7 @@ def lots_page():
         if form_mode != 'edit_lot':
             db.session.add(lot)
             db.session.flush()
-            db.session.add(LotUnitAllocation(lot_id=lot.id, unit_id=lot.unit_id, start_date=lot.start_date, quantity_allocated=lot.initial_count, notes='Alocação inicial do lote.'))
+            db.session.add(LotUnitAllocation(lot_id=lot.id, unit_id=lot.unit_id, start_date=lot.start_date, quantity_allocated=lot.initial_count, operational_phase=normalize_phase_value(lot.phase) or (lot.unit.phase if lot.unit else None), notes='Alocação inicial do lote.'))
         else:
             sync_lot_allocations_after_lot_edit(lot, old_unit_id, old_initial_count, old_start_date)
         db.session.commit()
@@ -11692,8 +11817,8 @@ def transfers_page():
             return redirect(url_for('transfers_page'))
 
         valid_phases = {'bercario', 'juvenil', 'engorda'}
-        source_phase = requested_source_phase or (source_allocation.unit.phase if source_allocation and source_allocation.unit else None) or (src_lot.phase if src_lot else None)
-        destination_phase = requested_destination_phase or (destination_unit.phase if destination_unit else None)
+        source_phase = normalize_phase_value(requested_source_phase) or allocation_operational_phase(source_allocation) or normalize_phase_value(src_lot.phase if src_lot else None)
+        destination_phase = normalize_phase_value(requested_destination_phase) or normalize_phase_value(destination_unit.phase if destination_unit else None)
         if source_phase not in valid_phases or destination_phase not in valid_phases:
             flash('Informe corretamente a fase de origem e a fase de destino.', 'danger')
             return redirect(url_for('transfers_page'))
@@ -11748,10 +11873,12 @@ def transfers_page():
                 unit_id=destination_unit_id,
                 start_date=transfer_date,
                 quantity_allocated=transferred_qty,
+                operational_phase=destination_phase,
                 notes='Transferência trifásica entre fases.'
             ))
         else:
             existing_allocation.quantity_allocated = (existing_allocation.quantity_allocated or 0) + transferred_qty
+            existing_allocation.operational_phase = destination_phase or existing_allocation.operational_phase
             if existing_allocation.end_date and existing_allocation.end_date <= transfer_date:
                 existing_allocation.end_date = None
 
@@ -12127,7 +12254,7 @@ def nursery_feed_page():
     selected_date = parse_date(request.args.get('feed_date'), local_today())
     edit_id = parse_int(request.args.get('edit_id'))
     edit_entry = db.session.get(NurseryFeeding, edit_id) if edit_id else None
-    nursery_units = Unit.query.filter_by(active=True, phase='bercario').order_by(Unit.name).all()
+    nursery_units = active_units_for_operational_phase('bercario', on_date=selected_date)
 
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'create')
@@ -12170,18 +12297,19 @@ def nursery_feed_page():
         flash('Alimentação de berçário salva e integrada ao manejo diário. Os aditivos marcados também deram baixa no estoque.', 'success')
         return redirect(url_for('nursery_feed_page', feed_date=entry.feed_date.isoformat()))
 
-    entries = (
+    recent_entries = (
         NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot))
-        .join(Unit, Unit.id == NurseryFeeding.unit_id)
-        .filter(Unit.phase == 'bercario')
         .order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc())
-        .limit(60)
+        .limit(200)
         .all()
     )
+    entries = [entry for entry in recent_entries if feeding_entry_operational_phase(entry) == 'bercario'][:60]
     plans = build_nursery_digest_for_date(selected_date)
+    plan_unit_lot_keys = {(plan['unit'].id, plan['lot'].id) for plan in plans}
     entry_by_unit_id = {
         entry.unit_id: entry
-        for entry in NurseryFeeding.query.join(Unit, Unit.id == NurseryFeeding.unit_id).filter(NurseryFeeding.feed_date == selected_date, Unit.phase == 'bercario').all()
+        for entry in NurseryFeeding.query.filter(NurseryFeeding.feed_date == selected_date).all()
+        if (entry.unit_id, entry.lot_id) in plan_unit_lot_keys
     }
     for plan in plans:
         plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
@@ -12212,7 +12340,7 @@ def juvenile_feed_page():
     selected_date = parse_date(request.args.get('feed_date'), local_today())
     edit_id = parse_int(request.args.get('edit_id'))
     edit_entry = db.session.get(NurseryFeeding, edit_id) if edit_id else None
-    juvenile_units = Unit.query.filter_by(active=True, phase='juvenil').order_by(Unit.name).all()
+    juvenile_units = active_units_for_operational_phase('juvenil', on_date=selected_date)
 
     if request.method == 'POST':
         form_mode = request.form.get('form_mode', 'create')
@@ -12224,8 +12352,8 @@ def juvenile_feed_page():
         entry.feed_date = parse_date(request.form['feed_date'])
         entry.unit_id = int(request.form['unit_id'])
         unit = db.session.get(Unit, entry.unit_id)
-        if not unit or unit.phase != 'juvenil':
-            flash('Selecione uma unidade de juvenil válida.', 'danger')
+        if not unit or not unit_is_active_in_operational_phase(unit.id, 'juvenil', on_date=entry.feed_date):
+            flash('Selecione uma unidade com lote ativo na fase Juvenil.', 'danger')
             return redirect(url_for('juvenile_feed_page', feed_date=entry.feed_date.isoformat()))
         active_lot = active_lot_for_unit(entry.unit_id, on_date=entry.feed_date)
         entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
@@ -12258,18 +12386,19 @@ def juvenile_feed_page():
         flash('Alimentação de juvenil salva e integrada ao manejo diário. Os aditivos marcados também deram baixa no estoque.', 'success')
         return redirect(url_for('juvenile_feed_page', feed_date=entry.feed_date.isoformat()))
 
-    entries = (
+    recent_entries = (
         NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot))
-        .join(Unit, Unit.id == NurseryFeeding.unit_id)
-        .filter(Unit.phase == 'juvenil')
         .order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc())
-        .limit(60)
+        .limit(200)
         .all()
     )
+    entries = [entry for entry in recent_entries if feeding_entry_operational_phase(entry) == 'juvenil'][:60]
     plans = build_juvenile_digest_for_date(selected_date)
+    plan_unit_lot_keys = {(plan['unit'].id, plan['lot'].id) for plan in plans}
     entry_by_unit_id = {
         entry.unit_id: entry
-        for entry in NurseryFeeding.query.join(Unit, Unit.id == NurseryFeeding.unit_id).filter(NurseryFeeding.feed_date == selected_date, Unit.phase == 'juvenil').all()
+        for entry in NurseryFeeding.query.filter(NurseryFeeding.feed_date == selected_date).all()
+        if (entry.unit_id, entry.lot_id) in plan_unit_lot_keys
     }
     for plan in plans:
         plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
@@ -12596,6 +12725,65 @@ def latest_management_for_lot(lot_id):
 
 def latest_biometric_for_lot(lot_id):
     return BiometricsSample.query.filter(BiometricsSample.lot_id == lot_id).order_by(BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()).first()
+
+
+def recompute_weekly_gains_for_lot(lot_id):
+    """Recalcula o ganho semanal das biometrias em ordem cronológica.
+
+    Isso evita que uma correção de data deixe o histórico com ganho semanal baseado
+    na data antiga ou em uma biometria cadastrada fora de ordem.
+    """
+    if not lot_id:
+        return
+    previous = None
+    samples = (
+        BiometricsSample.query
+        .filter(BiometricsSample.lot_id == lot_id)
+        .order_by(BiometricsSample.sample_date.asc(), BiometricsSample.id.asc())
+        .all()
+    )
+    for sample in samples:
+        if previous and sample.sample_date and previous.sample_date and sample.average_weight_g is not None and previous.average_weight_g is not None:
+            days = max((sample.sample_date - previous.sample_date).days, 1)
+            sample.weekly_gain_g = round(((sample.average_weight_g - previous.average_weight_g) / days) * 7, 3)
+        else:
+            sample.weekly_gain_g = None
+        previous = sample
+
+
+def clear_old_biometry_management_sync(lot_id, unit_id, sample_date, old_weight_g=None, old_biomass_kg=None):
+    """Remove o reflexo de manejo da data antiga quando a biometria é editada.
+
+    Não apaga o manejo inteiro para não perder ração/mortalidade lançadas no mesmo dia.
+    Apenas limpa peso/biomassa sincronizados pela biometria antiga.
+    """
+    if not lot_id or not unit_id or not sample_date:
+        return
+    sync_note = f'Biometria sincronizada em {sample_date.strftime("%d/%m/%Y")}'
+    row = (
+        DailyManagement.query
+        .filter(
+            DailyManagement.lot_id == lot_id,
+            DailyManagement.unit_id == unit_id,
+            DailyManagement.manage_date == sample_date,
+        )
+        .order_by(DailyManagement.id.desc())
+        .first()
+    )
+    if not row or not (row.notes and sync_note in row.notes):
+        return
+
+    # Evita limpar manualmente outro peso caso o operador já tenha corrigido o manejo depois.
+    if old_weight_g is not None and row.average_weight_g is not None and abs((row.average_weight_g or 0) - old_weight_g) > 0.0005:
+        return
+    if old_biomass_kg is not None and row.estimated_biomass_kg is not None and abs((row.estimated_biomass_kg or 0) - old_biomass_kg) > 0.01:
+        return
+
+    row.average_weight_g = None
+    row.estimated_biomass_kg = None
+    notes = [part.strip() for part in (row.notes or '').split('|') if part.strip() and part.strip() != sync_note]
+    row.notes = ' | '.join(notes) or None
+    row.updated_at = datetime.utcnow()
 
 
 def merged_weight_observations(lot_id):
@@ -13849,6 +14037,21 @@ def biometrics_page():
         return payload
 
     if request.method == 'POST':
+        edit_id = parse_int(request.form.get('biometrics_id'))
+        sample_to_edit = db.session.get(BiometricsSample, edit_id) if edit_id else None
+        old_state = None
+        if edit_id and not sample_to_edit:
+            flash('Biometria não encontrada para edição.', 'warning')
+            return redirect(url_for('biometrics_page'))
+        if sample_to_edit:
+            old_state = {
+                'lot_id': sample_to_edit.lot_id,
+                'unit_id': sample_to_edit.unit_id,
+                'sample_date': sample_to_edit.sample_date,
+                'average_weight_g': sample_to_edit.average_weight_g,
+                'estimated_biomass_kg': sample_to_edit.estimated_biomass_kg,
+            }
+
         submitted_lot_id = parse_int(request.form.get('lot_id'))
         unit_id = parse_int(request.form.get('unit_id'))
         sample_date = parse_date(request.form.get('sample_date'), default=local_today())
@@ -13871,24 +14074,71 @@ def biometrics_page():
 
         if not lot or average_weight_g is None:
             flash('Informe viveiro com lote ativo e peso médio para salvar a biometria.', 'warning')
-            return redirect(url_for('biometrics_page'))
+            redirect_args = {'edit_id': edit_id} if edit_id else {}
+            return redirect(url_for('biometrics_page', **redirect_args))
 
         if not estimated_biomass_kg:
             live_count = current_live_count_for_lot(lot)
             estimated_biomass_kg = round((live_count * average_weight_g) / 1000, 2) if live_count and average_weight_g else None
-        last = latest_biometric_for_lot(lot_id)
-        weekly_gain = None
-        if last and last.average_weight_g is not None:
-            days = max((sample_date - last.sample_date).days, 1)
-            weekly_gain = round(((average_weight_g - last.average_weight_g) / days) * 7, 3)
-        row = BiometricsSample(sample_date=sample_date, lot_id=lot_id, unit_id=unit_id, sample_size=sample_size, average_weight_g=average_weight_g, cv_pct=cv_pct, estimated_biomass_kg=estimated_biomass_kg, weekly_gain_g=weekly_gain, notes=notes or None)
-        db.session.add(row)
+
+        if sample_to_edit:
+            row = sample_to_edit
+            row.sample_date = sample_date
+            row.lot_id = lot_id
+            row.unit_id = unit_id
+            row.sample_size = sample_size
+            row.average_weight_g = average_weight_g
+            row.cv_pct = cv_pct
+            row.estimated_biomass_kg = estimated_biomass_kg
+            row.notes = notes or None
+            flash_message = 'Biometria atualizada e manejo diário resincronizado.', 'success'
+        else:
+            row = BiometricsSample(
+                sample_date=sample_date,
+                lot_id=lot_id,
+                unit_id=unit_id,
+                sample_size=sample_size,
+                average_weight_g=average_weight_g,
+                cv_pct=cv_pct,
+                estimated_biomass_kg=estimated_biomass_kg,
+                notes=notes or None,
+            )
+            db.session.add(row)
+            flash_message = 'Biometria registrada e sincronizada com o manejo diário.', 'success'
+
         sync_biometrics_to_management(lot, unit_id, sample_date, average_weight_g, estimated_biomass_kg, notes)
+
+        if old_state and (
+            old_state['lot_id'] != lot_id or old_state['unit_id'] != unit_id or old_state['sample_date'] != sample_date
+        ):
+            clear_old_biometry_management_sync(
+                old_state['lot_id'],
+                old_state['unit_id'],
+                old_state['sample_date'],
+                old_state['average_weight_g'],
+                old_state['estimated_biomass_kg'],
+            )
+
+        affected_lot_ids = {lot_id}
+        if old_state and old_state.get('lot_id'):
+            affected_lot_ids.add(old_state['lot_id'])
+        for affected_lot_id in affected_lot_ids:
+            recompute_weekly_gains_for_lot(affected_lot_id)
+
         db.session.commit()
-        flash('Biometria registrada e sincronizada com o manejo diário.', 'success')
+        flash(*flash_message)
         return redirect(url_for('biometrics_page', history_unit_id=unit_id) if unit_id else url_for('biometrics_page'))
 
     history_unit_id = parse_int(request.args.get('history_unit_id'))
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_sample = None
+    if edit_id:
+        edit_sample = BiometricsSample.query.options(joinedload(BiometricsSample.lot), joinedload(BiometricsSample.unit)).filter(BiometricsSample.id == edit_id).first()
+        if not edit_sample:
+            flash('Biometria não encontrada para edição.', 'warning')
+            return redirect(url_for('biometrics_page', history_unit_id=history_unit_id) if history_unit_id else url_for('biometrics_page'))
+        history_unit_id = history_unit_id or edit_sample.unit_id
+
     rows_query = BiometricsSample.query.options(joinedload(BiometricsSample.lot), joinedload(BiometricsSample.unit))
     if history_unit_id:
         rows_query = rows_query.filter(BiometricsSample.unit_id == history_unit_id)
@@ -13925,6 +14175,7 @@ def biometrics_page():
         active_summaries=active_summaries,
         today=local_today(),
         history_unit_id=history_unit_id,
+        edit_sample=edit_sample,
         unit_lot_options=unit_lot_options_payload(),
     )
 
