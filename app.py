@@ -3273,7 +3273,139 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                                     'scheduled_time': '09:30',
                                     'priority': 'media'}]}]}}
 
-DEFAULT_NURSERY_PROTOCOL_KEY = 'sp1'
+
+# Novo padrão operacional informado pela fazenda: Protocolo Alimentação Berçário e Pré-Engorda RG1 — Lote 2 Aquatec.
+# Ele substitui o RG1 antigo como referência padrão para berçário e juvenil.
+def build_rg1_lote2_aquatec_rows():
+    # Mantém o início da tabela antiga antes do primeiro estágio do novo padrão (PL13).
+    # Essas linhas ficam como pré-berçário/arranque para casos em que o lote entra como PL10, PL11 ou PL12.
+    # A partir de PL13 o sistema passa a usar exatamente o padrão novo RG1 Lote 2 Aquatec.
+    legacy_rows = [
+        {
+            'pl_stage': 10,
+            'day': 1,
+            'population': 160000,
+            'base_population': 160000,
+            'survival_pct': 100.0,
+            'individual_weight_g': 0.002,
+            'daily_growth_g': None,
+            'feed_rate_pct': 35.0,
+            'total_day_g': 110,
+            'feedings_per_day': 12,
+            'per_feeding_g': 9,
+            'biomass_kg': 0.32,
+            'estimated_fcr': 0.35,
+            'mixes': [{'label': 'MeM 200-300', 'grams': 112}],
+            'water_items': [],
+        },
+        {
+            'pl_stage': 11,
+            'day': 2,
+            'population': 159467,
+            'base_population': 160000,
+            'survival_pct': 100.0,
+            'individual_weight_g': 0.003,
+            'daily_growth_g': 0.001,
+            'feed_rate_pct': 34.0,
+            'total_day_g': 160,
+            'feedings_per_day': 12,
+            'per_feeding_g': 13,
+            'biomass_kg': 0.48,
+            'estimated_fcr': 0.57,
+            'mixes': [{'label': 'MeM 200-300', 'grams': 163}],
+            'water_items': [],
+        },
+        {
+            'pl_stage': 12,
+            'day': 3,
+            'population': 158933,
+            'base_population': 160000,
+            'survival_pct': 99.0,
+            'individual_weight_g': 0.004,
+            'daily_growth_g': 0.001,
+            'feed_rate_pct': 30.0,
+            'total_day_g': 190,
+            'feedings_per_day': 12,
+            'per_feeding_g': 16,
+            'biomass_kg': 0.64,
+            'estimated_fcr': 0.73,
+            'mixes': [{'label': 'MeM 200-300', 'grams': 143}, {'label': 'MeM 300-500', 'grams': 48}],
+            'water_items': [],
+        },
+    ]
+    raw_rows = [
+        # day, PL, população, sobrevivência %, PL/g, peso g, biomassa kg, taxa %, total g, NS225, NS450, T500-900, T800-1200, refeições/dia
+        (1, 13, 288000, 100.00, 333, 0.003000, 0.86, 25.00, 216, 216, 0, 0, 0, 12),
+        (2, 14, 285120, 99.00, 250, 0.004000, 1.14, 23.75, 271, 271, 0, 0, 0, 12),
+        (3, 15, 282240, 98.00, 171, 0.010000, 1.65, 22.56, 372, 372, 0, 0, 0, 12),
+        (4, 16, 280800, 97.50, 113, 0.010000, 2.48, 21.43, 533, 533, 0, 0, 0, 12),
+        (5, 17, 279360, 97.00, 78, 0.010000, 3.58, 20.36, 729, 729, 0, 0, 0, 12),
+        (6, 18, 278640, 96.75, 59, 0.020000, 4.72, 19.34, 914, 914, 0, 0, 0, 12),
+        (7, 19, 277920, 96.50, 46, 0.020000, 6.04, 18.38, 1110, 1110, 0, 0, 0, 12),
+        (8, 20, 277200, 96.25, 36, 0.030000, 7.70, 17.46, 1344, 1344, 0, 0, 0, 12),
+        (9, 21, 276480, 96.00, 29, 0.030000, 9.53, 16.59, 1581, 1186, 395, 0, 0, 12),
+        (10, 22, 275760, 95.75, 23, 0.040000, 11.99, 15.76, 1889, 945, 945, 0, 0, 12),
+        (11, 23, 275040, 95.50, 19, 0.050000, 14.48, 14.97, 2167, 542, 1625, 0, 0, 12),
+        (12, 24, 274320, 95.25, 16, 0.060000, 17.15, 14.22, 2438, 0, 2438, 0, 0, 12),
+        (13, 25, 273600, 95.00, 14, 0.070000, 19.54, 13.51, 2640, 0, 2640, 0, 0, 12),
+        (14, 26, 272880, 94.75, 12, 0.080000, 20.89, 12.83, 2681, 0, 2011, 670, 0, 12),
+        (15, 27, 348571, 94.50, 13.06, 0.076548, 26.68, 12.19, 3253, 0, 1627, 1627, 0, 12),
+        (16, 28, 328528, 94.25, 5.6, 0.180000, 59.14, 11.58, 6849, 0, 1712, 5137, 0, 8),
+        (17, 29, 327657, 94.00, 4.3, 0.230000, 75.36, 11.00, 8292, 0, 0, 8292, 0, 8),
+        (18, 30, 326785, 93.75, 3.6, 0.280000, 91.50, 10.45, 9564, 0, 0, 9564, 0, 8),
+        (19, 31, 325914, 93.50, 3.0, 0.330000, 107.55, 9.93, 10680, 0, 0, 10680, 0, 8),
+        (20, 32, 325042, 93.25, 2.6, 0.380000, 123.52, 9.43, 11652, 0, 0, 11652, 0, 8),
+        (21, 33, 324171, 93.00, 2.3, 0.430000, 139.39, 8.96, 12493, 0, 0, 12493, 0, 8),
+        (22, 34, 323300, 92.75, 2.1, 0.480000, 155.16, 8.51, 13212, 0, 0, 13212, 0, 8),
+        (23, 35, 322428, 92.50, 1.9, 0.520000, 167.66, 8.09, 13561, 0, 0, 13561, 0, 8),
+        (24, 36, 321557, 92.25, 1.8, 0.570000, 183.29, 7.68, 14084, 0, 0, 14084, 0, 6),
+        (25, 37, 320685, 92.00, 1.6, 0.620000, 198.82, 7.30, 14514, 0, 0, 10885, 3628, 6),
+        (26, 38, 319814, 91.75, 1.5, 0.670000, 214.28, 6.93, 14859, 0, 0, 7430, 7430, 6),
+        (27, 39, 318942, 91.50, 1.4, 0.720000, 229.64, 6.59, 15129, 0, 0, 3782, 11346, 6),
+        (28, 40, 318071, 91.25, 1.3, 0.770000, 244.91, 6.26, 15328, 0, 0, 0, 15328, 6),
+        (29, 41, 317200, 91.00, 1.2, 0.820000, 260.10, 5.95, 15465, 0, 0, 0, 15465, 4),
+        (30, 42, 316328, 90.75, 1.1, 0.870000, 275.21, 5.65, 15545, 0, 0, 0, 15545, 4),
+        (30, 43, 315457, 90.50, 1.1, 0.910000, 287.07, 5.37, 15404, 0, 0, 0, 15404, 4),
+        (30, 44, 314585, 90.25, 1.0, 0.960000, 302.00, 5.10, 15395, 0, 0, 0, 15395, 4),
+        (30, 45, 313714, 90.00, 1.0, 1.010000, 316.85, 4.84, 15344, 0, 0, 0, 15344, 4),
+    ]
+    rows = list(legacy_rows)
+    for day, pl_stage, population, survival_pct, pls_per_g, weight_g, biomass_kg, feed_rate_pct, total_day_g, ns225, ns450, t500, t800, feedings in raw_rows:
+        mixes = []
+        if ns225:
+            mixes.append({'label': 'NutriSphera 225', 'grams': ns225})
+        if ns450:
+            mixes.append({'label': 'NutriSphera 450', 'grams': ns450})
+        if t500:
+            mixes.append({'label': 'AQUAVITA 40#1', 'grams': t500})
+        if t800:
+            mixes.append({'label': 'SAMARIA 40#2', 'grams': t800})
+        rows.append({
+            'pl_stage': pl_stage,
+            'day': day,
+            'population': population,
+            'base_population': 288000,
+            'survival_pct': survival_pct,
+            'pls_per_g': pls_per_g,
+            'individual_weight_g': weight_g,
+            'daily_growth_g': None,
+            'feed_rate_pct': feed_rate_pct,
+            'total_day_g': total_day_g,
+            'feedings_per_day': feedings,
+            'per_feeding_g': round(total_day_g / feedings, 4) if feedings else 0,
+            'biomass_kg': biomass_kg,
+            'estimated_fcr': None,
+            'mixes': mixes,
+            'water_items': [],
+        })
+    return rows
+
+NURSERY_PROTOCOLS['rg1']['name'] = 'Protocolo Alimentação Berçário e Pré-Engorda RG1 — Lote 2 Aquatec'
+NURSERY_PROTOCOLS['rg1']['sheet_name'] = 'RG1 Lote 2 Aquatec'
+NURSERY_PROTOCOLS['rg1']['base_population'] = 288000
+NURSERY_PROTOCOLS['rg1']['rows'] = build_rg1_lote2_aquatec_rows()
+
+DEFAULT_NURSERY_PROTOCOL_KEY = 'rg1'
 NURSERY_PROTOCOL_BASE_POPULATION = NURSERY_PROTOCOLS[DEFAULT_NURSERY_PROTOCOL_KEY]['base_population']
 NURSERY_PROTOCOL_ROWS = NURSERY_PROTOCOLS[DEFAULT_NURSERY_PROTOCOL_KEY]['rows']
 
@@ -3284,6 +3416,8 @@ NURSERY_FEED_STOCK_ALIASES = {
     'nutrisfera 225': ['NutriSphera 225', 'NUTRISFERA - BERÇÁRIO 225', 'NUTRISFERA BERÇÁRIO 225', 'NUTRISFERA BERCARIO 225'],
     'nutrisphera 450': ['NutriSphera 450', 'NUTRISFERA - BERÇÁRIO 450', 'NUTRISFERA BERÇÁRIO 450', 'NUTRISFERA BERCARIO 450'],
     'nutrisfera 450': ['NutriSphera 450', 'NUTRISFERA - BERÇÁRIO 450', 'NUTRISFERA BERÇÁRIO 450', 'NUTRISFERA BERCARIO 450'],
+    'mem 200 300': ['MeM 200-300', 'MEM 200-300', 'MeM 200/300', 'MEM 200/300'],
+    'mem 300 500': ['MeM 300-500', 'MEM 300-500', 'MeM 300/500', 'MEM 300/500'],
     'triturada 1': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
     'triturada 2': ['SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2'],
     'triturada 500 900': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
@@ -5154,10 +5288,18 @@ def build_even_schedule(total_day_g: int, feedings_per_day: int):
     return [base_value + (1 if idx < remainder else 0) for idx in range(feedings_per_day)]
 
 
+def entry_phase_label(entry):
+    unit = entry.unit if entry and entry.unit else (db.session.get(Unit, entry.unit_id) if entry and entry.unit_id else None)
+    if unit and unit.phase == 'juvenil':
+        return 'juvenil'
+    return 'berçário'
+
+
 def build_nursery_management_note_block(entry, mix_label=None):
+    phase_label = entry_phase_label(entry)
     lines = [
-        '[Integração berçário]',
-        'Integração automática da alimentação de berçário.',
+        f'[Integração {phase_label}]',
+        f'Integração automática da alimentação de {phase_label}.',
         f'Origem ID: {entry.id}',
     ]
     if mix_label:
@@ -5167,18 +5309,19 @@ def build_nursery_management_note_block(entry, mix_label=None):
     if entry.score_adjustment_pct is not None:
         lines.append(f'Ajuste de ração para o próximo dia: {nursery_adjustment_pct_label(entry.score_adjustment_pct)}')
     if (entry.notes or '').strip():
-        lines.append(f'Observações do berçário: {(entry.notes or '').strip()}')
-    lines.append('[/Integração berçário]')
+        lines.append(f'Observações do {phase_label}: {(entry.notes or '').strip()}')
+    lines.append(f'[/Integração {phase_label}]')
     return '\n'.join(lines)
 
 
 def build_nursery_water_management_note_block(entry, water_items=None):
+    phase_label = entry_phase_label(entry)
     water_items = water_items or []
     lines = [
-        '[Integração berçário]',
-        'Integração automática dos aditivos/insumos de água do berçário.',
+        f'[Integração {phase_label}]',
+        f'Integração automática dos aditivos/insumos de água do {phase_label}.',
         f'Origem ID: {entry.id}',
-        'Tipo: manejo da água / insumos marcados na Alimentação berçário',
+        f'Tipo: manejo da água / insumos marcados na Alimentação {phase_label}',
     ]
     for item in water_items:
         qty = item.get('stock_quantity') if item.get('stock_quantity') is not None else item.get('quantity')
@@ -5188,8 +5331,8 @@ def build_nursery_water_management_note_block(entry, water_items=None):
         else:
             lines.append(f"Item utilizado: {item.get('label')}")
     if (entry.notes or '').strip():
-        lines.append(f'Observações do berçário: {(entry.notes or '').strip()}')
-    lines.append('[/Integração berçário]')
+        lines.append(f'Observações do {phase_label}: {(entry.notes or '').strip()}')
+    lines.append(f'[/Integração {phase_label}]')
     return '\n'.join(lines)
 
 
@@ -5292,7 +5435,7 @@ def nursery_water_supply_entries(water_items):
         entries.append({
             'product': product,
             'quantity': stock_quantity,
-            'notes': f"Berçário: {item.get('label')} ({format_decimal_pt(item.get('quantity'))} {item.get('measure_unit') or ''})".strip(),
+            'notes': f"Alimentação fases iniciais: {item.get('label')} ({format_decimal_pt(item.get('quantity'))} {item.get('measure_unit') or ''})".strip(),
             'item': enriched,
         })
     return entries
@@ -5602,6 +5745,10 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
         normalize_text('NUTRISFERA BERCARIO 450'),
         normalize_text('AQUAVITA 40#1'),
         normalize_text('SAMARIA 40#2'),
+        normalize_text('MeM 200-300'),
+        normalize_text('MEM 200-300'),
+        normalize_text('MeM 300-500'),
+        normalize_text('MEM 300-500'),
     }
     product_name = label if normalized_label in real_protocol_stock_labels else ('Ração berçário' if protocol_label else label)
     product = FeedProduct(brand=product_name, feed_type='', active=True, notes='Criado automaticamente pelo protocolo de berçário.')
@@ -5676,7 +5823,31 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     if not row:
         return None
 
-    factor = (lot.initial_count or 0) / float(get_nursery_protocol_base_population(protocol_key) or 1)
+    transfer_marker = latest_transfer_for_lot(lot, on_date=target_date)
+    unit_transfer_marker = Transfer.query.filter(
+        Transfer.source_lot_id == lot.id,
+        Transfer.destination_unit_id == unit.id,
+        Transfer.transfer_date <= target_date,
+    ).order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).first()
+    if unit_transfer_marker:
+        transfer_marker = unit_transfer_marker
+    marker_stage = None
+    marker_population_reference = None
+    marker_label = None
+
+    if transfer_marker and transfer_marker.transferred_qty:
+        marker_days_since_start = max(((transfer_marker.transfer_date or target_date) - lot.start_date).days, 0)
+        marker_stage = min(max_stage, max(min_stage, lot.entry_pl_stage + marker_days_since_start))
+        marker_row = get_nursery_protocol_row(marker_stage, protocol_key=protocol_key) or row
+        marker_population_reference = marker_row.get('population') or get_nursery_protocol_base_population(protocol_key) or 1
+        factor = (transfer_marker.transferred_qty or 0) / float(marker_population_reference or 1)
+        marker_label = (
+            f"transferência real #{transfer_marker.id}: "
+            f"{format_integer_pt(transfer_marker.transferred_qty or 0)} PL no PL{marker_stage}"
+        )
+    else:
+        marker_population_reference = row.get('base_population') or get_nursery_protocol_base_population(protocol_key) or 1
+        factor = (lot.initial_count or 0) / float(marker_population_reference or 1)
 
     def scaled(value):
         return int(round((value or 0) * factor))
@@ -5686,8 +5857,18 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     correction_label = nursery_score_factor_label(correction_factor)
     correction_events = correction_events or []
 
-    projected_population = int(round((lot.initial_count or 0) * (row['survival_pct'] / 100.0)))
+    row_population = row.get('population')
+    if not row_population:
+        row_population = (get_nursery_protocol_base_population(protocol_key) or 0) * (row['survival_pct'] / 100.0)
+    projected_population = int(round((row_population or 0) * factor))
     biomass_kg = round((projected_population * row['individual_weight_g']) / 1000.0, 2)
+    if (
+        transfer_marker
+        and transfer_marker.transfer_date == target_date
+        and transfer_marker.transferred_qty
+        and transfer_marker.avg_weight_g
+    ):
+        biomass_kg = round(((transfer_marker.transferred_qty or 0) * (transfer_marker.avg_weight_g or 0)) / 1000.0, 2)
     base_mixes = [
         {'label': resolve_nursery_mix_label(item.get('label', 'Ração berçário')), 'grams': scaled(item.get('grams', 0))}
         for item in row.get('mixes', [])
@@ -5713,8 +5894,11 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         f"Estágio do dia: PL{stage_today}",
         f"População estimada: {projected_population:,} PL".replace(',', '.'),
         f"Protocolo: {protocol_meta.get('name', protocol_key.upper())}",
-        f"Base: planilha {format_integer_pt(get_nursery_protocol_base_population(protocol_key))} PL, recalculada proporcionalmente ao lote",
     ]
+    if marker_label:
+        message_lines.append(f"Base ativa: {marker_label}; tabela continuada proporcionalmente a este marco")
+    else:
+        message_lines.append(f"Base: planilha {format_integer_pt(marker_population_reference)} PL, recalculada proporcionalmente ao lote")
     if correction_events:
         last_event = correction_events[-1]
         last_score = last_event.get('score')
@@ -5786,11 +5970,11 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     }
 
 
-def build_nursery_digest_for_date(target_date: date | None = None):
+def build_stage_feed_digest_for_date(target_date: date | None = None, phase: str = 'bercario'):
     target_date = target_date or local_today()
     plans = []
-    nursery_units = Unit.query.filter_by(active=True, phase='bercario').order_by(Unit.name).all()
-    for unit in nursery_units:
+    units = Unit.query.filter_by(active=True, phase=phase).order_by(Unit.name).all()
+    for unit in units:
         lot = active_lot_for_unit(unit.id, on_date=target_date)
         if not lot or lot.status != 'ativo':
             continue
@@ -5807,6 +5991,14 @@ def build_nursery_digest_for_date(target_date: date | None = None):
             plan['existing_entry'] = entry
             plans.append(plan)
     return plans
+
+
+def build_nursery_digest_for_date(target_date: date | None = None):
+    return build_stage_feed_digest_for_date(target_date, phase='bercario')
+
+
+def build_juvenile_digest_for_date(target_date: date | None = None):
+    return build_stage_feed_digest_for_date(target_date, phase='juvenil')
 
 
 def sync_nursery_feed_to_management(entry):
@@ -6460,9 +6652,14 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
         received_qty = qty_requested
 
         if available_qty > 0 and qty_requested > available_qty and not source_state.get('inferred_first_source'):
-            received_qty = available_qty
+            # A contagem da transferência é tratada como dado real de campo.
+            # Em berçário/juvenil, a população inicial vem de estimativa por peso do laboratório;
+            # se a transferência real vier maior que o saldo teórico, ela recalibra o lote em vez de ser limitada.
+            received_qty = qty_requested
+            source_state['qty'] = qty_requested
+            available_qty = qty_requested
             warnings.append(
-                f'Transferência #{transfer.id} pedia {qty_requested:,} un., mas só havia {available_qty:,} un. na origem; o saldo foi limitado ao disponível.'.replace(',', '.')
+                f'Transferência #{transfer.id} informou {qty_requested:,} un., acima do saldo estimado; a contagem real recalibrou o lote.'.replace(',', '.')
             )
 
         # Se a origem foi reconstruída/inferida pela própria transferência, considera que a
@@ -11377,6 +11574,69 @@ def delete_farm_document(document_id):
     return redirect(url_for('farm_documents_page'))
 
 
+
+def transfer_real_marker_token(transfer_id):
+    return f'[TRANSFER_REAL_ID:{transfer_id}]'
+
+
+def transfer_estimated_biomass_kg(transfer):
+    if not transfer or not transfer.transferred_qty or not transfer.avg_weight_g:
+        return None
+    return round(((transfer.transferred_qty or 0) * (transfer.avg_weight_g or 0)) / 1000.0, 2)
+
+
+def sync_transfer_real_data_marker(transfer):
+    """Registra a transferência como novo marco real de população/peso/biomassa do lote.
+
+    A transferência pode superar a estimativa do berçário porque a entrada inicial vem do
+    peso informado pelo laboratório. O histórico Transfer continua sendo a fonte oficial da
+    contagem real; esta linha em DailyManagement serve para dashboards, biomassa e gráficos.
+    """
+    if not transfer or not transfer.id or not transfer.source_lot_id or not transfer.destination_unit_id:
+        return None
+
+    token = transfer_real_marker_token(transfer.id)
+    row = DailyManagement.query.filter(DailyManagement.notes.contains(token)).order_by(DailyManagement.id.desc()).first()
+    if not row:
+        row = DailyManagement(
+            feed_offered_kg=0,
+            feed_consumed_kg=0,
+            mortality_qty=0,
+        )
+        db.session.add(row)
+
+    biomass_kg = transfer_estimated_biomass_kg(transfer)
+    row.manage_date = transfer.transfer_date or local_today()
+    row.unit_id = transfer.destination_unit_id
+    row.lot_id = transfer.source_lot_id
+    row.feed_product_id = None
+    row.feed_offered_kg = row.feed_offered_kg or 0
+    row.feed_consumed_kg = row.feed_consumed_kg or 0
+    row.mortality_qty = row.mortality_qty or 0
+    row.average_weight_g = transfer.avg_weight_g
+    row.estimated_biomass_kg = biomass_kg
+
+    qty_label = format_integer_pt(transfer.transferred_qty or 0)
+    if transfer.avg_weight_g:
+        weight_label = format_decimal_pt(transfer.avg_weight_g)
+        biomass_label = format_decimal_pt(biomass_kg) if biomass_kg is not None else '—'
+        metric_line = f'Contagem real: {qty_label} PL; peso médio {weight_label} g; biomassa {biomass_label} kg.'
+    else:
+        metric_line = f'Contagem real: {qty_label} PL; peso médio não informado.'
+    row.notes = '\n'.join([
+        '[Transferência real]',
+        metric_line,
+        'Este registro recalibra população/biomassa do lote após transferência entre fases.',
+        token,
+        '[/Transferência real]',
+    ])
+    row.updated_at = datetime.utcnow()
+
+    lot = db.session.get(Lot, transfer.source_lot_id)
+    if lot and transfer.avg_weight_g is not None:
+        lot.estimated_weight_g = transfer.avg_weight_g
+    return row
+
 @app.route('/transfers', methods=['GET', 'POST'])
 @login_required
 @requires_permission('transfers_manage')
@@ -11440,8 +11700,11 @@ def transfers_page():
 
         available_qty = source_allocation.quantity_allocated if source_allocation else None
         if available_qty is not None and transferred_qty > available_qty and form_mode != 'edit':
-            flash(f'Quantidade maior que o saldo estimado da origem ({available_qty:,} unidades).'.replace(',', '.'), 'danger')
-            return redirect(url_for('transfers_page'))
+            flash(
+                f'Quantidade informada ({transferred_qty:,} un.) maior que o saldo estimado da origem ({available_qty:,} un.). '
+                'A transferência será aceita como contagem real e passará a recalibrar o lote.',
+                'warning'
+            )
 
         if form_mode == 'edit':
             tr = db.session.get(Transfer, parse_int(request.form.get('transfer_id')))
@@ -11463,6 +11726,7 @@ def transfers_page():
             tr.notes = request.form.get('notes')
 
             db.session.flush()
+            sync_transfer_real_data_marker(tr)
             affected_lot_ids = {lot_id for lot_id in (old_lot_id, src_lot.id) if lot_id}
             rebuild_warnings = []
             for lot_id in affected_lot_ids:
@@ -11516,6 +11780,7 @@ def transfers_page():
             source_allocation.end_date = transfer_date
 
         db.session.flush()
+        sync_transfer_real_data_marker(tr)
         rebuild_warnings = rebuild_lot_allocations_from_transfer_history(src_lot)
         sync_lot_phase_from_allocations(src_lot, transfer_date)
         db.session.commit()
@@ -11905,15 +12170,126 @@ def nursery_feed_page():
         flash('Alimentação de berçário salva e integrada ao manejo diário. Os aditivos marcados também deram baixa no estoque.', 'success')
         return redirect(url_for('nursery_feed_page', feed_date=entry.feed_date.isoformat()))
 
-    entries = NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot)).order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc()).limit(60).all()
+    entries = (
+        NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot))
+        .join(Unit, Unit.id == NurseryFeeding.unit_id)
+        .filter(Unit.phase == 'bercario')
+        .order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc())
+        .limit(60)
+        .all()
+    )
     plans = build_nursery_digest_for_date(selected_date)
-    entry_by_unit_id = {entry.unit_id: entry for entry in NurseryFeeding.query.filter_by(feed_date=selected_date).all()}
+    entry_by_unit_id = {
+        entry.unit_id: entry
+        for entry in NurseryFeeding.query.join(Unit, Unit.id == NurseryFeeding.unit_id).filter(NurseryFeeding.feed_date == selected_date, Unit.phase == 'bercario').all()
+    }
     for plan in plans:
         plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
         plan['water_items_for_form'] = nursery_water_items_for_form(plan, plan['existing_entry'])
     combined_message = '\n\n'.join(plan['message_text'] for plan in plans)
-    return render_template('nursery_feed.html', today=local_today(), selected_date=selected_date, nursery_units=nursery_units, entries=entries, edit_entry=edit_entry, plans=plans, combined_message=combined_message)
+    return render_template(
+        'nursery_feed.html',
+        today=local_today(),
+        selected_date=selected_date,
+        nursery_units=nursery_units,
+        entries=entries,
+        edit_entry=edit_entry,
+        plans=plans,
+        combined_message=combined_message,
+        phase_label='berçário',
+        phase_label_plural='berçários',
+        phase_label_title='Berçário',
+        feed_endpoint='nursery_feed_page',
+        delete_endpoint='delete_nursery_feed_entry',
+    )
 
+
+
+@app.route('/juvenile-feed', methods=['GET', 'POST'])
+@login_required
+@requires_permission('management_manage')
+def juvenile_feed_page():
+    selected_date = parse_date(request.args.get('feed_date'), local_today())
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_entry = db.session.get(NurseryFeeding, edit_id) if edit_id else None
+    juvenile_units = Unit.query.filter_by(active=True, phase='juvenil').order_by(Unit.name).all()
+
+    if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'create')
+        entry = db.session.get(NurseryFeeding, parse_int(request.form.get('entry_id'))) if form_mode == 'edit' else NurseryFeeding()
+        if form_mode == 'edit' and not entry:
+            flash('Registro de alimentação de juvenil não encontrado.', 'warning')
+            return redirect(url_for('juvenile_feed_page'))
+
+        entry.feed_date = parse_date(request.form['feed_date'])
+        entry.unit_id = int(request.form['unit_id'])
+        unit = db.session.get(Unit, entry.unit_id)
+        if not unit or unit.phase != 'juvenil':
+            flash('Selecione uma unidade de juvenil válida.', 'danger')
+            return redirect(url_for('juvenile_feed_page', feed_date=entry.feed_date.isoformat()))
+        active_lot = active_lot_for_unit(entry.unit_id, on_date=entry.feed_date)
+        entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
+        lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else active_lot
+        submitted_quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
+        entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
+        entry.score_adjustment_pct = parse_float(request.form.get('score_adjustment_pct'))
+        if entry.score_adjustment_pct is None and entry.intestinal_score is not None:
+            entry.score_adjustment_pct = nursery_score_adjustment_pct(entry.intestinal_score)
+        entry.quantity_kg = submitted_quantity_kg
+        entry.notes = request.form.get('notes')
+
+        adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
+        plan_for_submission = build_nursery_protocol_for_date(
+            lot,
+            unit,
+            target_date=entry.feed_date,
+            cumulative_factor=adjustment['factor'],
+            correction_events=adjustment['events'],
+        ) if unit and lot else None
+        selected_water_items = selected_nursery_water_items_from_request(plan_for_submission) if plan_for_submission else []
+        entry.water_items_json = json.dumps(selected_water_items, ensure_ascii=False)
+
+        entry.updated_at = datetime.utcnow()
+        if form_mode != 'edit':
+            db.session.add(entry)
+        db.session.flush()
+        sync_nursery_feed_to_management(entry)
+        db.session.commit()
+        flash('Alimentação de juvenil salva e integrada ao manejo diário. Os aditivos marcados também deram baixa no estoque.', 'success')
+        return redirect(url_for('juvenile_feed_page', feed_date=entry.feed_date.isoformat()))
+
+    entries = (
+        NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot))
+        .join(Unit, Unit.id == NurseryFeeding.unit_id)
+        .filter(Unit.phase == 'juvenil')
+        .order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc())
+        .limit(60)
+        .all()
+    )
+    plans = build_juvenile_digest_for_date(selected_date)
+    entry_by_unit_id = {
+        entry.unit_id: entry
+        for entry in NurseryFeeding.query.join(Unit, Unit.id == NurseryFeeding.unit_id).filter(NurseryFeeding.feed_date == selected_date, Unit.phase == 'juvenil').all()
+    }
+    for plan in plans:
+        plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
+        plan['water_items_for_form'] = nursery_water_items_for_form(plan, plan['existing_entry'])
+    combined_message = '\n\n'.join(plan['message_text'] for plan in plans)
+    return render_template(
+        'nursery_feed.html',
+        today=local_today(),
+        selected_date=selected_date,
+        nursery_units=juvenile_units,
+        entries=entries,
+        edit_entry=edit_entry,
+        plans=plans,
+        combined_message=combined_message,
+        phase_label='juvenil',
+        phase_label_plural='juvenis',
+        phase_label_title='Juvenil',
+        feed_endpoint='juvenile_feed_page',
+        delete_endpoint='delete_juvenile_feed_entry',
+    )
 
 
 @app.post('/nursery-feed/<int:entry_id>/delete')
@@ -11930,6 +12306,22 @@ def delete_nursery_feed_entry(entry_id):
     db.session.commit()
     flash('Lançamento do berçário excluído e removido do manejo diário.', 'success')
     return redirect(url_for('nursery_feed_page', feed_date=feed_date.isoformat()))
+
+
+@app.post('/juvenile-feed/<int:entry_id>/delete')
+@login_required
+@requires_permission('management_manage')
+def delete_juvenile_feed_entry(entry_id):
+    entry = db.session.get(NurseryFeeding, entry_id)
+    if not entry:
+        flash('Registro de alimentação de juvenil não encontrado.', 'warning')
+        return redirect(request.referrer or url_for('juvenile_feed_page'))
+    feed_date = entry.feed_date
+    delete_nursery_management_records(entry)
+    db.session.delete(entry)
+    db.session.commit()
+    flash('Lançamento do juvenil excluído e removido do manejo diário.', 'success')
+    return redirect(url_for('juvenile_feed_page', feed_date=feed_date.isoformat()))
 
 
 @app.get('/api/nursery-feed-digest')
