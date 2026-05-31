@@ -3459,16 +3459,21 @@ NURSERY_FEED_STOCK_ALIASES = {
     'mem 200 300': ['MeM 200-300', 'MEM 200-300', 'MeM 200/300', 'MEM 200/300'],
     'mem 300 500': ['MeM 300-500', 'MEM 300-500', 'MeM 300/500', 'MEM 300/500'],
     'triturada 1': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
-    'triturada 2': ['SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2'],
+    'triturada 2': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
     'triturada 500 900': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
     'triturada 500 900 um': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
-    'triturada 800 1200': ['SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2'],
-    'triturada 800 1200 um': ['SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2'],
-    'aquavita 40 1': ['AQUAVITA 40#1', 'AQUAVITA 40 #1'],
-    'samaria 40 2': ['SAMARIA 40#2', 'SAMARIA 40 #2'],
+    'triturada 800 1200': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
+    'triturada 800 1200 um': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
+    'aquavita 40 1': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40/1'],
+    'aquavita 40 1 0 5 1 0mm': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40/1'],
+    'aquavita 40 2': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'AquaVita 40/2 (1,0-1,8mm)', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02', 'SAMARIA 40#2', 'SAMARIA 40 #2'],
+    'aquavita 40 2 1 0 1 8mm': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'AquaVita 40/2 (1,0-1,8mm)', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02', 'SAMARIA 40#2', 'SAMARIA 40 #2'],
+    'samaria 40 2': ['SAMARIA 40#2', 'SAMARIA 40 #2', 'AQUAVITA 40#2', 'AQUAVITA 40 #2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
     # Mantém compatibilidade com nomes técnicos antigos que já possam estar no histórico.
-    'juvenil 40 sm starter 400': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'JUVENIL 40 - SM starter 400'],
-    'juvenil 40 02': ['SAMARIA 40#2', 'SAMARIA 40 #2', 'JUVENIL 40 - #02'],
+    # Correção: SM Starter 400/#02 é equivalente da AQUAVITA 40#2, nunca da 40#1.
+    'juvenil 40 sm starter 400': ['JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02', 'AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2'],
+    'juvenil 40 sm starter 400 e 02': ['JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02', 'AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2'],
+    'juvenil 40 02': ['JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - #02', 'JUVENIL 40 - SM starter 400', 'AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2', 'SAMARIA 40 #2'],
 }
 
 NURSERY_WATER_SUPPLY_ALIASES = {
@@ -5932,16 +5937,44 @@ def nursery_feed_stock_alias_labels(label: str):
 
 
 def nursery_feed_size_tokens(value: str):
-    """Extrai identificadores de tamanho usados nas rações do berçário.
+    """Extrai identificadores de tamanho usados nas rações do protocolo.
 
-    O objetivo é diferenciar NutriSphera 225 de NutriSphera 450. Sem essa trava,
-    a busca por similaridade pode achar "NutriSphera 450" só porque o produto
-    também contém "NutriSphera" e "berçário".
+    A trava evita duas confusões comuns:
+    - NutriSphera 225 cair no produto 450, e vice-versa.
+    - AquaVita 40/2 cair por similaridade no produto 40#1.
+
+    No estoque da fazenda, "JUVENIL 40 - SM starter 400 E #02" é tratado
+    como equivalente operacional da AquaVita 40#2 / AquaVita 40/2.
     """
+    normalized = normalize_text(value)
     tokens = nursery_feed_alias_tokens(value)
     size_tokens = set()
+
     if 'nutrisfera' in tokens or 'nutrisphera' in tokens:
         size_tokens.update(token for token in tokens if token in {'225', '450'})
+
+    # AquaVita 40/1: 0,5-1,0 mm. Evita casar com 40/2.
+    if (
+        'aquavita 40 1' in normalized
+        or 'aquavita 40 01' in normalized
+        or ('aquavita' in tokens and '40' in tokens and ('#1' in value or ' 1' in f' {normalized} '))
+    ):
+        # Se a string também carrega 40/2, a prioridade é 40/2.
+        if 'aquavita 40 2' not in normalized and 'aquavita 40 02' not in normalized:
+            size_tokens.add('40_1')
+
+    # AquaVita 40/2 / #02 / SM Starter 400: 1,0-1,8 mm.
+    if (
+        'aquavita 40 2' in normalized
+        or 'aquavita 40 02' in normalized
+        or 'samaria 40 2' in normalized
+        or 'samaria 40 02' in normalized
+        or ('juvenil' in tokens and '40' in tokens and ('02' in tokens or '2' in tokens))
+        or ('starter' in tokens and '400' in tokens)
+    ):
+        size_tokens.discard('40_1')
+        size_tokens.add('40_2')
+
     return size_tokens
 
 
@@ -6167,7 +6200,14 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
         normalize_text('NUTRISFERA - BERÇÁRIO 450'),
         normalize_text('NUTRISFERA BERCARIO 450'),
         normalize_text('AQUAVITA 40#1'),
+        normalize_text('AQUAVITA 40/1'),
+        normalize_text('AQUAVITA 40#2'),
+        normalize_text('AQUAVITA 40/2'),
+        normalize_text('AquaVita 40/2 (1,0-1,8mm)'),
         normalize_text('SAMARIA 40#2'),
+        normalize_text('JUVENIL 40 - SM starter 400 E #02'),
+        normalize_text('JUVENIL 40 - SM starter 400'),
+        normalize_text('JUVENIL 40 - #02'),
         normalize_text('MeM 200-300'),
         normalize_text('MEM 200-300'),
         normalize_text('MeM 300-500'),
