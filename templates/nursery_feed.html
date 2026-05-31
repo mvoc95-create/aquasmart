@@ -12,7 +12,7 @@
     <div>
       <p class="panel-kicker">Data de trabalho</p>
       <h2>Planejamento automático do {{ phase_label }}</h2>
-      <p class="helper-text">Veja o protocolo do dia, salve o lançamento real e, se precisar, abra a mensagem pronta para o WhatsApp.</p>
+      <p class="helper-text">Veja o protocolo do dia, salve o lançamento real e, se precisar, abra a mensagem pronta para o WhatsApp. A tabela acompanha a idade real do ciclo; transferir antes/depois não reinicia em J43 ou E67.</p>
     </div>
   </div>
   <form method="get" class="form-grid compact-grid nursery-toolbar-form">
@@ -51,8 +51,9 @@
   <div class="panel-head nursery-plan-head">
     <div>
       <p class="panel-kicker">{{ plan.unit.name }}</p>
-      <h2>Lote {{ plan.lot.lot_code }} · PL{{ plan.stage_today }}</h2>
-      <p class="helper-text">{{ plan.protocol_name }} · Dia {{ plan.day_index }} do protocolo · População estimada {{ '{:,.0f}'.format(plan.projected_population).replace(',', '.') }} PL · Biomassa {{ '%.2f'|format(plan.biomass_kg) }} kg</p>
+      <h2>Lote {{ plan.lot.lot_code }} · {{ plan.stage_label or ('PL' ~ plan.stage_today) }}</h2>
+      <p class="helper-text">{{ plan.protocol_name }} · Fase operacional: {{ plan.operational_phase_label or phase_label_title }} · Linha da tabela: {{ plan.stage_label }}{% if plan.protocol_phase_label %} / {{ plan.protocol_phase_label }}{% endif %} · Dia {{ plan.day_index }} do ciclo real · População estimada {{ '{:,.0f}'.format(plan.projected_population).replace(',', '.') }} PL · Biomassa {{ '%.2f'|format(plan.biomass_kg) }} kg</p>
+      {% if plan.phase_mismatch %}<p class="helper-text"><strong>Transferência flexível:</strong> este lote está na aba {{ plan.operational_phase_label }}, mas continua na linha {{ plan.stage_label }} da tabela. A frequência muda pela fase; a curva de ração não reinicia.</p>{% endif %}
     </div>
     <div class="action-row">
       <button type="button" class="secondary-button copy-message-btn" data-copy-target="#msg-{{ plan.unit.id }}">Copiar mensagem</button>
