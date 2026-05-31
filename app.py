@@ -5182,7 +5182,362 @@ PRODUCTION_PROTOCOL_ROWS = [{'phase': 'juvenil',
   'estimated_fcr': 1.42,
   'crop_fcr': 1.43,
   'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 39.69}]}]
-NURSERY_FEED_TIMES = ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00', '00:00', '02:00', '04:00']
+
+# Novo protocolo único do ciclo completo, importado do PDF "PROTOCOLOS Alimentacao(1).pdf".
+# A tabela cobre Berçário, Juvenil/Pré-cria e Engorda, mas a mudança de fase na fazenda
+# NÃO reinicia a tabela. O que manda é o dia/idade real do ciclo: se transferir com PL20,
+# a aba Juvenil/Engorda continua calculando a linha PL20/PL21/... proporcionalmente à
+# nova contabilidade de PLs da transferência. A fase operacional serve para filtrar a aba
+# e definir a frequência: berçário 12x, juvenil 8x, engorda 6x.
+FULL_CYCLE_FEEDING_FREQUENCIES = {'bercario': 12, 'juvenil': 8, 'engorda': 6}
+FULL_CYCLE_PROTOCOL_FLEXIBLE_PHASE_TRANSITIONS = True
+FULL_CYCLE_PROTOCOL_BASE_POPULATION = 350000
+FULL_CYCLE_PROTOCOL_COMPACT_ROWS = [('bercario', 1, 1, 'PL11', 350000, 100.0, 0.003, 1.05, 50.0, 526, [('NutriSphera 150', 526)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 1000.0, 'g', '07:45'), ('AQUAPRO ECO', 4.0, 'un', '08:00')]),
+ ('bercario', 2, 2, 'PL12', 346500, 99.0, 0.004, 1.39, 45.0, 624, [('NutriSphera 150', 624)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 1000.0, 'g', '07:45')]),
+ ('bercario', 3, 3, 'PL13', 343000, 98.0, 0.01, 2.01, 40.0, 802, [('NutriSphera 150', 802)], [('Melaço', 300.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 4, 4, 'PL14', 341250, 97.5, 0.01, 3.02, 35.0, 1057, [('NutriSphera 150', 846), ('NutriSphera 225', 211)], [('Melaço', 400.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario',
+  5,
+  5,
+  'PL15',
+  339500,
+  97.0,
+  0.01,
+  4.35,
+  30.0,
+  1306,
+  [('NutriSphera 150', 783), ('NutriSphera 225', 523)],
+  [('Melaço', 500.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('AQUAPRO ECO', 2.0, 'un', '08:00')]),
+ ('bercario', 6, 6, 'PL16', 338625, 96.75, 0.02, 5.74, 25.0, 1435, [('NutriSphera 150', 574), ('NutriSphera 225', 861)], [('Melaço', 600.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 7, 7, 'PL17', 337750, 96.5, 0.02, 7.34, 20.0, 1468, [('NutriSphera 150', 294), ('NutriSphera 225', 1174)], [('Melaço', 700.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 8, 8, 'PL18', 336875, 96.25, 0.03, 9.36, 17.5, 1638, [('NutriSphera 225', 1638)], [('Melaço', 800.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('CALDA IODADA', 24.0, 'g', '08:15')]),
+ ('bercario',
+  9,
+  9,
+  'PL19',
+  336000,
+  96.0,
+  0.03,
+  11.59,
+  15.0,
+  1738,
+  [('NutriSphera 225', 1390), ('NutriSphera 450', 348)],
+  [('Melaço', 900.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('AQUAPRO ECO', 2.0, 'un', '08:00')]),
+ ('bercario', 10, 10, 'PL20', 335125, 95.75, 0.04, 14.57, 13.5, 1967, [('NutriSphera 225', 1180), ('NutriSphera 450', 787)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 11, 11, 'PL21', 334250, 95.5, 0.05, 17.59, 12.0, 2111, [('NutriSphera 225', 844), ('NutriSphera 450', 1267)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario',
+  12,
+  12,
+  'PL22',
+  333375,
+  95.25,
+  0.06,
+  20.84,
+  11.0,
+  2292,
+  [('NutriSphera 225', 458), ('NutriSphera 450', 1834)],
+  [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('AQUAPRO ECO', 2.0, 'un', '08:00')]),
+ ('bercario', 13, 13, 'PL23', 332500, 95.0, 0.07, 23.75, 10.0, 2375, [('NutriSphera 450', 1900), ('AquaVita 40/1 (0,5-1,0mm)', 475)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 14, 14, 'PL24', 331625, 94.75, 0.08, 27.64, 9.0, 2487, [('NutriSphera 450', 1492), ('AquaVita 40/1 (0,5-1,0mm)', 995)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario',
+  15,
+  15,
+  'PL25',
+  330750,
+  94.5,
+  0.13,
+  43.0,
+  8.5,
+  3655,
+  [('NutriSphera 450', 1462), ('AquaVita 40/1 (0,5-1,0mm)', 2193)],
+  [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('CALDA IODADA', 24.0, 'g', '08:15')]),
+ ('bercario',
+  16,
+  16,
+  'PL26',
+  329875,
+  94.25,
+  0.18,
+  59.38,
+  8.0,
+  4750,
+  [('NutriSphera 450', 950), ('AquaVita 40/1 (0,5-1,0mm)', 3800)],
+  [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('AQUAPRO ECO', 2.0, 'un', '08:00')]),
+ ('bercario', 17, 17, 'PL27', 329000, 94.0, 0.23, 75.67, 7.5, 5675, [('AquaVita 40/1 (0,5-1,0mm)', 5675)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 18, 18, 'PL28', 328125, 93.75, 0.28, 91.88, 7.0, 6431, [('AquaVita 40/1 (0,5-1,0mm)', 6431)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 19, 19, 'PL29', 327250, 93.5, 0.33, 107.99, 6.5, 7020, [('AquaVita 40/1 (0,5-1,0mm)', 7020)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('AQUAPRO ECO', 2.0, 'un', '08:00')]),
+ ('bercario', 20, 20, 'PL30', 326375, 93.25, 0.38, 124.02, 6.0, 7441, [('AquaVita 40/1 (0,5-1,0mm)', 7441)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 21, 21, 'PL31', 325500, 93.0, 0.43, 139.97, 5.5, 7698, [('AquaVita 40/1 (0,5-1,0mm)', 7698)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 22, 22, 'PL32', 324625, 92.75, 0.48, 155.82, 5.0, 7791, [('AquaVita 40/1 (0,5-1,0mm)', 7791)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('CALDA IODADA', 24.0, 'g', '08:15')]),
+ ('bercario', 23, 23, 'PL33', 323750, 92.5, 0.52, 168.35, 4.75, 7997, [('AquaVita 40/1 (0,5-1,0mm)', 7997)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('AQUAPRO ECO', 2.0, 'un', '08:00')]),
+ ('bercario', 24, 24, 'PL34', 322875, 92.25, 0.57, 184.04, 4.5, 8282, [('AquaVita 40/1 (0,5-1,0mm)', 6625), ('AquaVita 40/2 (1,0-1,8mm)', 1657)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 25, 25, 'PL35', 322000, 92.0, 0.62, 199.64, 4.25, 8485, [('AquaVita 40/1 (0,5-1,0mm)', 5091), ('AquaVita 40/2 (1,0-1,8mm)', 3394)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario',
+  26,
+  26,
+  'PL36',
+  321125,
+  91.75,
+  0.67,
+  215.15,
+  4.12,
+  8864,
+  [('AquaVita 40/1 (0,5-1,0mm)', 3546), ('AquaVita 40/2 (1,0-1,8mm)', 5318)],
+  [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('AQUAPRO ECO', 2.0, 'un', '08:00')]),
+ ('bercario', 27, 27, 'PL37', 320250, 91.5, 0.72, 230.58, 4.0, 9223, [('AquaVita 40/1 (0,5-1,0mm)', 1845), ('AquaVita 40/2 (1,0-1,8mm)', 7378)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 28, 28, 'PL38', 319375, 91.25, 0.77, 245.92, 3.85, 9468, [('AquaVita 40/2 (1,0-1,8mm)', 9468)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 29, 29, 'PL39', 318500, 91.0, 0.82, 261.17, 3.65, 9533, [('AquaVita 40/2 (1,0-1,8mm)', 9533)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('CALDA IODADA', 24.0, 'g', '08:15')]),
+ ('bercario', 30, 30, 'PL40', 317625, 90.75, 0.87, 276.33, 3.5, 9672, [('AquaVita 40/2 (1,0-1,8mm)', 9672)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45'), ('AQUAPRO ECO', 2.0, 'un', '08:00')]),
+ ('bercario', 31, 31, 'PL41', 316750, 90.5, 0.91, 288.24, 3.5, 10088, [('AquaVita 40/2 (1,0-1,8mm)', 10088)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 32, 32, 'PL42', 315875, 90.25, 0.96, 303.24, 3.5, 10613, [('AquaVita 40/2 (1,0-1,8mm)', 10613)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('bercario', 33, 33, 'PL43', 315000, 90.0, 1.01, 318.15, 3.5, 11135, [('AquaVita 40/2 (1,0-1,8mm)', 11135)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 500.0, 'g', '07:45')]),
+ ('juvenil', 1, 34, 'J43', 315000, 100.0, 1.01, 318.15, 4.75, 15112, [('AquaVita 40/2 (1,0-1,8mm)', 15112)], [('Melaço', 10.0, 'kg', '07:30'), ('LOTHAR', 10.0, 'kg', '07:45'), ('AQUAPRO ECO', 40.0, 'un', '08:00')]),
+ ('juvenil', 2, 35, 'J44', 311850, 99.0, 1.111, 346.47, 4.75, 16457, [('AquaVita 40/2 (1,0-1,8mm)', 16457)], [('Melaço', 10.0, 'kg', '07:30'), ('LOTHAR', 10.0, 'kg', '07:45')]),
+ ('juvenil', 3, 36, 'J45', 308700, 98.0, 1.222, 377.26, 4.75, 17920, [('AquaVita 40/2 (1,0-1,8mm)', 17920)], [('Melaço', 4.0, 'kg', '07:30'), ('LOTHAR', 3.0, 'kg', '07:45')]),
+ ('juvenil', 4, 37, 'J46', 307125, 97.5, 1.344, 412.87, 4.75, 19611, [('AquaVita 40/2 (1,0-1,8mm)', 19611)], [('Melaço', 4.0, 'kg', '07:30'), ('LOTHAR', 3.0, 'kg', '07:45')]),
+ ('juvenil', 5, 38, 'J47', 305550, 97.0, 1.479, 451.83, 4.75, 21462, [('AquaVita 40/2 (1,0-1,8mm)', 21462)], [('Melaço', 4.0, 'kg', '07:30'), ('LOTHAR', 3.0, 'kg', '07:45'), ('AQUAPRO ECO', 20.0, 'un', '08:00')]),
+ ('juvenil', 6, 39, 'J48', 304763, 96.75, 1.627, 495.73, 4.75, 23547, [('AquaVita 40/2 (1,0-1,8mm)', 18838), ('AquaVita JUV. 38 (1,5mm)', 4709)], [('Melaço', 5.0, 'kg', '07:30'), ('LOTHAR', 4.0, 'kg', '07:45')]),
+ ('juvenil', 7, 40, 'J49', 303975, 96.5, 1.789, 543.9, 4.75, 25835, [('AquaVita 40/2 (1,0-1,8mm)', 15501), ('AquaVita JUV. 38 (1,5mm)', 10334)], [('Melaço', 5.0, 'kg', '07:30'), ('LOTHAR', 4.0, 'kg', '07:45')]),
+ ('juvenil',
+  8,
+  41,
+  'J50',
+  303188,
+  96.25,
+  1.968,
+  596.73,
+  4.75,
+  28345,
+  [('AquaVita 40/2 (1,0-1,8mm)', 11338), ('AquaVita JUV. 38 (1,5mm)', 17007)],
+  [('Melaço', 6.0, 'kg', '07:30'), ('LOTHAR', 4.0, 'kg', '07:45'), ('CALDA IODADA', 240.0, 'g', '08:15')]),
+ ('juvenil',
+  9,
+  42,
+  'J51',
+  302400,
+  96.0,
+  2.126,
+  642.8,
+  4.25,
+  27319,
+  [('AquaVita 40/2 (1,0-1,8mm)', 5464), ('AquaVita JUV. 38 (1,5mm)', 21855)],
+  [('Melaço', 5.0, 'kg', '07:30'), ('LOTHAR', 4.0, 'kg', '07:45'), ('AQUAPRO ECO', 10.0, 'un', '08:00')]),
+ ('juvenil', 10, 43, 'J52', 301613, 95.75, 2.296, 692.42, 4.25, 29428, [('AquaVita JUV. 38 (1,5mm)', 29428)], [('Melaço', 6.0, 'kg', '07:30'), ('LOTHAR', 4.0, 'kg', '07:45')]),
+ ('juvenil', 11, 44, 'J53', 300825, 95.5, 2.479, 745.86, 4.25, 31699, [('AquaVita JUV. 38 (1,5mm)', 31699)], [('Melaço', 6.0, 'kg', '07:30'), ('LOTHAR', 5.0, 'kg', '07:45')]),
+ ('juvenil', 12, 45, 'J54', 300038, 95.25, 2.678, 803.42, 4.25, 34145, [('AquaVita JUV. 38 (1,5mm)', 34145)], [('Melaço', 7.0, 'kg', '07:30'), ('LOTHAR', 5.0, 'kg', '07:45'), ('AQUAPRO ECO', 10.0, 'un', '08:00')]),
+ ('juvenil', 13, 46, 'J55', 299250, 95.0, 2.892, 865.41, 4.25, 36780, [('AquaVita JUV. 38 (1,5mm)', 36780)], [('Melaço', 7.0, 'kg', '07:30'), ('LOTHAR', 6.0, 'kg', '07:45')]),
+ ('juvenil', 14, 47, 'J56', 298463, 94.75, 3.123, 932.19, 4.25, 39618, [('AquaVita JUV. 38 (1,5mm)', 39618)], [('Melaço', 8.0, 'kg', '07:30'), ('LOTHAR', 6.0, 'kg', '07:45')]),
+ ('juvenil', 15, 48, 'J57', 297675, 94.5, 3.373, 1004.1, 4.25, 42674, [('AquaVita JUV. 38 (1,5mm)', 42674)], [('Melaço', 9.0, 'kg', '07:30'), ('LOTHAR', 6.0, 'kg', '07:45')]),
+ ('juvenil', 16, 49, 'J58', 296888, 94.25, 3.576, 1061.53, 3.75, 39808, [('AquaVita JUV. 38 (1,5mm)', 39808)], [('Melaço', 8.0, 'kg', '07:30'), ('LOTHAR', 6.0, 'kg', '07:45'), ('AQUAPRO ECO', 5.0, 'un', '08:00')]),
+ ('juvenil', 17, 50, 'J59', 296100, 94.0, 3.79, 1122.24, 3.75, 42084, [('AquaVita JUV. 38 (1,5mm)', 42084)], [('Melaço', 8.0, 'kg', '07:30'), ('LOTHAR', 6.0, 'kg', '07:45')]),
+ ('juvenil', 18, 51, 'J60', 295313, 93.75, 4.017, 1186.41, 3.75, 44490, [('AquaVita JUV. 38 (1,5mm)', 44490)], [('Melaço', 9.0, 'kg', '07:30'), ('LOTHAR', 7.0, 'kg', '07:45')]),
+ ('juvenil',
+  19,
+  52,
+  'J61',
+  294525,
+  93.5,
+  4.259,
+  1254.24,
+  3.75,
+  47034,
+  [('AquaVita JUV. 38 (1,5mm)', 37627), ('AquaVita 35 (2mm)', 9407)],
+  [('Melaço', 9.0, 'kg', '07:30'), ('LOTHAR', 7.0, 'kg', '07:45'), ('AQUAPRO ECO', 5.0, 'un', '08:00')]),
+ ('juvenil', 20, 53, 'J62', 293738, 93.25, 4.514, 1325.94, 3.75, 49723, [('AquaVita JUV. 38 (1,5mm)', 29834), ('AquaVita 35 (2mm)', 19889)], [('Melaço', 10.0, 'kg', '07:30'), ('LOTHAR', 7.0, 'kg', '07:45')]),
+ ('juvenil', 21, 54, 'J63', 292950, 93.0, 4.785, 1401.73, 3.75, 52565, [('AquaVita JUV. 38 (1,5mm)', 21026), ('AquaVita 35 (2mm)', 31539)], [('Melaço', 11.0, 'kg', '07:30'), ('LOTHAR', 8.0, 'kg', '07:45')]),
+ ('juvenil',
+  22,
+  55,
+  'J64',
+  292163,
+  92.75,
+  5.072,
+  1481.84,
+  3.75,
+  55569,
+  [('AquaVita JUV. 38 (1,5mm)', 11114), ('AquaVita 35 (2mm)', 44455)],
+  [('Melaço', 11.0, 'kg', '07:30'), ('LOTHAR', 8.0, 'kg', '07:45'), ('CALDA IODADA', 240.0, 'g', '08:15')]),
+ ('juvenil', 23, 56, 'J65', 291375, 92.5, 5.275, 1536.96, 3.5, 53794, [('AquaVita 35 (2mm)', 53794)], [('Melaço', 11.0, 'kg', '07:30'), ('LOTHAR', 8.0, 'kg', '07:45'), ('AQUAPRO ECO', 4.0, 'un', '08:00')]),
+ ('juvenil', 24, 57, 'J66', 290588, 92.25, 5.486, 1594.12, 3.5, 55794, [('AquaVita 35 (2mm)', 55794)], [('Melaço', 11.0, 'kg', '07:30'), ('LOTHAR', 8.0, 'kg', '07:45')]),
+ ('juvenil', 25, 58, 'J67', 289800, 92.0, 5.705, 1653.39, 3.5, 57869, [('AquaVita 35 (2mm)', 57869)], [('Melaço', 12.0, 'kg', '07:30'), ('LOTHAR', 9.0, 'kg', '07:45')]),
+ ('juvenil', 26, 59, 'J68', 289013, 91.75, 5.933, 1714.86, 3.5, 60020, [('AquaVita 35 (2mm)', 60020)], [('Melaço', 12.0, 'kg', '07:30'), ('LOTHAR', 9.0, 'kg', '07:45'), ('AQUAPRO ECO', 4.0, 'un', '08:00')]),
+ ('juvenil', 27, 60, 'J69', 288225, 91.5, 6.171, 1778.59, 3.5, 62251, [('AquaVita 35 (2mm)', 62251)], [('Melaço', 12.0, 'kg', '07:30'), ('LOTHAR', 9.0, 'kg', '07:45')]),
+ ('juvenil', 28, 61, 'J70', 287438, 91.25, 6.418, 1844.68, 3.5, 64564, [('AquaVita 35 (2mm)', 64564)], [('Melaço', 13.0, 'kg', '07:30'), ('LOTHAR', 10.0, 'kg', '07:45')]),
+ ('juvenil', 29, 62, 'J71', 286650, 91.0, 6.674, 1913.21, 3.5, 66962, [('AquaVita 35 (2mm)', 66962)], [('Melaço', 13.0, 'kg', '07:30'), ('LOTHAR', 10.0, 'kg', '07:45')]),
+ ('juvenil', 30, 63, 'J72', 285863, 90.75, 6.908, 1974.73, 3.25, 64179, [('AquaVita 35 (2mm)', 64179)], [('Melaço', 13.0, 'kg', '07:30'), ('LOTHAR', 10.0, 'kg', '07:45'), ('AQUAPRO ECO', 4.0, 'un', '08:00')]),
+ ('juvenil', 31, 64, 'J73', 285075, 90.5, 7.15, 2038.22, 3.25, 66242, [('AquaVita 35 (2mm)', 66242)], [('Melaço', 13.0, 'kg', '07:30'), ('LOTHAR', 10.0, 'kg', '07:45')]),
+ ('juvenil', 32, 65, 'J74', 284288, 90.25, 7.4, 2103.73, 3.25, 68371, [('AquaVita 35 (2mm)', 68371)], [('Melaço', 14.0, 'kg', '07:30'), ('LOTHAR', 10.0, 'kg', '07:45')]),
+ ('juvenil', 33, 66, 'J75', 283500, 90.0, 7.659, 2171.33, 3.25, 70568, [('AquaVita 35 (2mm)', 70568)], [('Melaço', 14.0, 'kg', '07:30'), ('LOTHAR', 11.0, 'kg', '07:45')]),
+ ('engorda',
+  1,
+  67,
+  'E67',
+  283500,
+  100.0,
+  7.659,
+  2171.33,
+  4.75,
+  103138,
+  [('AquaVita 35 (2mm)', 82510), ('IRCA CarciMax 30 2,4mm', 20628)],
+  [('Melaço', 10.0, 'kg', '07:30'), ('LOTHAR', 10.0, 'kg', '07:45'), ('AQUAPRO ECO', 40.0, 'un', '08:00')]),
+ ('engorda', 2, 68, 'E68', 282083, 99.5, 7.85, 2214.48, 4.75, 105188, [('AquaVita 35 (2mm)', 63113), ('IRCA CarciMax 30 2,4mm', 42075)], [('Melaço', 10.0, 'kg', '07:30'), ('LOTHAR', 10.0, 'kg', '07:45')]),
+ ('engorda', 3, 69, 'E69', 280665, 99.0, 8.047, 2258.44, 4.75, 107276, [('AquaVita 35 (2mm)', 42910), ('IRCA CarciMax 30 2,4mm', 64366)], [('Melaço', 21.0, 'kg', '07:30'), ('LOTHAR', 16.0, 'kg', '07:45')]),
+ ('engorda', 4, 70, 'E70', 279248, 98.5, 8.248, 2303.21, 4.75, 109402, [('AquaVita 35 (2mm)', 21880), ('IRCA CarciMax 30 2,4mm', 87522)], [('Melaço', 22.0, 'kg', '07:30'), ('LOTHAR', 16.0, 'kg', '07:45')]),
+ ('engorda', 5, 71, 'E71', 277830, 98.0, 8.454, 2348.8, 4.75, 111568, [('IRCA CarciMax 30 2,4mm', 111568)], [('Melaço', 22.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45'), ('AQUAPRO ECO', 20.0, 'un', '08:00')]),
+ ('engorda', 6, 72, 'E72', 276413, 97.5, 8.665, 2395.24, 4.75, 113774, [('IRCA CarciMax 30 2,4mm', 113774)], [('Melaço', 23.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45')]),
+ ('engorda', 7, 73, 'E73', 274995, 97.0, 8.882, 2442.53, 4.75, 116020, [('IRCA CarciMax 30 2,4mm', 116020)], [('Melaço', 23.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45')]),
+ ('engorda', 8, 74, 'E74', 273578, 96.5, 9.104, 2490.69, 4.75, 118308, [('IRCA CarciMax 30 2,4mm', 118308)], [('Melaço', 24.0, 'kg', '07:30'), ('LOTHAR', 18.0, 'kg', '07:45'), ('CALDA IODADA', 240.0, 'g', '08:15')]),
+ ('engorda', 9, 75, 'E75', 272160, 96.0, 9.332, 2539.73, 4.25, 107939, [('IRCA CarciMax 30 2,4mm', 107939)], [('Melaço', 22.0, 'kg', '07:30'), ('LOTHAR', 16.0, 'kg', '07:45'), ('AQUAPRO ECO', 10.0, 'un', '08:00')]),
+ ('engorda', 10, 76, 'E76', 270743, 95.5, 9.565, 2589.66, 4.25, 110061, [('IRCA CarciMax 30 2,4mm', 110061)], [('Melaço', 22.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45')]),
+ ('engorda', 11, 77, 'E77', 269325, 95.0, 9.804, 2640.51, 4.25, 112222, [('IRCA CarciMax 30 2,4mm', 112222)], [('Melaço', 22.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45')]),
+ ('engorda', 12, 78, 'E78', 267908, 94.5, 10.049, 2692.28, 4.25, 114422, [('IRCA CarciMax 30 2,4mm', 114422)], [('Melaço', 23.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45'), ('AQUAPRO ECO', 10.0, 'un', '08:00')]),
+ ('engorda', 13, 79, 'E79', 266490, 94.0, 10.301, 2744.98, 4.25, 116662, [('IRCA CarciMax 30 2,4mm', 116662)], [('Melaço', 23.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45')]),
+ ('engorda', 14, 80, 'E80', 265073, 93.5, 10.558, 2798.64, 4.25, 118942, [('IRCA CarciMax 30 2,4mm', 118942)], [('Melaço', 24.0, 'kg', '07:30'), ('LOTHAR', 18.0, 'kg', '07:45')]),
+ ('engorda', 15, 81, 'E81', 263655, 93.0, 10.822, 2853.27, 4.25, 121264, [('IRCA CarciMax 30 2,4mm', 121264)], [('Melaço', 24.0, 'kg', '07:30'), ('LOTHAR', 18.0, 'kg', '07:45')]),
+ ('engorda', 16, 82, 'E82', 262238, 92.5, 11.093, 2908.88, 3.75, 109083, [('IRCA CarciMax 30 2,4mm', 109083)], [('Melaço', 22.0, 'kg', '07:30'), ('LOTHAR', 16.0, 'kg', '07:45'), ('AQUAPRO ECO', 5.0, 'un', '08:00')]),
+ ('engorda', 17, 83, 'E83', 260820, 92.0, 11.37, 2965.48, 3.75, 111206, [('IRCA CarciMax 30 2,4mm', 111206)], [('Melaço', 22.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45')]),
+ ('engorda', 18, 84, 'E84', 259403, 91.5, 11.654, 3023.1, 3.75, 113366, [('IRCA CarciMax 30 2,4mm', 113366)], [('Melaço', 23.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45')]),
+ ('engorda', 19, 85, 'E85', 257985, 91.0, 11.945, 3081.74, 3.75, 115565, [('IRCA CarciMax 30 2,4mm', 115565)], [('Melaço', 23.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45'), ('AQUAPRO ECO', 5.0, 'un', '08:00')]),
+ ('engorda', 20, 86, 'E86', 256568, 90.5, 12.244, 3141.43, 3.75, 117804, [('IRCA CarciMax 30 2,4mm', 117804)], [('Melaço', 24.0, 'kg', '07:30'), ('LOTHAR', 18.0, 'kg', '07:45')]),
+ ('engorda', 21, 87, 'E87', 255150, 90.0, 12.55, 3202.18, 3.75, 120082, [('IRCA CarciMax 30 2,4mm', 120082)], [('Melaço', 24.0, 'kg', '07:30'), ('LOTHAR', 18.0, 'kg', '07:45')]),
+ ('engorda', 22, 88, 'E88', 253733, 89.5, 12.864, 3264.0, 3.75, 122400, [('IRCA CarciMax 30 2,4mm', 122400)], [('Melaço', 24.0, 'kg', '07:30'), ('LOTHAR', 18.0, 'kg', '07:45'), ('CALDA IODADA', 240.0, 'g', '08:15')]),
+ ('engorda', 23, 89, 'E89', 252315, 89.0, 13.186, 3326.9, 3.5, 116442, [('IRCA CarciMax 30 2,4mm', 116442)], [('Melaço', 23.0, 'kg', '07:30'), ('LOTHAR', 17.0, 'kg', '07:45'), ('AQUAPRO ECO', 4.0, 'un', '08:00')]),
+ ('engorda', 24, 90, 'E90', 250898, 88.5, 13.515, 3390.92, 3.5, 118682, [('IRCA CarciMax 30 2,4mm', 118682)], [('Melaço', 24.0, 'kg', '07:30'), ('LOTHAR', 18.0, 'kg', '07:45')]),
+ ('engorda', 25, 91, 'E91', 249480, 88.0, 13.853, 3456.06, 3.5, 120962, [('IRCA CarciMax 30 2,4mm', 120962)], [('Melaço', 24.0, 'kg', '07:30'), ('LOTHAR', 18.0, 'kg', '07:45')]),
+ ('engorda', 26, 92, 'E92', 248063, 87.5, 14.199, 3522.33, 3.5, 123282, [('IRCA CarciMax 30 2,4mm', 123282)], [('Melaço', 25.0, 'kg', '07:30'), ('LOTHAR', 18.0, 'kg', '07:45'), ('AQUAPRO ECO', 4.0, 'un', '08:00')]),
+ ('engorda', 27, 93, 'E93', 246645, 87.0, 14.554, 3589.76, 3.5, 125642, [('IRCA CarciMax 30 2,4mm', 125642)], [('Melaço', 25.0, 'kg', '07:30'), ('LOTHAR', 19.0, 'kg', '07:45')]),
+ ('engorda', 28, 94, 'E94', 245228, 86.5, 14.918, 3658.35, 3.5, 128042, [('IRCA CarciMax 30 2,4mm', 128042)], [('Melaço', 26.0, 'kg', '07:30'), ('LOTHAR', 19.0, 'kg', '07:45')]),
+ ('engorda', 29, 95, 'E95', 243810, 86.0, 15.291, 3728.14, 3.5, 130485, [('IRCA CarciMax 30 2,4mm', 130485)], [('Melaço', 26.0, 'kg', '07:30'), ('LOTHAR', 20.0, 'kg', '07:45')]),
+ ('engorda', 30, 96, 'E96', 242393, 85.5, 15.673, 3799.12, 3.25, 123472, [('IRCA CarciMax 30 2,4mm', 123472)], [('Melaço', 25.0, 'kg', '07:30'), ('LOTHAR', 19.0, 'kg', '07:45'), ('AQUAPRO ECO', 4.0, 'un', '08:00')]),
+ ('engorda', 31, 97, 'E97', 240975, 85.0, 16.065, 3871.33, 3.25, 125818, [('IRCA CarciMax 30 2,4mm', 125818)], [('Melaço', 25.0, 'kg', '07:30'), ('LOTHAR', 19.0, 'kg', '07:45')]),
+ ('engorda', 32, 98, 'E98', 239558, 84.5, 16.467, 3944.77, 3.25, 128205, [('IRCA CarciMax 30 2,4mm', 128205)], [('Melaço', 26.0, 'kg', '07:30'), ('LOTHAR', 19.0, 'kg', '07:45')]),
+ ('engorda', 33, 99, 'E99', 238140, 84.0, 16.879, 4019.47, 3.25, 130633, [('IRCA CarciMax 30 2,4mm', 130633)], [('Melaço', 26.0, 'kg', '07:30'), ('LOTHAR', 20.0, 'kg', '07:45')])]
+
+
+def _stage_number_from_label(stage_label, fallback):
+    match = re.search(r'(\d+)', str(stage_label or ''))
+    return int(match.group(1)) if match else fallback
+
+
+def build_full_cycle_protocol_rows():
+    rows = []
+    previous_weight = None
+    cumulative_feed_kg = 0.0
+    for phase, phase_day, cycle_day, stage_label, population, survival_pct, weight_g, biomass_kg, feed_rate_pct, total_day_g, mixes, water_items in FULL_CYCLE_PROTOCOL_COMPACT_ROWS:
+        feedings_per_day = FULL_CYCLE_FEEDING_FREQUENCIES.get(phase, 8)
+        total_day_g = int(round(total_day_g or 0))
+        cumulative_feed_kg += total_day_g / 1000.0
+        stage_number = _stage_number_from_label(stage_label, cycle_day)
+        daily_growth_g = None if previous_weight is None else round(max((weight_g or 0) - previous_weight, 0), 4)
+        previous_weight = weight_g or previous_weight
+        rows.append({
+            'phase': phase,
+            'phase_day': int(phase_day or cycle_day or 1),
+            'cycle_day': int(cycle_day or phase_day or 1),
+            'day': int(cycle_day or phase_day or 1),
+            'stage_label': stage_label,
+            'stage_number': stage_number,
+            'pl_stage': stage_number,
+            'population': int(round(population or 0)),
+            'base_population': FULL_CYCLE_PROTOCOL_BASE_POPULATION,
+            'survival_pct': float(survival_pct or 0),
+            'individual_weight_g': float(weight_g or 0),
+            'weight_g': float(weight_g or 0),
+            'biomass_kg': float(biomass_kg or 0),
+            'feed_rate_pct': float(feed_rate_pct or 0),
+            'total_day_g': total_day_g,
+            'daily_feed_kg': round(total_day_g / 1000.0, 3),
+            'feedings_per_day': feedings_per_day,
+            'per_feeding_g': round(total_day_g / feedings_per_day, 2) if feedings_per_day else total_day_g,
+            'daily_growth_g': daily_growth_g,
+            'estimated_fcr': None,
+            'cumulative_feed_kg': round(cumulative_feed_kg, 3),
+            'mixes': [{'label': label, 'grams': int(round(grams or 0))} for label, grams in mixes if int(round(grams or 0)) > 0],
+            'water_items': [
+                {
+                    'label': label,
+                    'source_label': label,
+                    'category': 'aditivo',
+                    'quantity': float(quantity),
+                    'measure_unit': measure_unit,
+                    'scheduled_time': scheduled_time,
+                    'priority': 'alta',
+                }
+                for label, quantity, measure_unit, scheduled_time in water_items
+                if quantity not in (None, '', 0)
+            ],
+        })
+    return rows
+
+
+FULL_CYCLE_PROTOCOL_ROWS = build_full_cycle_protocol_rows()
+NURSERY_PROTOCOLS['full_cycle'] = {
+    'name': 'Protocolo Alimentação Ciclo Completo — Berçário, Juvenil e Engorda',
+    'sheet_name': 'PROTOCOLOS Alimentacao PDF',
+    'base_population': FULL_CYCLE_PROTOCOL_BASE_POPULATION,
+    'rows': FULL_CYCLE_PROTOCOL_ROWS,
+}
+# Mantém compatibilidade com unidades antigas SP/RG que já estavam usando chaves específicas.
+NURSERY_PROTOCOLS['sp1'] = NURSERY_PROTOCOLS['full_cycle']
+NURSERY_PROTOCOLS['rg1'] = NURSERY_PROTOCOLS['full_cycle']
+DEFAULT_NURSERY_PROTOCOL_KEY = 'full_cycle'
+NURSERY_PROTOCOL_BASE_POPULATION = FULL_CYCLE_PROTOCOL_BASE_POPULATION
+NURSERY_PROTOCOL_ROWS = FULL_CYCLE_PROTOCOL_ROWS
+TABLE_PROTOCOL_BASE_POPULATION = FULL_CYCLE_PROTOCOL_BASE_POPULATION
+PRODUCTION_PROTOCOL_ROWS = [
+    {
+        'phase': row['phase'],
+        'phase_day': row['phase_day'],
+        'cumulative_day': row['cycle_day'],
+        'stage': row['stage_label'],
+        'population': row['population'],
+        'weight_g': row['individual_weight_g'],
+        'daily_growth_g': row['daily_growth_g'],
+        'biomass_kg': row['biomass_kg'],
+        'feed_rate_pct': row['feed_rate_pct'],
+        'daily_feed_kg': row['daily_feed_kg'],
+        'feedings_per_day': row['feedings_per_day'],
+        'survival_pct': row['survival_pct'],
+        'cumulative_feed_kg': row['cumulative_feed_kg'],
+        'estimated_fcr': row['estimated_fcr'],
+        'mixes': [{'label': item['label'], 'kg': round((item['grams'] or 0) / 1000.0, 3)} for item in row.get('mixes', [])],
+    }
+    for row in FULL_CYCLE_PROTOCOL_ROWS
+]
+
+
+NURSERY_FEED_TIMES = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00', '00:00', '02:00', '04:00', '06:00']
+
+
+def feedings_per_day_for_phase(phase: str | None, fallback=None) -> int:
+    phase = normalize_phase_value(phase)
+    if phase in FULL_CYCLE_FEEDING_FREQUENCIES:
+        return FULL_CYCLE_FEEDING_FREQUENCIES[phase]
+    return int(fallback or 8)
+
+
+def build_feeding_time_labels(feedings_per_day: int, first_time_label='08:00'):
+    feedings_per_day = max(int(feedings_per_day or 0), 0)
+    if feedings_per_day <= 0:
+        return []
+    first = parse_time(first_time_label) or time(hour=8)
+    start_minutes = first.hour * 60 + first.minute
+    interval_minutes = 24 * 60 / feedings_per_day
+    labels = []
+    for idx in range(feedings_per_day):
+        total_minutes = int(round(start_minutes + idx * interval_minutes)) % (24 * 60)
+        labels.append(f'{total_minutes // 60:02d}:{total_minutes % 60:02d}')
+    return labels
+
+
+def feeding_interval_label(feedings_per_day: int) -> str:
+    if not feedings_per_day:
+        return '—'
+    interval_hours = 24 / float(feedings_per_day)
+    if abs(interval_hours - round(interval_hours)) < 0.001:
+        return f'{int(round(interval_hours))}h'
+    return f'{interval_hours:.1f}h'.replace('.', ',')
+
 
 
 def get_nursery_protocol_meta(protocol_key: str | None = None):
@@ -5199,13 +5554,8 @@ def get_nursery_protocol_base_population(protocol_key: str | None = None):
 
 
 def nursery_protocol_key_for_unit(unit) -> str:
-    if not unit:
-        return DEFAULT_NURSERY_PROTOCOL_KEY
-    raw = normalize_text(f"{getattr(unit, 'code', '')} {getattr(unit, 'name', '')}")
-    if any(token in raw for token in ['rio grande do sul', 'rgs', 'rg1', 'rio grande sul']):
-        return 'rg1'
-    if any(token in raw for token in ['sao paulo', 'sp1', 'sp ', 'berc sp']):
-        return 'sp1'
+    # O protocolo novo é único para o ciclo completo. Mantemos a função para compatibilidade
+    # com telas antigas, mas todas as unidades agora usam a mesma tabela base.
     return DEFAULT_NURSERY_PROTOCOL_KEY
 
 
@@ -5220,6 +5570,37 @@ def get_nursery_protocol_row(pl_stage: int | None, protocol_key: str | None = No
     if pl_stage >= rows[-1]['pl_stage']:
         return rows[-1]
     return next((row for row in rows if row['pl_stage'] == pl_stage), None)
+
+
+def get_nursery_protocol_row_by_cycle_day(cycle_day: int | None, protocol_key: str | None = None):
+    if cycle_day is None:
+        return None
+    rows = get_nursery_protocol_rows(protocol_key)
+    if not rows:
+        return None
+    ordered_rows = sorted(rows, key=lambda row: row.get('cycle_day') or row.get('day') or 1)
+    if cycle_day <= (ordered_rows[0].get('cycle_day') or ordered_rows[0].get('day') or 1):
+        return ordered_rows[0]
+    if cycle_day >= (ordered_rows[-1].get('cycle_day') or ordered_rows[-1].get('day') or 1):
+        return ordered_rows[-1]
+    return min(ordered_rows, key=lambda row: abs((row.get('cycle_day') or row.get('day') or 1) - cycle_day))
+
+
+def nursery_cycle_day_for_lot(lot, target_date: date | None, protocol_key: str | None = None) -> int:
+    target_date = target_date or local_today()
+    rows = get_nursery_protocol_rows(protocol_key)
+    if not lot or not getattr(lot, 'start_date', None) or not rows:
+        return 1
+    ordered_rows = sorted(rows, key=lambda row: row.get('cycle_day') or row.get('day') or 1)
+    first_stage = ordered_rows[0].get('stage_number') or ordered_rows[0].get('pl_stage') or 11
+    first_cycle_day = ordered_rows[0].get('cycle_day') or ordered_rows[0].get('day') or 1
+    entry_stage = getattr(lot, 'entry_pl_stage', None) or first_stage
+    stage_offset = max(int(entry_stage or first_stage) - int(first_stage or 0), 0)
+    days_since_start = max((target_date - lot.start_date).days, 0)
+    cycle_day = first_cycle_day + stage_offset + days_since_start
+    last_cycle_day = ordered_rows[-1].get('cycle_day') or ordered_rows[-1].get('day') or cycle_day
+    return max(first_cycle_day, min(int(cycle_day), int(last_cycle_day)))
+
 
 
 def grams_to_kg(value):
@@ -5332,6 +5713,8 @@ def entry_phase_label(entry):
     phase = feeding_entry_operational_phase(entry)
     if phase == 'juvenil':
         return 'juvenil'
+    if phase == 'engorda':
+        return 'engorda'
     return 'berçário'
 
 
@@ -5856,37 +6239,51 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         return None
 
     days_since_start = max((target_date - lot.start_date).days, 0)
-    min_stage = protocol_rows[0]['pl_stage']
-    max_stage = protocol_rows[-1]['pl_stage']
-    stage_today = min(max_stage, max(min_stage, lot.entry_pl_stage + days_since_start))
-    row = get_nursery_protocol_row(stage_today, protocol_key=protocol_key)
+    cycle_day = nursery_cycle_day_for_lot(lot, target_date, protocol_key=protocol_key)
+    row = get_nursery_protocol_row_by_cycle_day(cycle_day, protocol_key=protocol_key)
     if not row:
         return None
 
-    transfer_marker = latest_transfer_for_lot(lot, on_date=target_date)
-    unit_transfer_marker = Transfer.query.filter(
+    allocation = find_active_allocation(lot.id, unit.id, target_date) if lot.id and unit.id else None
+    operational_phase = allocation_operational_phase(allocation) or normalize_phase_value(getattr(unit, 'phase', None)) or normalize_phase_value(row.get('phase')) or 'bercario'
+    protocol_phase = normalize_phase_value(row.get('phase')) or operational_phase
+    feedings_per_day = feedings_per_day_for_phase(operational_phase, fallback=row.get('feedings_per_day'))
+    stage_label = row.get('stage_label') or (f"PL{row.get('pl_stage')}" if row.get('pl_stage') else f"Dia {cycle_day}")
+
+    transfer_marker = Transfer.query.filter(
         Transfer.source_lot_id == lot.id,
         Transfer.destination_unit_id == unit.id,
         Transfer.transfer_date <= target_date,
     ).order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).first()
-    if unit_transfer_marker:
-        transfer_marker = unit_transfer_marker
-    marker_stage = None
     marker_population_reference = None
     marker_label = None
+    factor = None
 
-    if transfer_marker and transfer_marker.transferred_qty:
-        marker_days_since_start = max(((transfer_marker.transfer_date or target_date) - lot.start_date).days, 0)
-        marker_stage = min(max_stage, max(min_stage, lot.entry_pl_stage + marker_days_since_start))
-        marker_row = get_nursery_protocol_row(marker_stage, protocol_key=protocol_key) or row
+    if allocation and allocation.quantity_allocated:
+        marker_date = allocation.start_date if allocation.start_date and allocation.start_date <= target_date else target_date
+        marker_cycle_day = nursery_cycle_day_for_lot(lot, marker_date, protocol_key=protocol_key)
+        marker_row = get_nursery_protocol_row_by_cycle_day(marker_cycle_day, protocol_key=protocol_key) or row
+        marker_population_reference = marker_row.get('population') or get_nursery_protocol_base_population(protocol_key) or 1
+        factor = (allocation.quantity_allocated or 0) / float(marker_population_reference or 1)
+        marker_stage_label = marker_row.get('stage_label') or f"dia {marker_cycle_day}"
+        marker_label = (
+            f"alocação ativa em {unit.name}: "
+            f"{format_integer_pt(allocation.quantity_allocated or 0)} PL desde {marker_date.strftime('%d/%m/%Y')} "
+            f"na idade {marker_stage_label}, sem reiniciar a tabela"
+        )
+    elif transfer_marker and transfer_marker.transferred_qty:
+        marker_date = transfer_marker.transfer_date or target_date
+        marker_cycle_day = nursery_cycle_day_for_lot(lot, marker_date, protocol_key=protocol_key)
+        marker_row = get_nursery_protocol_row_by_cycle_day(marker_cycle_day, protocol_key=protocol_key) or row
         marker_population_reference = marker_row.get('population') or get_nursery_protocol_base_population(protocol_key) or 1
         factor = (transfer_marker.transferred_qty or 0) / float(marker_population_reference or 1)
+        marker_stage_label = marker_row.get('stage_label') or f"dia {marker_cycle_day}"
         marker_label = (
             f"transferência real #{transfer_marker.id}: "
-            f"{format_integer_pt(transfer_marker.transferred_qty or 0)} PL no PL{marker_stage}"
+            f"{format_integer_pt(transfer_marker.transferred_qty or 0)} PL na idade {marker_stage_label}, sem reiniciar a tabela"
         )
     else:
-        marker_population_reference = row.get('base_population') or get_nursery_protocol_base_population(protocol_key) or 1
+        marker_population_reference = protocol_rows[0].get('population') or get_nursery_protocol_base_population(protocol_key) or 1
         factor = (lot.initial_count or 0) / float(marker_population_reference or 1)
 
     def scaled(value):
@@ -5909,8 +6306,9 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         and transfer_marker.avg_weight_g
     ):
         biomass_kg = round(((transfer_marker.transferred_qty or 0) * (transfer_marker.avg_weight_g or 0)) / 1000.0, 2)
+
     base_mixes = [
-        {'label': resolve_nursery_mix_label(item.get('label', 'Ração berçário')), 'grams': scaled(item.get('grams', 0))}
+        {'label': resolve_nursery_mix_label(item.get('label', 'Ração protocolo')), 'grams': scaled(item.get('grams', 0))}
         for item in row.get('mixes', [])
     ]
     base_mixes = consolidate_feed_mixes(base_mixes)
@@ -5921,17 +6319,22 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     mixes = consolidate_feed_mixes(mixes)
     total_day_g = sum(item['grams'] for item in mixes) if mixes else int(round(base_total_day_g * correction_factor))
 
-    feedings_per_day = row['feedings_per_day']
     portion_values = build_even_schedule(total_day_g, feedings_per_day)
     per_feeding_g = int(round(total_day_g / feedings_per_day)) if feedings_per_day else 0
+    schedule_times = build_feeding_time_labels(feedings_per_day, first_time_label='08:00')
     schedule = []
-    for idx, time_label in enumerate(NURSERY_FEED_TIMES[:feedings_per_day]):
+    for idx, time_label in enumerate(schedule_times):
         schedule.append({'time': time_label, 'grams': portion_values[idx] if idx < len(portion_values) else per_feeding_g})
 
+    phase_name = phase_label(operational_phase)
+    protocol_phase_name = phase_label(protocol_phase)
+    interval_label = feeding_interval_label(feedings_per_day)
     message_lines = [
         f"*{unit.name}* — Lote {lot.lot_code}",
         f"Data: {target_date.strftime('%d/%m/%Y')}",
-        f"Estágio do dia: PL{stage_today}",
+        f"Fase operacional: {phase_name}",
+        f"Linha aplicada da tabela: {stage_label} · Dia {cycle_day} do ciclo real",
+        f"Fase original da linha no protocolo: {protocol_phase_name}",
         f"População estimada: {projected_population:,} PL".replace(',', '.'),
         f"Protocolo: {protocol_meta.get('name', protocol_key.upper())}",
     ]
@@ -5973,7 +6376,7 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
                 message_lines.append(f"- {item.get('label')}")
             else:
                 message_lines.append(f"- {item.get('label')}: {format_decimal_pt(quantity)} {item.get('measure_unit', '')}".strip())
-    message_lines.extend(['', '*Porções a cada 2 horas*'])
+    message_lines.extend(['', f'*Porções em 24h · início 08:00 · intervalo {interval_label}*'])
     for item in schedule:
         message_lines.append(f"- {item['time']} — {item['grams']:,} g".replace(',', '.'))
 
@@ -5981,8 +6384,16 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         'unit': unit,
         'lot': lot,
         'target_date': target_date,
-        'day_index': days_since_start + 1,
-        'stage_today': stage_today,
+        'day_index': cycle_day,
+        'cycle_day': cycle_day,
+        'stage_today': row.get('stage_number') or row.get('pl_stage') or cycle_day,
+        'stage_label': stage_label,
+        'operational_phase': operational_phase,
+        'operational_phase_label': phase_name,
+        'protocol_phase': protocol_phase,
+        'protocol_phase_label': protocol_phase_name,
+        'flexible_phase_transition': FULL_CYCLE_PROTOCOL_FLEXIBLE_PHASE_TRANSITIONS,
+        'phase_mismatch': operational_phase != protocol_phase,
         'protocol_key': protocol_key,
         'protocol_name': protocol_meta.get('name', protocol_key.upper()),
         'base_row': row,
@@ -6002,6 +6413,7 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         'mixes': mixes,
         'water_items': water_items,
         'feedings_per_day': feedings_per_day,
+        'feeding_interval_label': interval_label,
         'per_feeding_g': per_feeding_g,
         'per_feeding_min_g': min((item['grams'] for item in schedule), default=0),
         'per_feeding_max_g': max((item['grams'] for item in schedule), default=0),
@@ -6047,6 +6459,10 @@ def build_nursery_digest_for_date(target_date: date | None = None):
 
 def build_juvenile_digest_for_date(target_date: date | None = None):
     return build_stage_feed_digest_for_date(target_date, phase='juvenil')
+
+
+def build_growout_digest_for_date(target_date: date | None = None):
+    return build_stage_feed_digest_for_date(target_date, phase='engorda')
 
 
 def sync_nursery_feed_to_management(entry):
@@ -12424,6 +12840,94 @@ def juvenile_feed_page():
     )
 
 
+@app.route('/growout-feed', methods=['GET', 'POST'])
+@login_required
+@requires_permission('management_manage')
+def growout_feed_page():
+    selected_date = parse_date(request.args.get('feed_date'), local_today())
+    edit_id = parse_int(request.args.get('edit_id'))
+    edit_entry = db.session.get(NurseryFeeding, edit_id) if edit_id else None
+    growout_units = active_units_for_operational_phase('engorda', on_date=selected_date)
+
+    if request.method == 'POST':
+        form_mode = request.form.get('form_mode', 'create')
+        entry = db.session.get(NurseryFeeding, parse_int(request.form.get('entry_id'))) if form_mode == 'edit' else NurseryFeeding()
+        if form_mode == 'edit' and not entry:
+            flash('Registro de alimentação de engorda não encontrado.', 'warning')
+            return redirect(url_for('growout_feed_page'))
+
+        entry.feed_date = parse_date(request.form['feed_date'])
+        entry.unit_id = int(request.form['unit_id'])
+        unit = db.session.get(Unit, entry.unit_id)
+        if not unit or not unit_is_active_in_operational_phase(unit.id, 'engorda', on_date=entry.feed_date):
+            flash('Selecione uma unidade com lote ativo na fase Engorda.', 'danger')
+            return redirect(url_for('growout_feed_page', feed_date=entry.feed_date.isoformat()))
+        active_lot = active_lot_for_unit(entry.unit_id, on_date=entry.feed_date)
+        entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
+        lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else active_lot
+        submitted_quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
+        entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
+        entry.score_adjustment_pct = parse_float(request.form.get('score_adjustment_pct'))
+        if entry.score_adjustment_pct is None and entry.intestinal_score is not None:
+            entry.score_adjustment_pct = nursery_score_adjustment_pct(entry.intestinal_score)
+        entry.quantity_kg = submitted_quantity_kg
+        entry.notes = request.form.get('notes')
+
+        adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
+        plan_for_submission = build_nursery_protocol_for_date(
+            lot,
+            unit,
+            target_date=entry.feed_date,
+            cumulative_factor=adjustment['factor'],
+            correction_events=adjustment['events'],
+        ) if unit and lot else None
+        selected_water_items = selected_nursery_water_items_from_request(plan_for_submission) if plan_for_submission else []
+        entry.water_items_json = json.dumps(selected_water_items, ensure_ascii=False)
+
+        entry.updated_at = datetime.utcnow()
+        if form_mode != 'edit':
+            db.session.add(entry)
+        db.session.flush()
+        sync_nursery_feed_to_management(entry)
+        db.session.commit()
+        flash('Alimentação de engorda salva e integrada ao manejo diário. Os aditivos marcados também deram baixa no estoque.', 'success')
+        return redirect(url_for('growout_feed_page', feed_date=entry.feed_date.isoformat()))
+
+    recent_entries = (
+        NurseryFeeding.query.options(joinedload(NurseryFeeding.unit), joinedload(NurseryFeeding.lot))
+        .order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc())
+        .limit(200)
+        .all()
+    )
+    entries = [entry for entry in recent_entries if feeding_entry_operational_phase(entry) == 'engorda'][:60]
+    plans = build_growout_digest_for_date(selected_date)
+    plan_unit_lot_keys = {(plan['unit'].id, plan['lot'].id) for plan in plans}
+    entry_by_unit_id = {
+        entry.unit_id: entry
+        for entry in NurseryFeeding.query.filter(NurseryFeeding.feed_date == selected_date).all()
+        if (entry.unit_id, entry.lot_id) in plan_unit_lot_keys
+    }
+    for plan in plans:
+        plan['existing_entry'] = entry_by_unit_id.get(plan['unit'].id)
+        plan['water_items_for_form'] = nursery_water_items_for_form(plan, plan['existing_entry'])
+    combined_message = '\n\n'.join(plan['message_text'] for plan in plans)
+    return render_template(
+        'nursery_feed.html',
+        today=local_today(),
+        selected_date=selected_date,
+        nursery_units=growout_units,
+        entries=entries,
+        edit_entry=edit_entry,
+        plans=plans,
+        combined_message=combined_message,
+        phase_label='engorda',
+        phase_label_plural='engordas',
+        phase_label_title='Engorda',
+        feed_endpoint='growout_feed_page',
+        delete_endpoint='delete_growout_feed_entry',
+    )
+
+
 @app.post('/nursery-feed/<int:entry_id>/delete')
 @login_required
 @requires_permission('management_manage')
@@ -12454,6 +12958,22 @@ def delete_juvenile_feed_entry(entry_id):
     db.session.commit()
     flash('Lançamento do juvenil excluído e removido do manejo diário.', 'success')
     return redirect(url_for('juvenile_feed_page', feed_date=feed_date.isoformat()))
+
+
+@app.post('/growout-feed/<int:entry_id>/delete')
+@login_required
+@requires_permission('management_manage')
+def delete_growout_feed_entry(entry_id):
+    entry = db.session.get(NurseryFeeding, entry_id)
+    if not entry:
+        flash('Registro de alimentação de engorda não encontrado.', 'warning')
+        return redirect(request.referrer or url_for('growout_feed_page'))
+    feed_date = entry.feed_date
+    delete_nursery_management_records(entry)
+    db.session.delete(entry)
+    db.session.commit()
+    flash('Lançamento da engorda excluído e removido do manejo diário.', 'success')
+    return redirect(url_for('growout_feed_page', feed_date=feed_date.isoformat()))
 
 
 @app.get('/api/nursery-feed-digest')
@@ -13025,10 +13545,10 @@ def nursery_protocol_curve_for_lot(lot: Lot, age_days: int | float):
     rows = protocol_meta.get('rows', [])
     if not rows:
         return None
-    min_stage = rows[0]['pl_stage']
-    max_stage = rows[-1]['pl_stage']
-    stage_today = min(max_stage, max(min_stage, lot.entry_pl_stage + int(max(age_days or 0, 0))))
-    row = get_nursery_protocol_row(stage_today, protocol_key=protocol_key)
+    # Usa o dia do ciclo, não a fase física, porque o protocolo novo é contínuo.
+    reference_date = (lot.start_date or local_today()) + timedelta(days=int(max(age_days or 0, 0)))
+    cycle_day = nursery_cycle_day_for_lot(lot, reference_date, protocol_key=protocol_key)
+    row = get_nursery_protocol_row_by_cycle_day(cycle_day, protocol_key=protocol_key)
     if not row:
         return None
     return {
@@ -13038,7 +13558,7 @@ def nursery_protocol_curve_for_lot(lot: Lot, age_days: int | float):
         'survival_pct': row.get('survival_pct'),
         'feed_rate_pct': row.get('feed_rate_pct'),
         'estimated_fcr': row.get('estimated_fcr'),
-        'source': f"{protocol_meta.get('name', protocol_key.upper())} — berçário",
+        'source': f"{protocol_meta.get('name', protocol_key.upper())} — ciclo completo",
     }
 
 
