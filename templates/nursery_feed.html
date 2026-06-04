@@ -4,6 +4,7 @@
 {% set phase_label_title = phase_label_title|default('Berçário') %}
 {% set feed_endpoint = feed_endpoint|default('nursery_feed_page') %}
 {% set delete_endpoint = delete_endpoint|default('delete_nursery_feed_entry') %}
+{% set bulk_save_endpoint = bulk_save_endpoint|default('save_all_nursery_feed_entries') %}
 {% block page_title %}Alimentação {{ phase_label }}{% endblock %}
 {% block page_subtitle %}Planejamento, lançamento real e mensagem do WhatsApp para a alimentação de {{ phase_label }}.{% endblock %}
 {% block content %}
@@ -25,6 +26,11 @@
     <div class="summary-chip"><strong>{{ plans|length }}</strong><span>{{ phase_label_plural if plans|length != 1 else phase_label }} ativo{% if plans|length != 1 %}s{% endif %}</span></div>
     <div class="summary-chip"><strong>{{ '%.3f'|format((plans|sum(attribute='total_day_kg'))) }}</strong><span>kg programados no dia</span></div>
   </div>
+  <form method="post" action="{{ url_for(bulk_save_endpoint) }}" class="nursery-save-all-form" onsubmit="return confirm('Salvar todas as rações planejadas do dia para {{ phase_label }} e integrar ao Manejo Diário? Se já existir lançamento para algum lote, ele será atualizado.');">
+    <input type="hidden" name="feed_date" value="{{ selected_date.isoformat() }}">
+    <button type="submit"><i class="fa-solid fa-floppy-disk"></i> Salvar todas as rações do dia</button>
+    <span class="helper-text">Cria ou atualiza todos os lançamentos do {{ phase_label }} da data selecionada e envia automaticamente para o Manejo Diário.</span>
+  </form>
   {% endif %}
 
   {% if combined_message %}
