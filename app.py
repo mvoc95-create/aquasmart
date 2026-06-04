@@ -5188,12 +5188,15 @@ PRODUCTION_PROTOCOL_ROWS = [{'phase': 'juvenil',
   'crop_fcr': 1.43,
   'mixes': [{'label': 'Engorda 2,4 mm', 'kg': 39.69}]}]
 
-# Novo protocolo único do ciclo completo, importado do PDF "PROTOCOLOS Alimentacao(1).pdf".
+# Novo protocolo único do ciclo completo, importado do PDF "PROTOCOLOS Alimentacao".
 # A tabela cobre Berçário, Juvenil/Pré-cria e Engorda, mas a mudança de fase na fazenda
 # NÃO reinicia a tabela. O que manda é o dia/idade real do ciclo: se transferir com PL20,
 # a aba Juvenil/Engorda continua calculando a linha PL20/PL21/... proporcionalmente à
 # nova contabilidade de PLs da transferência. A fase operacional serve para filtrar a aba
 # e definir a frequência: berçário 12x, juvenil 8x, engorda 6x.
+# Atualização solicitada: foram usados apenas os campos de alimentação da tabela
+# (taxa de alimentação, total do dia e mix de ração). A lógica de horários, número
+# de tratos, probióticos, LOTHAR e demais manejos/controles não foi alterada.
 FULL_CYCLE_FEEDING_FREQUENCIES = {'bercario': 12, 'juvenil': 8, 'engorda': 6}
 FULL_CYCLE_PROTOCOL_FLEXIBLE_PHASE_TRANSITIONS = True
 FULL_CYCLE_PROTOCOL_BASE_POPULATION = 350000
@@ -5478,7 +5481,7 @@ def build_full_cycle_protocol_rows():
 FULL_CYCLE_PROTOCOL_ROWS = build_full_cycle_protocol_rows()
 NURSERY_PROTOCOLS['full_cycle'] = {
     'name': 'Protocolo Alimentação Ciclo Completo — Berçário, Juvenil e Engorda',
-    'sheet_name': 'PROTOCOLOS Alimentacao PDF',
+    'sheet_name': 'PROTOCOLOS Alimentacao - alimentação atualizada',
     'base_population': FULL_CYCLE_PROTOCOL_BASE_POPULATION,
     'rows': FULL_CYCLE_PROTOCOL_ROWS,
 }
@@ -5819,11 +5822,25 @@ def nursery_water_items_for_form(plan, entry=None):
     return water_items
 
 
-def selected_nursery_water_items_from_request(plan):
-    selected_keys = set(request.form.getlist('water_item_keys'))
+def selected_nursery_water_items_for_plan(plan, selected_keys=None):
+    """Retorna os aditivos/insumos de água escolhidos para um plano de alimentação.
+
+    Quando selected_keys é None, a seleção segue o padrão operacional da tela:
+    todo item de estoque do protocolo do dia já vem marcado para baixar no Manejo.
+    Isso permite o botão "Salvar todas as rações do dia" fazer exatamente o mesmo
+    lançamento que seria feito clicando em cada card individual, sem mexer na lógica
+    de probiótico, LOTHAR, melaço, calda iodada ou controles.
+    """
     selected_items = []
+    selected_keys = {str(key) for key in selected_keys} if selected_keys is not None else None
     for item in nursery_water_items_for_form(plan, entry=None):
-        if not item.get('is_stock_item') or item.get('form_key') not in selected_keys:
+        if not item.get('is_stock_item'):
+            continue
+        if selected_keys is not None:
+            is_selected = item.get('form_key') in selected_keys
+        else:
+            is_selected = bool(item.get('is_selected'))
+        if not is_selected:
             continue
         selected_items.append({
             'form_key': item.get('form_key'),
@@ -5836,6 +5853,11 @@ def selected_nursery_water_items_from_request(plan):
             'priority': item.get('priority') or 'alta',
         })
     return selected_items
+
+
+def selected_nursery_water_items_from_request(plan):
+    selected_keys = set(request.form.getlist('water_item_keys'))
+    return selected_nursery_water_items_for_plan(plan, selected_keys=selected_keys)
 
 
 def nursery_water_supply_entries(water_items):
@@ -12706,6 +12728,113 @@ def export_managerial_report(report_key):
     return send_file(output, as_attachment=True, download_name=f'relatorio_{report_key}_{today.strftime("%Y%m%d")}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+
+
+def save_all_stage_feed_entries_for_date(phase, target_date):
+    """Cria/atualiza todos os lançamentos de alimentação de uma fase no dia.
+
+    Usa o mesmo plano que aparece nos cards da tela e chama sync_nursery_feed_to_management,
+    então as rações do mix viram registros no Manejo Diário e os aditivos de água padrão
+    continuam dando baixa exatamente pela lógica já existente.
+    """
+    phase = normalize_phase_value(phase) or 'bercario'
+    plans = build_stage_feed_digest_for_date(target_date, phase=phase)
+    created = 0
+    updated = 0
+    skipped = 0
+    entries = []
+
+    for plan in plans:
+        unit = plan.get('unit')
+        lot = plan.get('lot')
+        if not unit or not lot or not getattr(unit, 'id', None) or not getattr(lot, 'id', None):
+            skipped += 1
+            continue
+
+        entry = NurseryFeeding.query.filter_by(
+            feed_date=target_date,
+            unit_id=unit.id,
+            lot_id=lot.id,
+        ).order_by(NurseryFeeding.id.desc()).first()
+
+        if entry:
+            updated += 1
+        else:
+            entry = NurseryFeeding(
+                feed_date=target_date,
+                unit_id=unit.id,
+                lot_id=lot.id,
+                quantity_kg=0,
+            )
+            db.session.add(entry)
+            created += 1
+
+        entry.feed_date = target_date
+        entry.unit_id = unit.id
+        entry.lot_id = lot.id
+        entry.quantity_kg = plan.get('total_day_kg') or grams_to_kg(plan.get('total_day_g') or 0)
+        entry.water_items_json = json.dumps(selected_nursery_water_items_for_plan(plan), ensure_ascii=False)
+        if not (entry.notes or '').strip():
+            entry.notes = 'Salvo automaticamente pelo botão Salvar todas as rações do dia.'
+        entry.updated_at = datetime.utcnow()
+
+        db.session.flush()
+        sync_nursery_feed_to_management(entry)
+        entries.append(entry)
+
+    return {
+        'plans_count': len(plans),
+        'created': created,
+        'updated': updated,
+        'skipped': skipped,
+        'entries': entries,
+    }
+
+
+def handle_save_all_stage_feed(phase, endpoint_name, success_label):
+    feed_date = parse_date(request.form.get('feed_date'), local_today())
+    result = save_all_stage_feed_entries_for_date(phase, feed_date)
+    if result['plans_count'] <= 0:
+        flash(f'Nenhum {success_label} ativo encontrado para salvar nesta data.', 'warning')
+    else:
+        details = []
+        if result['created']:
+            details.append(f"{result['created']} criado(s)")
+        if result['updated']:
+            details.append(f"{result['updated']} atualizado(s)")
+        if result['skipped']:
+            details.append(f"{result['skipped']} ignorado(s)")
+        details_label = ', '.join(details) if details else 'sem alterações'
+        flash(
+            f'Todas as rações do dia do {success_label} foram salvas no Manejo Diário: {details_label}. '
+            'A lógica de mix, tratos, probiótico, LOTHAR e demais aditivos foi mantida.',
+            'success',
+        )
+    db.session.commit()
+    return redirect(url_for(endpoint_name, feed_date=feed_date.isoformat()))
+
+
+@app.post('/nursery-feed/save-all')
+@login_required
+@requires_permission('management_manage')
+def save_all_nursery_feed_entries():
+    return handle_save_all_stage_feed('bercario', 'nursery_feed_page', 'berçário')
+
+
+@app.post('/juvenile-feed/save-all')
+@login_required
+@requires_permission('management_manage')
+def save_all_juvenile_feed_entries():
+    return handle_save_all_stage_feed('juvenil', 'juvenile_feed_page', 'juvenil')
+
+
+@app.post('/growout-feed/save-all')
+@login_required
+@requires_permission('management_manage')
+def save_all_growout_feed_entries():
+    return handle_save_all_stage_feed('engorda', 'growout_feed_page', 'engorda')
+
+
 @app.route('/nursery-feed', methods=['GET', 'POST'])
 @login_required
 @requires_permission('management_manage')
@@ -12788,6 +12917,7 @@ def nursery_feed_page():
         phase_label_title='Berçário',
         feed_endpoint='nursery_feed_page',
         delete_endpoint='delete_nursery_feed_entry',
+        bulk_save_endpoint='save_all_nursery_feed_entries',
     )
 
 
@@ -12877,6 +13007,7 @@ def juvenile_feed_page():
         phase_label_title='Juvenil',
         feed_endpoint='juvenile_feed_page',
         delete_endpoint='delete_juvenile_feed_entry',
+        bulk_save_endpoint='save_all_juvenile_feed_entries',
     )
 
 
@@ -12965,6 +13096,7 @@ def growout_feed_page():
         phase_label_title='Engorda',
         feed_endpoint='growout_feed_page',
         delete_endpoint='delete_growout_feed_entry',
+        bulk_save_endpoint='save_all_growout_feed_entries',
     )
 
 
