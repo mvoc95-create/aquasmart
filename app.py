@@ -5547,6 +5547,36 @@ def feeding_interval_label(feedings_per_day: int) -> str:
     return f'{interval_hours:.1f}h'.replace('.', ',')
 
 
+def inclusive_day_count(start_date, end_date) -> int:
+    """Conta dias operacionais incluindo o dia de entrada/transferência."""
+    if not start_date or not end_date:
+        return 0
+    if isinstance(start_date, datetime):
+        start_date = start_date.date()
+    if isinstance(end_date, datetime):
+        end_date = end_date.date()
+    if start_date > end_date:
+        return 0
+    return max((end_date - start_date).days + 1, 1)
+
+
+def pluralize_day_pt(days: int) -> str:
+    days = int(days or 0)
+    return f"{days} dia" if days == 1 else f"{days} dias"
+
+
+def nursery_phase_start_date(lot, unit, allocation, transfer_marker, target_date):
+    """Data mais confiável para contar há quantos dias o lote está na fase atual.
+
+    A alocação ativa é a fonte principal porque é criada/atualizada na transferência
+    trifásica. A transferência fica como fallback para bancos antigos.
+    """
+    if allocation and getattr(allocation, 'start_date', None):
+        return allocation.start_date
+    if transfer_marker and getattr(transfer_marker, 'transfer_date', None):
+        return transfer_marker.transfer_date
+    return getattr(lot, 'start_date', None) or target_date
+
 
 def get_nursery_protocol_meta(protocol_key: str | None = None):
     key = (protocol_key or DEFAULT_NURSERY_PROTOCOL_KEY or 'sp1').lower()
@@ -6391,45 +6421,32 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     phase_name = phase_label(operational_phase)
     protocol_phase_name = phase_label(protocol_phase)
     interval_label = feeding_interval_label(feedings_per_day)
+
+    # Na Engorda, após a transferência, não entra manejo de água do protocolo
+    # (probiótico/AQUAPRO, LOTHAR, melaço etc.). A ração continua seguindo a
+    # tabela proporcionalmente, sem reiniciar o ciclo.
+    raw_water_items = row.get('water_items', [])
+    water_items = [] if operational_phase == 'engorda' else raw_water_items
+
+    days_at_farm = inclusive_day_count(lot.start_date, target_date)
+    phase_start_date = nursery_phase_start_date(lot, unit, allocation, transfer_marker, target_date)
+    days_in_phase = inclusive_day_count(phase_start_date, target_date)
+    phase_duration_label = {
+        'bercario': 'no berçário',
+        'juvenil': 'no juvenil',
+        'engorda': 'na engorda',
+    }.get(operational_phase, f"na fase {phase_name}")
+
     message_lines = [
         f"*{unit.name}* — Lote {lot.lot_code}",
         f"Data: {target_date.strftime('%d/%m/%Y')}",
-        f"Fase operacional: {phase_name}",
-        f"Linha aplicada da tabela: {stage_label} · Dia {cycle_day} do ciclo real",
-        f"Fase original da linha no protocolo: {protocol_phase_name}",
-        f"População estimada: {projected_population:,} PL".replace(',', '.'),
-        f"Protocolo: {protocol_meta.get('name', protocol_key.upper())}",
-    ]
-    if marker_label:
-        message_lines.append(f"Base ativa: {marker_label}; tabela continuada proporcionalmente a este marco")
-    else:
-        message_lines.append(f"Base: planilha {format_integer_pt(marker_population_reference)} PL, recalculada proporcionalmente ao lote")
-    if correction_events:
-        last_event = correction_events[-1]
-        last_score = last_event.get('score')
-        last_date = last_event.get('date')
-        last_date_label = last_date.strftime('%d/%m/%Y') if hasattr(last_date, 'strftime') else str(last_date or 'data não informada')
-        last_adjustment_label = last_event.get('adjustment_label') or last_event.get('factor_label') or 'sem ajuste'
-        message_lines.append(f"Correção acumulada ativa: {correction_label} sobre o protocolo base")
-        if last_score is not None:
-            try:
-                last_score_label = f"{float(last_score):.1f}".replace('.', ',')
-            except (TypeError, ValueError):
-                last_score_label = str(last_score)
-            message_lines.append(f"Último score usado: {last_score_label} em {last_date_label} ({last_adjustment_label})")
-        else:
-            message_lines.append(f"Último ajuste usado: {last_adjustment_label} em {last_date_label} (sem score informado)")
-    elif correction_factor != 1.0:
-        message_lines.append(f"Correção acumulada ativa: {correction_label} sobre o protocolo base")
-    message_lines.extend([
-        f"Total base: {base_total_day_g:,} g".replace(',', '.'),
-        f"Total corrigido do dia: {total_day_g:,} g".replace(',', '.'),
+        f"Tempo: {pluralize_day_pt(days_at_farm)} na fazenda · {pluralize_day_pt(days_in_phase)} {phase_duration_label}",
+        f"Total do dia: {total_day_g:,} g".replace(',', '.'),
         '',
         '*Mix do dia*',
-    ])
+    ]
     for item in mixes or [{'label': 'Sem mistura cadastrada', 'grams': 0}]:
         message_lines.append(f"- {item['label']}: {item['grams']:,} g".replace(',', '.'))
-    water_items = row.get('water_items', [])
     if water_items:
         message_lines.extend(['', '*Manejo da água / controles*'])
         for item in water_items:
@@ -6571,7 +6588,13 @@ def sync_nursery_feed_to_management(entry):
         sync_management_feed_movement(management, feed_product, offered_kg)
         created_records.append(management)
 
-    selected_water_items = nursery_entry_water_items(entry)
+    # Defesa adicional: mesmo que exista lançamento antigo com água marcada,
+    # ao ressincronizar uma alimentação de Engorda o sistema não deve baixar
+    # probiótico/AQUAPRO, LOTHAR nem melaço no Manejo Diário.
+    if feeding_entry_operational_phase(entry) == 'engorda':
+        selected_water_items = []
+    else:
+        selected_water_items = nursery_entry_water_items(entry)
     supply_entries = nursery_water_supply_entries(selected_water_items)
     if supply_entries:
         supply_management = DailyManagement(
@@ -12805,9 +12828,14 @@ def handle_save_all_stage_feed(phase, endpoint_name, success_label):
         if result['skipped']:
             details.append(f"{result['skipped']} ignorado(s)")
         details_label = ', '.join(details) if details else 'sem alterações'
+        extra_message = (
+            'Na engorda, probiótico, LOTHAR e melaço não são lançados na água.'
+            if normalize_phase_value(phase) == 'engorda'
+            else 'A lógica de mix, tratos, probiótico, LOTHAR e demais aditivos foi mantida.'
+        )
         flash(
             f'Todas as rações do dia do {success_label} foram salvas no Manejo Diário: {details_label}. '
-            'A lógica de mix, tratos, probiótico, LOTHAR e demais aditivos foi mantida.',
+            f'{extra_message}',
             'success',
         )
     db.session.commit()
@@ -13061,7 +13089,7 @@ def growout_feed_page():
         db.session.flush()
         sync_nursery_feed_to_management(entry)
         db.session.commit()
-        flash('Alimentação de engorda salva e integrada ao manejo diário. Os aditivos marcados também deram baixa no estoque.', 'success')
+        flash('Alimentação de engorda salva e integrada ao manejo diário. Na engorda, probiótico, LOTHAR e melaço não são lançados na água.', 'success')
         return redirect(url_for('growout_feed_page', feed_date=entry.feed_date.isoformat()))
 
     recent_entries = (
