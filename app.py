@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from collections import defaultdict, OrderedDict
 from functools import wraps
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for, has_app_context
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -496,6 +496,49 @@ class SupplyProduct(db.Model):
         if self.measure_unit:
             details.append(f'unidade {self.measure_unit}')
         return ' · '.join(details)
+
+
+class FeedingProtocolRow(db.Model):
+    """Linha editável da tabela base de alimentação.
+
+    A tabela padrão continua vindo do PDF enviado, mas é materializada no banco para
+    que o operador possa alterar taxa, peso e mix sem mexer no código.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    protocol_key = db.Column(db.String(40), nullable=False, default='full_cycle')
+    phase = db.Column(db.String(30), nullable=False, index=True)  # bercario / juvenil / engorda
+    phase_day = db.Column(db.Integer, nullable=False, index=True)
+    cycle_day = db.Column(db.Integer)
+    stage_label = db.Column(db.String(50))
+    population = db.Column(db.Integer, nullable=False, default=0)
+    survival_pct = db.Column(db.Float, nullable=False, default=100)
+    individual_weight_g = db.Column(db.Float, nullable=False, default=0)
+    biomass_kg = db.Column(db.Float, nullable=False, default=0)
+    feed_rate_pct = db.Column(db.Float, nullable=False, default=0)
+    total_day_g = db.Column(db.Integer, nullable=False, default=0)
+    feedings_per_day = db.Column(db.Integer, nullable=False, default=8)
+    water_items_json = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    notes = db.Column(db.Text)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    feeds = db.relationship('FeedingProtocolFeed', backref='row', cascade='all, delete-orphan', lazy=True)
+
+
+class FeedingProtocolFeed(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    row_id = db.Column(db.Integer, db.ForeignKey('feeding_protocol_row.id'), nullable=False, index=True)
+    protocol_label = db.Column(db.String(160), nullable=False, index=True)
+    grams = db.Column(db.Integer, nullable=False, default=0)
+    sort_order = db.Column(db.Integer, nullable=False, default=0)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class FeedingProtocolFeedMap(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    protocol_label = db.Column(db.String(160), unique=True, nullable=False, index=True)
+    feed_product_id = db.Column(db.Integer, db.ForeignKey('feed_product.id'))
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    feed_product = db.relationship('FeedProduct')
 
 
 class SupplyInventory(db.Model):
@@ -3474,6 +3517,13 @@ NURSERY_FEED_STOCK_ALIASES = {
     'juvenil 40 sm starter 400': ['JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02', 'AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2'],
     'juvenil 40 sm starter 400 e 02': ['JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02', 'AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2'],
     'juvenil 40 02': ['JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - #02', 'JUVENIL 40 - SM starter 400', 'AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2', 'SAMARIA 40 #2'],
+    'aquavita juv 38': ['AQUAVITA 38', 'AQUAVITA JUV. 38', 'AQUAVITA JUV 38', 'AquaVita JUV. 38 (1,5mm)', 'AQUAVITA 38 JUNIOR'],
+    'aquavita 38': ['AQUAVITA 38', 'AQUAVITA JUV. 38', 'AQUAVITA JUV 38', 'AquaVita JUV. 38 (1,5mm)', 'AQUAVITA 38 JUNIOR'],
+    'aquavita juv 38 1 5mm': ['AQUAVITA 38', 'AQUAVITA JUV. 38', 'AQUAVITA JUV 38', 'AQUAVITA 38 JUNIOR'],
+    'aquavita 35': ['AQUAVITA 35', 'AQUAVITA B SAL 35', 'AQUAVITA PREMIUM B. SAL. 35', 'AquaVita 35 (2mm)'],
+    'aquavita 35 2mm': ['AQUAVITA 35', 'AQUAVITA B SAL 35', 'AQUAVITA PREMIUM B. SAL. 35'],
+    'irca carcimax 30': ['IRCA CarciMax 30', 'CARCIMAX 30', 'IRCA CarciMax 30 2,4mm'],
+    'irca carcimax 30 2 4mm': ['IRCA CarciMax 30', 'CARCIMAX 30'],
 }
 
 NURSERY_WATER_SUPPLY_ALIASES = {
@@ -5190,10 +5240,12 @@ PRODUCTION_PROTOCOL_ROWS = [{'phase': 'juvenil',
 
 # Novo protocolo único do ciclo completo, importado do PDF "PROTOCOLOS Alimentacao".
 # A tabela cobre Berçário, Juvenil/Pré-cria e Engorda, mas a mudança de fase na fazenda
-# NÃO reinicia a tabela. O que manda é o dia/idade real do ciclo: se transferir com PL20,
-# a aba Juvenil/Engorda continua calculando a linha PL20/PL21/... proporcionalmente à
-# nova contabilidade de PLs da transferência. A fase operacional serve para filtrar a aba
-# e definir a frequência: berçário 12x, juvenil 8x, engorda 6x.
+# NÃO deve escolher a linha da ração pelo dia da fase. A linha de ração é associada
+# pela idade/estágio do PL (PL11, PL12, J43, E67...). Assim, quando a transferência
+# real acontece antes ou depois da tabela-modelo, o mix continua seguindo o tamanho
+# real do camarão e não confunde 40/2 com rações de camarões maiores. A fase
+# operacional segue sendo usada para frequência e para resolver estágios repetidos
+# no protocolo (ex.: J43 versus PL43, E67 versus J67).
 # Atualização solicitada: foram usados apenas os campos de alimentação da tabela
 # (taxa de alimentação, total do dia e mix de ração). A lógica de horários, número
 # de tratos, probióticos, LOTHAR e demais manejos/controles não foi alterada.
@@ -5517,6 +5569,181 @@ PRODUCTION_PROTOCOL_ROWS = [
 NURSERY_FEED_TIMES = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00', '00:00', '02:00', '04:00', '06:00']
 
 
+
+def default_feeding_protocol_rows_for_seed():
+    """Retorna a tabela padrão do PDF em formato pronto para gravar/editar."""
+    rows = []
+    for row in FULL_CYCLE_PROTOCOL_ROWS:
+        rows.append({
+            'phase': normalize_phase_value(row.get('phase')) or 'bercario',
+            'phase_day': int(row.get('phase_day') or row.get('day') or 1),
+            'cycle_day': int(row.get('cycle_day') or row.get('day') or 1),
+            'stage_label': row.get('stage_label') or row.get('stage') or '',
+            'population': int(row.get('population') or 0),
+            'survival_pct': float(row.get('survival_pct') or 0),
+            'individual_weight_g': float(row.get('individual_weight_g') or row.get('weight_g') or 0),
+            'biomass_kg': float(row.get('biomass_kg') or 0),
+            'feed_rate_pct': float(row.get('feed_rate_pct') or 0),
+            'total_day_g': int(round(row.get('total_day_g') or 0)),
+            'feedings_per_day': int(row.get('feedings_per_day') or feedings_per_day_for_phase(row.get('phase'))),
+            'mixes': [{'label': item.get('label'), 'grams': int(round(item.get('grams') or 0))} for item in row.get('mixes', []) if int(round(item.get('grams') or 0)) > 0],
+            'water_items': row.get('water_items', []),
+        })
+    return rows
+
+
+def protocol_feed_label_key(label: str) -> str:
+    return normalize_text(label or '')
+
+
+def ensure_feeding_protocol_seeded(force: bool = False):
+    """Materializa a tabela padrão do PDF no banco.
+
+    Se já existir tabela editada pelo usuário, não sobrescreve. O parâmetro force é
+    usado apenas pelo botão "restaurar padrão" da tela de cadastro.
+    """
+    if not has_app_context():
+        return
+    try:
+        existing_count = FeedingProtocolRow.query.count()
+    except Exception:
+        return
+
+    if existing_count and not force:
+        return
+
+    if force:
+        FeedingProtocolFeed.query.delete()
+        FeedingProtocolRow.query.delete()
+        db.session.flush()
+
+    label_order = OrderedDict()
+    for row_data in default_feeding_protocol_rows_for_seed():
+        row = FeedingProtocolRow(
+            protocol_key='full_cycle',
+            phase=row_data['phase'],
+            phase_day=row_data['phase_day'],
+            cycle_day=row_data['cycle_day'],
+            stage_label=row_data['stage_label'],
+            population=row_data['population'],
+            survival_pct=row_data['survival_pct'],
+            individual_weight_g=row_data['individual_weight_g'],
+            biomass_kg=row_data['biomass_kg'],
+            feed_rate_pct=row_data['feed_rate_pct'],
+            total_day_g=row_data['total_day_g'],
+            feedings_per_day=row_data['feedings_per_day'],
+            water_items_json=json.dumps(row_data.get('water_items') or [], ensure_ascii=False),
+            active=True,
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add(row)
+        db.session.flush()
+        for item in row_data.get('mixes', []):
+            label = (item.get('label') or '').strip()
+            grams = int(round(item.get('grams') or 0))
+            if not label or grams <= 0:
+                continue
+            if label not in label_order:
+                label_order[label] = len(label_order)
+            db.session.add(FeedingProtocolFeed(
+                row_id=row.id,
+                protocol_label=label,
+                grams=grams,
+                sort_order=label_order[label],
+                updated_at=datetime.utcnow(),
+            ))
+            if not FeedingProtocolFeedMap.query.filter_by(protocol_label=label).first():
+                db.session.add(FeedingProtocolFeedMap(protocol_label=label, updated_at=datetime.utcnow()))
+    db.session.commit()
+
+
+def feeding_protocol_row_to_dict(row: FeedingProtocolRow) -> dict:
+    stage_number = _stage_number_from_label(row.stage_label, row.cycle_day or row.phase_day or 1)
+    mixes = []
+    for feed in sorted(row.feeds or [], key=lambda item: (item.sort_order or 0, item.protocol_label or '')):
+        grams = int(round(feed.grams or 0))
+        if grams > 0:
+            mixes.append({'label': feed.protocol_label, 'grams': grams})
+    water_items = []
+    if row.water_items_json:
+        try:
+            water_items = json.loads(row.water_items_json) or []
+        except Exception:
+            water_items = []
+    total_day_g = int(round(row.total_day_g or 0))
+    feedings_per_day = int(row.feedings_per_day or feedings_per_day_for_phase(row.phase))
+    return {
+        'phase': normalize_phase_value(row.phase) or 'bercario',
+        'phase_day': int(row.phase_day or 1),
+        'cycle_day': int(row.cycle_day or row.phase_day or 1),
+        'day': int(row.cycle_day or row.phase_day or 1),
+        'stage_label': row.stage_label or f"Dia {row.phase_day or 1}",
+        'stage_number': stage_number,
+        'pl_stage': stage_number,
+        'population': int(row.population or 0),
+        'base_population': FULL_CYCLE_PROTOCOL_BASE_POPULATION,
+        'survival_pct': float(row.survival_pct or 0),
+        'individual_weight_g': float(row.individual_weight_g or 0),
+        'weight_g': float(row.individual_weight_g or 0),
+        'biomass_kg': float(row.biomass_kg or 0),
+        'feed_rate_pct': float(row.feed_rate_pct or 0),
+        'total_day_g': total_day_g,
+        'daily_feed_kg': round(total_day_g / 1000.0, 3),
+        'feedings_per_day': feedings_per_day,
+        'per_feeding_g': round(total_day_g / feedings_per_day, 2) if feedings_per_day else total_day_g,
+        'mixes': mixes,
+        'water_items': water_items,
+    }
+
+
+def editable_feeding_protocol_rows():
+    """Carrega a tabela editável. Fallback seguro para a tabela hard-coded."""
+    if not has_app_context():
+        return []
+    try:
+        ensure_feeding_protocol_seeded()
+        rows = (
+            FeedingProtocolRow.query.options(joinedload(FeedingProtocolRow.feeds))
+            .filter_by(active=True)
+            .order_by(
+                case((FeedingProtocolRow.phase == 'bercario', 1), (FeedingProtocolRow.phase == 'juvenil', 2), (FeedingProtocolRow.phase == 'engorda', 3), else_=4),
+                FeedingProtocolRow.phase_day.asc(),
+                FeedingProtocolRow.id.asc(),
+            )
+            .all()
+        )
+        return [feeding_protocol_row_to_dict(row) for row in rows]
+    except Exception:
+        return []
+
+
+def get_protocol_feed_labels(rows=None):
+    rows = rows or editable_feeding_protocol_rows() or FULL_CYCLE_PROTOCOL_ROWS
+    labels = OrderedDict()
+    for row in rows:
+        for item in row.get('mixes', []):
+            label = (item.get('label') or '').strip()
+            if label and label not in labels:
+                labels[label] = len(labels)
+    return list(labels.keys())
+
+
+def get_protocol_feed_map(label: str):
+    label = (label or '').strip()
+    if not label or not has_app_context():
+        return None
+    try:
+        mapping = FeedingProtocolFeedMap.query.filter_by(protocol_label=label).first()
+        if mapping and mapping.feed_product_id:
+            return db.session.get(FeedProduct, mapping.feed_product_id)
+    except Exception:
+        return None
+    return None
+
+
+def phase_day_from_dates(start_date, target_date):
+    return max(inclusive_day_count(start_date, target_date), 1)
+
 def feedings_per_day_for_phase(phase: str | None, fallback=None) -> int:
     phase = normalize_phase_value(phase)
     if phase in FULL_CYCLE_FEEDING_FREQUENCIES:
@@ -5584,10 +5811,18 @@ def get_nursery_protocol_meta(protocol_key: str | None = None):
 
 
 def get_nursery_protocol_rows(protocol_key: str | None = None):
+    editable_rows = editable_feeding_protocol_rows()
+    if editable_rows:
+        return editable_rows
     return get_nursery_protocol_meta(protocol_key).get('rows', [])
 
 
 def get_nursery_protocol_base_population(protocol_key: str | None = None):
+    editable_rows = editable_feeding_protocol_rows()
+    if editable_rows:
+        first_population = editable_rows[0].get('population')
+        if first_population:
+            return first_population
     return get_nursery_protocol_meta(protocol_key).get('base_population') or NURSERY_PROTOCOL_BASE_POPULATION
 
 
@@ -5597,17 +5832,54 @@ def nursery_protocol_key_for_unit(unit) -> str:
     return DEFAULT_NURSERY_PROTOCOL_KEY
 
 
+def row_stage_number(row):
+    return int(row.get('stage_number') or row.get('pl_stage') or _stage_number_from_label(row.get('stage_label'), row.get('cycle_day') or row.get('day') or 1) or 1)
+
+
 def get_nursery_protocol_row(pl_stage: int | None, protocol_key: str | None = None):
-    if pl_stage is None:
+    return get_nursery_protocol_row_by_pl_age(pl_stage, protocol_key=protocol_key)
+
+
+def get_nursery_protocol_row_by_pl_age(pl_age: int | None, operational_phase: str | None = None, protocol_key: str | None = None):
+    """Escolhe a linha pela idade/estágio do PL, não pelo dia dentro da fase.
+
+    Quando há estágios repetidos em mais de uma fase (ex.: PL43/J43 ou J67/E67),
+    a fase operacional resolve a prioridade. Se a fase não tiver aquela idade,
+    o sistema cai para a linha exata de outra fase para manter o protocolo
+    contínuo em transferências antecipadas ou tardias.
+    """
+    if pl_age is None:
         return None
+    try:
+        pl_age = int(round(float(pl_age)))
+    except (TypeError, ValueError):
+        return None
+
     rows = get_nursery_protocol_rows(protocol_key)
     if not rows:
         return None
-    if pl_stage <= rows[0]['pl_stage']:
-        return rows[0]
-    if pl_stage >= rows[-1]['pl_stage']:
-        return rows[-1]
-    return next((row for row in rows if row['pl_stage'] == pl_stage), None)
+
+    phase = normalize_phase_value(operational_phase)
+    phase_rank = {'bercario': 1, 'juvenil': 2, 'engorda': 3}
+    ordered_rows = sorted(rows, key=lambda row: (row_stage_number(row), phase_rank.get(normalize_phase_value(row.get('phase')) or '', 9), row.get('phase_day') or 1))
+
+    exact_rows = [row for row in ordered_rows if row_stage_number(row) == pl_age]
+    if exact_rows:
+        if phase:
+            exact_phase = [row for row in exact_rows if normalize_phase_value(row.get('phase')) == phase]
+            if exact_phase:
+                return exact_phase[0]
+        return exact_rows[0]
+
+    phase_rows = [row for row in ordered_rows if normalize_phase_value(row.get('phase')) == phase] if phase else []
+    nearest_pool = phase_rows or ordered_rows
+    if not nearest_pool:
+        return None
+    if pl_age <= row_stage_number(nearest_pool[0]):
+        return nearest_pool[0]
+    if pl_age >= row_stage_number(nearest_pool[-1]):
+        return nearest_pool[-1]
+    return min(nearest_pool, key=lambda row: abs(row_stage_number(row) - pl_age))
 
 
 def get_nursery_protocol_row_by_cycle_day(cycle_day: int | None, protocol_key: str | None = None):
@@ -5624,6 +5896,28 @@ def get_nursery_protocol_row_by_cycle_day(cycle_day: int | None, protocol_key: s
     return min(ordered_rows, key=lambda row: abs((row.get('cycle_day') or row.get('day') or 1) - cycle_day))
 
 
+
+
+def get_nursery_protocol_row_by_phase_day(phase: str | None, phase_day: int | None, protocol_key: str | None = None):
+    phase = normalize_phase_value(phase) or 'bercario'
+    rows = [row for row in get_nursery_protocol_rows(protocol_key) if normalize_phase_value(row.get('phase')) == phase]
+    if not rows:
+        return None
+    ordered_rows = sorted(rows, key=lambda row: row.get('phase_day') or row.get('day') or 1)
+    phase_day = int(phase_day or 1)
+    first_day = ordered_rows[0].get('phase_day') or ordered_rows[0].get('day') or 1
+    last_day = ordered_rows[-1].get('phase_day') or ordered_rows[-1].get('day') or first_day
+    if phase_day <= first_day:
+        return ordered_rows[0]
+    if phase_day >= last_day:
+        return ordered_rows[-1]
+    exact = next((row for row in ordered_rows if int(row.get('phase_day') or row.get('day') or 1) == phase_day), None)
+    return exact or min(ordered_rows, key=lambda row: abs((row.get('phase_day') or row.get('day') or 1) - phase_day))
+
+
+def get_first_nursery_protocol_row_for_phase(phase: str | None, protocol_key: str | None = None):
+    return get_nursery_protocol_row_by_phase_day(phase, 1, protocol_key=protocol_key)
+
 def nursery_cycle_day_for_lot(lot, target_date: date | None, protocol_key: str | None = None) -> int:
     target_date = target_date or local_today()
     rows = get_nursery_protocol_rows(protocol_key)
@@ -5638,6 +5932,32 @@ def nursery_cycle_day_for_lot(lot, target_date: date | None, protocol_key: str |
     cycle_day = first_cycle_day + stage_offset + days_since_start
     last_cycle_day = ordered_rows[-1].get('cycle_day') or ordered_rows[-1].get('day') or cycle_day
     return max(first_cycle_day, min(int(cycle_day), int(last_cycle_day)))
+
+
+def nursery_pl_age_for_lot(lot, target_date: date | None, protocol_key: str | None = None) -> int:
+    """Idade operacional do PL para escolher a linha da tabela de alimentação.
+
+    Diferente do dia da fase: se o lote mudou de berçário para juvenil ou engorda,
+    a idade continua avançando a partir da entrada real do lote. Isso evita que
+    a tela de uma fase use o mix errado apenas porque a transferência ocorreu em
+    data diferente da tabela-modelo.
+    """
+    target_date = target_date or local_today()
+    rows = get_nursery_protocol_rows(protocol_key)
+    if not lot or not getattr(lot, 'start_date', None) or not rows:
+        return row_stage_number(rows[0]) if rows else 1
+    ordered_rows = sorted(rows, key=lambda row: row_stage_number(row))
+    first_stage = row_stage_number(ordered_rows[0]) or 11
+    entry_stage = getattr(lot, 'entry_pl_stage', None) or first_stage
+    try:
+        entry_stage = int(entry_stage)
+    except (TypeError, ValueError):
+        entry_stage = int(first_stage)
+    days_since_start = max((target_date - lot.start_date).days, 0)
+    pl_age = entry_stage + days_since_start
+    min_stage = row_stage_number(ordered_rows[0])
+    max_stage = row_stage_number(ordered_rows[-1])
+    return max(min_stage, min(int(pl_age), max_stage))
 
 
 
@@ -6201,6 +6521,10 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
     if not normalized_label:
         return None
 
+    mapped_product = get_protocol_feed_map(label)
+    if mapped_product and (exclude_product_id is None or mapped_product.id != exclude_product_id):
+        return mapped_product
+
     protocol_label = normalized_label in nursery_protocol_product_names() or normalized_label.startswith('mem ')
     products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
 
@@ -6274,6 +6598,9 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
 
 def resolve_nursery_mix_label(label: str) -> str:
     label = (label or 'Ração berçário').strip()
+    mapped_product = get_protocol_feed_map(label)
+    if mapped_product:
+        return mapped_product.full_name
     product = find_or_create_nursery_feed_product(label, create_missing=False)
     if product and not is_auto_nursery_protocol_product(product):
         return product.full_name
@@ -6321,61 +6648,76 @@ def scale_nursery_mixes(mixes, quantity_kg):
 
 def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, cumulative_factor=1.0, correction_events=None):
     target_date = target_date or local_today()
-    if not lot or not unit or not lot.start_date or lot.entry_pl_stage is None:
+    if not lot or not unit or not lot.start_date:
         return None
 
     protocol_key = nursery_protocol_key_for_unit(unit)
     protocol_meta = get_nursery_protocol_meta(protocol_key)
-    protocol_rows = protocol_meta.get('rows', [])
+    protocol_rows = get_nursery_protocol_rows(protocol_key)
     if not protocol_rows:
         return None
 
-    days_since_start = max((target_date - lot.start_date).days, 0)
-    cycle_day = nursery_cycle_day_for_lot(lot, target_date, protocol_key=protocol_key)
-    row = get_nursery_protocol_row_by_cycle_day(cycle_day, protocol_key=protocol_key)
-    if not row:
-        return None
-
     allocation = find_active_allocation(lot.id, unit.id, target_date) if lot.id and unit.id else None
-    operational_phase = allocation_operational_phase(allocation) or normalize_phase_value(getattr(unit, 'phase', None)) or normalize_phase_value(row.get('phase')) or 'bercario'
-    protocol_phase = normalize_phase_value(row.get('phase')) or operational_phase
-    feedings_per_day = feedings_per_day_for_phase(operational_phase, fallback=row.get('feedings_per_day'))
-    stage_label = row.get('stage_label') or (f"PL{row.get('pl_stage')}" if row.get('pl_stage') else f"Dia {cycle_day}")
+    operational_phase = allocation_operational_phase(allocation) or normalize_phase_value(getattr(unit, 'phase', None)) or normalize_phase_value(getattr(lot, 'phase', None)) or 'bercario'
 
     transfer_marker = Transfer.query.filter(
         Transfer.source_lot_id == lot.id,
         Transfer.destination_unit_id == unit.id,
         Transfer.transfer_date <= target_date,
     ).order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).first()
+
+    # A fase real vem da alocação/transferência, mas a linha da ração é escolhida
+    # pela idade do PL/estágio do protocolo. Isso impede que o mix seja definido
+    # apenas pelo dia dentro da fase e confunda 40/2 com rações de camarão maior.
+    phase_start_date = nursery_phase_start_date(lot, unit, allocation, transfer_marker, target_date)
+    phase_day = phase_day_from_dates(phase_start_date, target_date)
+    pl_age_today = nursery_pl_age_for_lot(lot, target_date, protocol_key=protocol_key)
+    row = get_nursery_protocol_row_by_pl_age(pl_age_today, operational_phase, protocol_key=protocol_key)
+    if not row:
+        cycle_day_fallback = nursery_cycle_day_for_lot(lot, target_date, protocol_key=protocol_key)
+        row = get_nursery_protocol_row_by_cycle_day(cycle_day_fallback, protocol_key=protocol_key)
+    if not row:
+        row = get_nursery_protocol_row_by_phase_day(operational_phase, phase_day, protocol_key=protocol_key)
+    if not row:
+        return None
+
+    cycle_day = int(row.get('cycle_day') or row.get('day') or phase_day)
+    protocol_phase = normalize_phase_value(row.get('phase')) or operational_phase
+    feedings_per_day = feedings_per_day_for_phase(operational_phase, fallback=row.get('feedings_per_day'))
+    stage_label = row.get('stage_label') or (f"PL{row.get('pl_stage')}" if row.get('pl_stage') else f"Dia {phase_day}")
+
     marker_population_reference = None
     marker_label = None
     factor = None
 
     if allocation and allocation.quantity_allocated:
         marker_date = allocation.start_date if allocation.start_date and allocation.start_date <= target_date else target_date
-        marker_cycle_day = nursery_cycle_day_for_lot(lot, marker_date, protocol_key=protocol_key)
-        marker_row = get_nursery_protocol_row_by_cycle_day(marker_cycle_day, protocol_key=protocol_key) or row
+        marker_pl_age = nursery_pl_age_for_lot(lot, marker_date, protocol_key=protocol_key)
+        marker_row = get_nursery_protocol_row_by_pl_age(marker_pl_age, operational_phase, protocol_key=protocol_key) or row
         marker_population_reference = marker_row.get('population') or get_nursery_protocol_base_population(protocol_key) or 1
         factor = (allocation.quantity_allocated or 0) / float(marker_population_reference or 1)
-        marker_stage_label = marker_row.get('stage_label') or f"dia {marker_cycle_day}"
+        marker_stage_label = marker_row.get('stage_label') or f"dia 1 da fase {phase_label(operational_phase)}"
         marker_label = (
             f"alocação ativa em {unit.name}: "
             f"{format_integer_pt(allocation.quantity_allocated or 0)} PL desde {marker_date.strftime('%d/%m/%Y')} "
-            f"na idade {marker_stage_label}, sem reiniciar a tabela"
+            f"na fase {phase_label(operational_phase)}, idade PL{marker_pl_age}, linha-base {marker_stage_label}"
         )
     elif transfer_marker and transfer_marker.transferred_qty:
         marker_date = transfer_marker.transfer_date or target_date
-        marker_cycle_day = nursery_cycle_day_for_lot(lot, marker_date, protocol_key=protocol_key)
-        marker_row = get_nursery_protocol_row_by_cycle_day(marker_cycle_day, protocol_key=protocol_key) or row
+        marker_pl_age = nursery_pl_age_for_lot(lot, marker_date, protocol_key=protocol_key)
+        marker_row = get_nursery_protocol_row_by_pl_age(marker_pl_age, operational_phase, protocol_key=protocol_key) or row
         marker_population_reference = marker_row.get('population') or get_nursery_protocol_base_population(protocol_key) or 1
         factor = (transfer_marker.transferred_qty or 0) / float(marker_population_reference or 1)
-        marker_stage_label = marker_row.get('stage_label') or f"dia {marker_cycle_day}"
+        marker_stage_label = marker_row.get('stage_label') or f"dia 1 da fase {phase_label(operational_phase)}"
         marker_label = (
             f"transferência real #{transfer_marker.id}: "
-            f"{format_integer_pt(transfer_marker.transferred_qty or 0)} PL na idade {marker_stage_label}, sem reiniciar a tabela"
+            f"{format_integer_pt(transfer_marker.transferred_qty or 0)} PL para {phase_label(operational_phase)}, "
+            f"idade PL{marker_pl_age}, linha-base {marker_stage_label}"
         )
     else:
-        marker_population_reference = protocol_rows[0].get('population') or get_nursery_protocol_base_population(protocol_key) or 1
+        marker_pl_age = nursery_pl_age_for_lot(lot, target_date, protocol_key=protocol_key)
+        marker_row = get_nursery_protocol_row_by_pl_age(marker_pl_age, operational_phase, protocol_key=protocol_key) or row or protocol_rows[0]
+        marker_population_reference = marker_row.get('population') or get_nursery_protocol_base_population(protocol_key) or 1
         factor = (lot.initial_count or 0) / float(marker_population_reference or 1)
 
     def scaled(value):
@@ -6391,14 +6733,6 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         row_population = (get_nursery_protocol_base_population(protocol_key) or 0) * (row['survival_pct'] / 100.0)
     projected_population = int(round((row_population or 0) * factor))
     biomass_kg = round((projected_population * row['individual_weight_g']) / 1000.0, 2)
-    if (
-        transfer_marker
-        and transfer_marker.transfer_date == target_date
-        and transfer_marker.transferred_qty
-        and transfer_marker.avg_weight_g
-    ):
-        biomass_kg = round(((transfer_marker.transferred_qty or 0) * (transfer_marker.avg_weight_g or 0)) / 1000.0, 2)
-
     base_mixes = [
         {'label': resolve_nursery_mix_label(item.get('label', 'Ração protocolo')), 'grams': scaled(item.get('grams', 0))}
         for item in row.get('mixes', [])
@@ -6463,9 +6797,11 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         'unit': unit,
         'lot': lot,
         'target_date': target_date,
-        'day_index': cycle_day,
+        'day_index': phase_day,
+        'phase_day': phase_day,
         'cycle_day': cycle_day,
-        'stage_today': row.get('stage_number') or row.get('pl_stage') or cycle_day,
+        'pl_age_today': pl_age_today,
+        'stage_today': row.get('stage_number') or row.get('pl_stage') or pl_age_today or cycle_day,
         'stage_label': stage_label,
         'operational_phase': operational_phase,
         'operational_phase_label': phase_name,
@@ -6827,7 +7163,7 @@ def run_lightweight_migrations():
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
 
-    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, SupplyProduct, SupplyInventory, ManagementSupplyUsage, LotUnitAllocation, FixedCost, NurseryFeeding, OperationalTask):
+    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, SupplyProduct, SupplyInventory, ManagementSupplyUsage, LotUnitAllocation, FixedCost, NurseryFeeding, OperationalTask, FeedingProtocolRow, FeedingProtocolFeed, FeedingProtocolFeedMap):
         table_name = model.__table__.name
         if table_name not in tables:
             model.__table__.create(bind=db.engine)
@@ -6997,6 +7333,7 @@ def init_db():
         seed_units()
         seed_admin_user()
         get_water_reference_config()
+        ensure_feeding_protocol_seeded()
         ensure_alert_rules()
 
 
@@ -10145,6 +10482,16 @@ def format_integer_pt(value):
     return f'{number:,}'.replace(',', '.')
 
 
+def spreadsheet_column_label(index: int) -> str:
+    """Converte 1 -> A, 27 -> AA para o cabeçalho visual tipo Excel."""
+    index = int(index or 0)
+    label = ''
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        label = chr(65 + remainder) + label
+    return label or 'A'
+
+
 def feed_label_for_task(task):
     if task.ration_label:
         return task.ration_label
@@ -11980,6 +12327,133 @@ def charts_page():
         chart_style=chart_style,
     )
 
+
+
+@app.route('/feeding-protocol', methods=['GET', 'POST'])
+@login_required
+@requires_permission('protocols_manage')
+def feeding_protocol_page():
+    ensure_feeding_protocol_seeded()
+
+    if request.method == 'POST':
+        action = (request.form.get('action') or 'save').strip()
+        if action == 'reset_default':
+            ensure_feeding_protocol_seeded(force=True)
+            flash('Tabela base restaurada para o padrão do PDF.', 'success')
+            return redirect(url_for('feeding_protocol_page'))
+
+        feed_labels = []
+        try:
+            feed_labels = json.loads(request.form.get('feed_labels_json') or '[]') or []
+        except Exception:
+            feed_labels = []
+        if not feed_labels:
+            feed_labels = get_protocol_feed_labels()
+
+        recalc_totals = request.form.get('recalc_totals') == 'on'
+        now = datetime.utcnow()
+
+        # Mapeamento global: cada ração/coluna da tabela pode apontar para uma ração real do estoque.
+        for idx, label in enumerate(feed_labels):
+            label = (label or '').strip()
+            if not label:
+                continue
+            mapping = FeedingProtocolFeedMap.query.filter_by(protocol_label=label).first()
+            if not mapping:
+                mapping = FeedingProtocolFeedMap(protocol_label=label)
+                db.session.add(mapping)
+            product_id = parse_int(request.form.get(f'map_{idx}'))
+            mapping.feed_product_id = product_id if product_id else None
+            mapping.updated_at = now
+
+        rows = FeedingProtocolRow.query.options(joinedload(FeedingProtocolRow.feeds)).order_by(FeedingProtocolRow.id.asc()).all()
+        for row in rows:
+            prefix = f'row_{row.id}_'
+            phase = normalize_phase_value(request.form.get(prefix + 'phase')) or row.phase
+            phase_day = parse_int(request.form.get(prefix + 'phase_day'), row.phase_day) or row.phase_day or 1
+            cycle_day = parse_int(request.form.get(prefix + 'cycle_day'), row.cycle_day) or row.cycle_day or phase_day
+            population = parse_int(request.form.get(prefix + 'population'), row.population) or 0
+            survival_pct = parse_float(request.form.get(prefix + 'survival_pct'), row.survival_pct) or 0
+            individual_weight_g = parse_float(request.form.get(prefix + 'individual_weight_g'), row.individual_weight_g) or 0
+            feed_rate_pct = parse_float(request.form.get(prefix + 'feed_rate_pct'), row.feed_rate_pct) or 0
+            feedings_per_day = parse_int(request.form.get(prefix + 'feedings_per_day'), row.feedings_per_day) or feedings_per_day_for_phase(phase)
+            biomass_kg = round((population * individual_weight_g) / 1000.0, 3) if population and individual_weight_g else 0
+            row_dirty = request.form.get(prefix + 'dirty') == '1'
+            if recalc_totals and row_dirty:
+                total_day_g = int(round(biomass_kg * (feed_rate_pct / 100.0) * 1000))
+            else:
+                total_day_g = parse_int(request.form.get(prefix + 'total_day_g'), row.total_day_g) or 0
+
+            row.phase = phase
+            row.phase_day = phase_day
+            row.cycle_day = cycle_day
+            row.stage_label = (request.form.get(prefix + 'stage_label') or '').strip() or row.stage_label
+            row.population = population
+            row.survival_pct = survival_pct
+            row.individual_weight_g = individual_weight_g
+            row.biomass_kg = biomass_kg
+            row.feed_rate_pct = feed_rate_pct
+            row.total_day_g = total_day_g
+            row.feedings_per_day = feedings_per_day
+            row.active = request.form.get(prefix + 'active') == 'on'
+            row.updated_at = now
+
+            feeds_by_label = {feed.protocol_label: feed for feed in row.feeds}
+            for idx, label in enumerate(feed_labels):
+                label = (label or '').strip()
+                if not label:
+                    continue
+                grams = parse_int(request.form.get(f'mix_{row.id}_{idx}'), 0) or 0
+                feed = feeds_by_label.get(label)
+                if grams > 0:
+                    if not feed:
+                        feed = FeedingProtocolFeed(row_id=row.id, protocol_label=label, sort_order=idx)
+                        db.session.add(feed)
+                    feed.grams = grams
+                    feed.sort_order = idx
+                    feed.updated_at = now
+                elif feed:
+                    db.session.delete(feed)
+
+        db.session.commit()
+        flash('Tabela base de alimentação salva. Berçário, juvenil e engorda passam a usar estes valores.', 'success')
+        return redirect(url_for('feeding_protocol_page'))
+
+    rows = (
+        FeedingProtocolRow.query.options(joinedload(FeedingProtocolRow.feeds))
+        .order_by(
+            case((FeedingProtocolRow.phase == 'bercario', 1), (FeedingProtocolRow.phase == 'juvenil', 2), (FeedingProtocolRow.phase == 'engorda', 3), else_=4),
+            FeedingProtocolRow.phase_day.asc(),
+            FeedingProtocolRow.id.asc(),
+        )
+        .all()
+    )
+    row_dicts = [feeding_protocol_row_to_dict(row) | {'id': row.id, 'active': row.active} for row in rows]
+    for row in row_dicts:
+        row['mix_by_label'] = {item.get('label'): item.get('grams') for item in row.get('mixes', [])}
+    feed_labels = get_protocol_feed_labels(row_dicts)
+    # Garante que labels mapeadas continuem aparecendo como coluna mesmo que todas as células estejam zeradas.
+    for mapping in FeedingProtocolFeedMap.query.order_by(FeedingProtocolFeedMap.protocol_label.asc()).all():
+        if mapping.protocol_label not in feed_labels:
+            feed_labels.append(mapping.protocol_label)
+    feed_maps = {item.protocol_label: item.feed_product_id for item in FeedingProtocolFeedMap.query.all()}
+    feed_products = FeedProduct.query.order_by(FeedProduct.active.desc(), FeedProduct.brand.asc(), FeedProduct.feed_type.asc()).all()
+    fixed_protocol_columns = [
+        'Ativa', 'Fase real', 'Idade PL', 'Dia fase', 'Dia ciclo', 'Estágio', 'População',
+        'Sobrev. %', 'Peso tabela (g)', 'Biomassa ref. (kg)', 'Taxa alim. %', 'Total/dia (g)', 'Tratos/dia'
+    ]
+    column_letters = [spreadsheet_column_label(idx + 1) for idx in range(len(fixed_protocol_columns) + len(feed_labels))]
+    return render_template(
+        'feeding_protocol.html',
+        rows=row_dicts,
+        feed_labels=feed_labels,
+        feed_labels_json=json.dumps(feed_labels, ensure_ascii=False),
+        feed_maps=feed_maps,
+        feed_products=feed_products,
+        phase_options=[('bercario', 'Berçário'), ('juvenil', 'Juvenil'), ('engorda', 'Engorda')],
+        column_letters=column_letters,
+        fixed_protocol_columns=fixed_protocol_columns,
+    )
 
 @app.route('/protocols', methods=['GET', 'POST'])
 @login_required
