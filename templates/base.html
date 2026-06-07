@@ -102,7 +102,7 @@
           </div>
         </details>
 
-        <details class="nav-group" {% if current_endpoint in ['protocols_page', 'farm_documents_page', 'users_page'] %}open{% endif %}>
+        <details class="nav-group" {% if current_endpoint in ['protocols_page', 'feeding_protocol_page', 'farm_documents_page', 'users_page'] %}open{% endif %}>
           <summary class="nav-group-summary">
             <span class="nav-group-label"><i class="fa-solid fa-user-gear"></i><span>Cadastros</span></span>
             <i class="fa-solid fa-chevron-right nav-group-chevron"></i>
@@ -110,6 +110,7 @@
           <div class="nav-submenu">
             {% if current_user.is_authenticated and current_user.has_permission('protocols_manage') %}
             <a class="nav-sublink {{ 'active' if current_endpoint == 'protocols_page' else '' }}" href="{{ url_for('protocols_page') }}">Protocolos</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'feeding_protocol_page' else '' }}" href="{{ url_for('feeding_protocol_page') }}">Tabela base de alimentação</a>
             {% endif %}
             {% if current_user.is_authenticated and current_user.has_permission('farm_documents_manage') %}
             <a class="nav-sublink {{ 'active' if current_endpoint == 'farm_documents_page' else '' }}" href="{{ url_for('farm_documents_page') }}">Documentos da fazenda</a>

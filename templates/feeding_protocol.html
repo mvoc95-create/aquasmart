@@ -1,0 +1,290 @@
+{% extends 'base.html' %}
+{% block page_title %}Tabela base de alimentação{% endblock %}
+{% block page_subtitle %}Cadastro editável que alimenta as telas de berçário, juvenil e engorda.{% endblock %}
+
+{% block content %}
+<section class="panel full-width-panel protocol-sheet-panel" id="protocol-sheet-panel">
+  <div class="panel-head protocol-sheet-head">
+    <div>
+      <p class="panel-kicker">Cadastros · Alimentação</p>
+      <h2>Tabela base do protocolo</h2>
+      <p class="muted-text">Edição em modo planilha: a linha da ração é escolhida pela idade do PL/estágio da tabela; o cálculo usa o peso da tabela, não a última biometria real.</p>
+    </div>
+    <div class="protocol-head-actions">
+      <button type="button" class="secondary-button" id="toggle-sheet-fullscreen">Abrir como planilha</button>
+      <form method="post" onsubmit="return confirm('Restaurar a tabela padrão do PDF? As edições atuais da tabela serão perdidas.');">
+        <input type="hidden" name="action" value="reset_default">
+        <button type="submit" class="secondary-button">Restaurar padrão PDF</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="info-card protocol-help-card">
+    <strong>Como a associação com estoque funciona:</strong>
+    a linha da tabela é associada pela <strong>idade do PL/estágio</strong> — PL11, PL12, …, J43, J44, E67 etc. Em cada cabeçalho de ração, você vincula a ração real do estoque equivalente. Assim o mix não se confunde quando o lote muda de fase em data diferente da tabela-modelo.
+  </div>
+
+  <form method="post" id="feeding-protocol-form">
+    <input type="hidden" name="action" value="save">
+    <input type="hidden" name="feed_labels_json" value="{{ feed_labels_json|e }}">
+
+    <div class="sheet-toolbar">
+      <div class="sheet-name-box" id="sheet-name-box">A1</div>
+      <label class="sheet-formula-bar"><span>fx</span><input type="text" id="sheet-formula-input" readonly value="Selecione uma célula da planilha"></label>
+      <label class="check-row sheet-check"><input type="checkbox" name="recalc_totals" id="recalc_totals" checked> Recalcular biomassa e total do dia pela população × peso da tabela × taxa</label>
+      <button type="button" class="secondary-button compact-button" id="copy-sheet-tsv">Copiar planilha</button>
+    </div>
+
+    <div class="table-wrap protocol-table-wrap excel-like-wrap" id="protocol-sheet-wrap">
+      <table class="protocol-table editable-sheet-table excel-like-table" id="protocol-sheet-table">
+        <thead>
+          <tr class="sheet-letters-row">
+            <th class="sheet-corner"></th>
+            {% for letter in column_letters %}
+              <th class="sheet-letter">{{ letter }}</th>
+            {% endfor %}
+          </tr>
+          <tr class="sheet-header-row">
+            <th class="sheet-row-head">#</th>
+            <th class="sticky-col col-active">Ativa</th>
+            <th class="sticky-col col-phase">Fase real</th>
+            <th>Idade PL</th>
+            <th>Dia fase</th>
+            <th>Dia ciclo</th>
+            <th>Estágio</th>
+            <th>População</th>
+            <th>Sobrev. %</th>
+            <th>Peso tabela (g)</th>
+            <th>Biomassa ref. (kg)</th>
+            <th>Taxa alim. %</th>
+            <th>Total/dia (g)</th>
+            <th>Tratos/dia</th>
+            {% for label in feed_labels %}
+            <th class="feed-map-head">
+              <div class="feed-label-title">{{ label }}</div>
+              <select name="map_{{ loop.index0 }}" class="small-select sheet-select" data-cell-label="mapa {{ label }}">
+                <option value="">Sem vínculo</option>
+                {% for product in feed_products %}
+                  <option value="{{ product.id }}" {% if feed_maps.get(label) == product.id %}selected{% endif %}>{{ product.full_name }}</option>
+                {% endfor %}
+              </select>
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr data-row-id="{{ row.id }}">
+            <th class="sheet-row-number">{{ loop.index }}</th>
+            <td class="sticky-col col-active sheet-cell"><input type="hidden" name="row_{{ row.id }}_dirty" value="0" class="row-dirty"><input class="sheet-checkbox" type="checkbox" name="row_{{ row.id }}_active" {% if row.active %}checked{% endif %}></td>
+            <td class="sticky-col col-phase sheet-cell">
+              <select name="row_{{ row.id }}_phase" class="phase-select sheet-select">
+                {% for value, label in phase_options %}
+                  <option value="{{ value }}" {% if row.phase == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="sheet-cell"><input class="sheet-input tiny" type="number" step="1" name="row_{{ row.id }}_pl_stage_display" value="{{ row.stage_number }}" readonly></td>
+            <td class="sheet-cell"><input class="sheet-input tiny" type="number" name="row_{{ row.id }}_phase_day" value="{{ row.phase_day }}"></td>
+            <td class="sheet-cell"><input class="sheet-input tiny" type="number" name="row_{{ row.id }}_cycle_day" value="{{ row.cycle_day }}"></td>
+            <td class="sheet-cell"><input class="sheet-input stage" type="text" name="row_{{ row.id }}_stage_label" value="{{ row.stage_label }}"></td>
+            <td class="sheet-cell"><input class="sheet-input number protocol-population" type="number" step="1" name="row_{{ row.id }}_population" value="{{ row.population }}"></td>
+            <td class="sheet-cell"><input class="sheet-input small-number" type="number" step="0.01" name="row_{{ row.id }}_survival_pct" value="{{ row.survival_pct }}"></td>
+            <td class="sheet-cell"><input class="sheet-input small-number protocol-weight" type="number" step="0.001" name="row_{{ row.id }}_individual_weight_g" value="{{ row.individual_weight_g }}"></td>
+            <td class="sheet-cell"><input class="sheet-input small-number protocol-biomass" type="number" step="0.001" name="row_{{ row.id }}_biomass_kg" value="{{ row.biomass_kg }}" readonly></td>
+            <td class="sheet-cell"><input class="sheet-input small-number protocol-rate" type="number" step="0.01" name="row_{{ row.id }}_feed_rate_pct" value="{{ row.feed_rate_pct }}"></td>
+            <td class="sheet-cell"><input class="sheet-input number protocol-total" type="number" step="1" name="row_{{ row.id }}_total_day_g" value="{{ row.total_day_g }}"></td>
+            <td class="sheet-cell"><input class="sheet-input tiny" type="number" step="1" name="row_{{ row.id }}_feedings_per_day" value="{{ row.feedings_per_day }}"></td>
+            {% for label in feed_labels %}
+            <td class="sheet-cell"><input class="sheet-input feed-grams" type="number" step="1" min="0" name="mix_{{ row.id }}_{{ loop.index0 }}" value="{{ row.mix_by_label.get(label, '') }}"></td>
+            {% endfor %}
+          </tr>
+          {% else %}
+          <tr><td colspan="{{ 14 + feed_labels|length }}" class="empty-cell">Nenhuma linha de protocolo cadastrada.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="form-actions sticky-actions sheet-actions">
+      <button type="submit" class="primary-button">Salvar tabela base</button>
+      <a class="secondary-link-button" href="{{ url_for('nursery_feed_page') }}">Ver alimentação berçário</a>
+      <a class="secondary-link-button" href="{{ url_for('juvenile_feed_page') }}">Ver alimentação juvenil</a>
+      <a class="secondary-link-button" href="{{ url_for('growout_feed_page') }}">Ver alimentação engorda</a>
+    </div>
+  </form>
+</section>
+
+<script>
+(function () {
+  const form = document.getElementById('feeding-protocol-form');
+  const table = document.getElementById('protocol-sheet-table');
+  const panel = document.getElementById('protocol-sheet-panel');
+  const recalc = document.getElementById('recalc_totals');
+  const nameBox = document.getElementById('sheet-name-box');
+  const formulaInput = document.getElementById('sheet-formula-input');
+  const copyButton = document.getElementById('copy-sheet-tsv');
+  const fullscreenButton = document.getElementById('toggle-sheet-fullscreen');
+  if (!form || !table || !recalc) return;
+
+  function asNumber(input) {
+    if (!input) return 0;
+    const value = String(input.value || '').replace(',', '.');
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function updateRow(row, updateTotal) {
+    const population = asNumber(row.querySelector('.protocol-population'));
+    const weight = asNumber(row.querySelector('.protocol-weight'));
+    const rate = asNumber(row.querySelector('.protocol-rate'));
+    const biomassInput = row.querySelector('.protocol-biomass');
+    const totalInput = row.querySelector('.protocol-total');
+    const biomass = population * weight / 1000;
+    if (biomassInput) biomassInput.value = biomass ? biomass.toFixed(3) : '0';
+    if (updateTotal && recalc.checked && totalInput) totalInput.value = Math.round(biomass * rate * 10); // kg × % × 1000g = kg × rate × 10
+  }
+
+  function columnLabel(index) {
+    let label = '';
+    index += 1;
+    while (index > 0) {
+      const remainder = (index - 1) % 26;
+      label = String.fromCharCode(65 + remainder) + label;
+      index = Math.floor((index - 1) / 26);
+    }
+    return label;
+  }
+
+  function focusCell(rowIndex, colIndex) {
+    const rows = Array.from(table.querySelectorAll('tbody tr[data-row-id]'));
+    const row = rows[rowIndex];
+    if (!row) return;
+    const cells = Array.from(row.querySelectorAll('.sheet-cell'));
+    const cell = cells[colIndex];
+    if (!cell) return;
+    const target = cell.querySelector('input:not([type="hidden"]), select, textarea');
+    if (target) {
+      target.focus();
+      if (target.select && !target.readOnly && target.tagName !== 'SELECT') target.select();
+    }
+  }
+
+  function markDirty(input) {
+    const row = input.closest('tr[data-row-id]');
+    if (!row) return;
+    const dirty = row.querySelector('.row-dirty');
+    if (dirty) dirty.value = '1';
+  }
+
+  function setActiveCell(input) {
+    table.querySelectorAll('.sheet-cell.active-cell').forEach(cell => cell.classList.remove('active-cell'));
+    const cell = input.closest('.sheet-cell');
+    const row = input.closest('tr[data-row-id]');
+    if (!cell || !row) return;
+    cell.classList.add('active-cell');
+    const rows = Array.from(table.querySelectorAll('tbody tr[data-row-id]'));
+    const cells = Array.from(row.querySelectorAll('.sheet-cell'));
+    const rowIndex = rows.indexOf(row);
+    const colIndex = cells.indexOf(cell);
+    if (nameBox) nameBox.textContent = `${columnLabel(colIndex)}${rowIndex + 1}`;
+    if (formulaInput) {
+      const label = input.dataset.cellLabel || input.name || '';
+      formulaInput.value = `${label ? label + ': ' : ''}${input.type === 'checkbox' ? (input.checked ? 'SIM' : 'NÃO') : input.value}`;
+    }
+  }
+
+  function visibleBodyInputs() {
+    return Array.from(table.querySelectorAll('tbody tr[data-row-id] .sheet-cell input:not([type="hidden"]), tbody tr[data-row-id] .sheet-cell select'));
+  }
+
+  table.querySelectorAll('tbody tr[data-row-id]').forEach(function (row, rowIndex) {
+    row.querySelectorAll('.protocol-population, .protocol-weight, .protocol-rate').forEach(function (input) {
+      input.addEventListener('input', function () {
+        markDirty(input);
+        updateRow(row, true);
+      });
+    });
+    row.querySelectorAll('.sheet-input, .sheet-select, .sheet-checkbox').forEach(function (input) {
+      input.addEventListener('focus', () => setActiveCell(input));
+      input.addEventListener('input', () => markDirty(input));
+      input.addEventListener('change', () => {
+        markDirty(input);
+        setActiveCell(input);
+      });
+      input.addEventListener('keydown', function (event) {
+        const cell = input.closest('.sheet-cell');
+        const currentRow = input.closest('tr[data-row-id]');
+        if (!cell || !currentRow) return;
+        const rows = Array.from(table.querySelectorAll('tbody tr[data-row-id]'));
+        const cells = Array.from(currentRow.querySelectorAll('.sheet-cell'));
+        const r = rows.indexOf(currentRow);
+        const c = cells.indexOf(cell);
+        if (event.key === 'ArrowDown') { event.preventDefault(); focusCell(r + 1, c); }
+        if (event.key === 'ArrowUp') { event.preventDefault(); focusCell(r - 1, c); }
+        if (event.key === 'ArrowRight' && (input.selectionStart === input.value.length || input.tagName === 'SELECT')) { event.preventDefault(); focusCell(r, c + 1); }
+        if (event.key === 'ArrowLeft' && (input.selectionStart === 0 || input.tagName === 'SELECT')) { event.preventDefault(); focusCell(r, c - 1); }
+        if (event.key === 'Enter') { event.preventDefault(); focusCell(event.shiftKey ? r - 1 : r + 1, c); }
+      });
+      input.addEventListener('paste', function (event) {
+        const text = event.clipboardData && event.clipboardData.getData('text');
+        if (!text || !text.includes('\t')) return;
+        event.preventDefault();
+        const cell = input.closest('.sheet-cell');
+        const currentRow = input.closest('tr[data-row-id]');
+        const rows = Array.from(table.querySelectorAll('tbody tr[data-row-id]'));
+        const startRow = rows.indexOf(currentRow);
+        const startCol = Array.from(currentRow.querySelectorAll('.sheet-cell')).indexOf(cell);
+        text.split(/\r?\n/).filter(line => line.length).forEach((line, rOffset) => {
+          const rowTarget = rows[startRow + rOffset];
+          if (!rowTarget) return;
+          const cells = Array.from(rowTarget.querySelectorAll('.sheet-cell'));
+          line.split('\t').forEach((value, cOffset) => {
+            const targetCell = cells[startCol + cOffset];
+            if (!targetCell) return;
+            const target = targetCell.querySelector('input:not([type="hidden"]), select');
+            if (!target || target.readOnly || target.type === 'checkbox') return;
+            target.value = value.trim();
+            target.dispatchEvent(new Event('input', {bubbles: true}));
+            target.dispatchEvent(new Event('change', {bubbles: true}));
+          });
+          updateRow(rowTarget, true);
+        });
+      });
+    });
+    updateRow(row, false);
+  });
+
+  if (fullscreenButton && panel) {
+    fullscreenButton.addEventListener('click', function () {
+      panel.classList.toggle('sheet-fullscreen-mode');
+      document.body.classList.toggle('sheet-mode-active', panel.classList.contains('sheet-fullscreen-mode'));
+      fullscreenButton.textContent = panel.classList.contains('sheet-fullscreen-mode') ? 'Fechar planilha' : 'Abrir como planilha';
+    });
+  }
+
+  if (copyButton) {
+    copyButton.addEventListener('click', async function () {
+      const headerRows = Array.from(table.querySelectorAll('thead .sheet-header-row th')).slice(1).map(th => th.innerText.replace(/\s+/g, ' ').trim());
+      const bodyRows = Array.from(table.querySelectorAll('tbody tr[data-row-id]')).map(row => {
+        return Array.from(row.querySelectorAll('.sheet-cell')).map(cell => {
+          const input = cell.querySelector('input:not([type="hidden"]), select');
+          if (!input) return '';
+          if (input.type === 'checkbox') return input.checked ? 'SIM' : 'NÃO';
+          if (input.tagName === 'SELECT') return input.options[input.selectedIndex]?.text || '';
+          return input.value || '';
+        }).join('\t');
+      });
+      const tsv = [headerRows.join('\t'), ...bodyRows].join('\n');
+      try {
+        await navigator.clipboard.writeText(tsv);
+        copyButton.textContent = 'Copiado!';
+        setTimeout(() => { copyButton.textContent = 'Copiar planilha'; }, 1400);
+      } catch (error) {
+        window.prompt('Copie a planilha:', tsv);
+      }
+    });
+  }
+})();
+</script>
+{% endblock %}
