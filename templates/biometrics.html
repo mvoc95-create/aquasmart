@@ -72,11 +72,12 @@
   <p class="empty-state compact-state">Exibindo as últimas 60 biometrias{% if history_unit_id %} do viveiro selecionado{% endif %}.</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Data</th><th>Lote</th><th>Viveiro</th><th>Amostra</th><th>Peso médio</th><th>Peso esperado</th><th>Desvio</th><th>CV</th><th>Biomassa</th><th>Ganho semanal</th><th>Sync manejo</th><th>Ações</th></tr></thead>
+      <thead><tr><th>Data</th><th>Dias fazenda</th><th>Lote</th><th>Viveiro</th><th>Amostra</th><th>Peso médio</th><th>Peso esperado</th><th>Desvio</th><th>CV</th><th>Biomassa</th><th>Ganho semanal</th><th>Sync manejo</th><th>Ações</th></tr></thead>
       <tbody>
         {% for item in rows %}
         <tr>
           <td>{{ item.row.sample_date|brdate }}</td>
+          <td>{{ item.days_at_farm or '—' }}</td>
           <td>{{ item.row.lot.lot_code if item.row.lot else '—' }}</td>
           <td>{{ item.row.unit.name if item.row.unit else '—' }}</td>
           <td>{{ item.row.sample_size }}</td>
@@ -89,7 +90,7 @@
           <td>{% if item.linked_management %}<span class="pill pill-success">Sim</span>{% else %}<span class="pill pill-danger">Não</span>{% endif %}</td>
           <td><a class="secondary-link-button small-button" href="{{ url_for('biometrics_page', edit_id=item.row.id, history_unit_id=history_unit_id) if history_unit_id else url_for('biometrics_page', edit_id=item.row.id) }}">Editar</a></td>
         </tr>
-        {% else %}<tr><td colspan="12" class="empty-cell">Nenhuma biometria registrada.</td></tr>{% endfor %}
+        {% else %}<tr><td colspan="13" class="empty-cell">Nenhuma biometria registrada.</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
