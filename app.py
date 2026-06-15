@@ -15346,10 +15346,12 @@ def biometrics_page():
         if not row.lot:
             continue
         age_days = max((row.sample_date - row.lot.start_date).days, 0)
+        days_at_farm = inclusive_day_count(row.lot.start_date, row.sample_date)
         expected = adaptive_expected_weight_at_age(row.lot, age_days)
         linked_management = DailyManagement.query.filter(DailyManagement.lot_id == row.lot_id, DailyManagement.manage_date == row.sample_date).first()
         enriched_rows.append({
             'row': row,
+            'days_at_farm': days_at_farm,
             'expected_weight_g': expected['expected_weight_g'],
             'deviation_g': round((row.average_weight_g or 0) - expected['expected_weight_g'], 3),
             'deviation_pct': round((((row.average_weight_g or 0) - expected['expected_weight_g']) / expected['expected_weight_g']) * 100, 2) if expected['expected_weight_g'] else None,
