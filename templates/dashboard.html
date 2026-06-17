@@ -10,17 +10,17 @@
     <div class="filter-card filter-card-period">
       <span class="filter-label">Período</span>
       <div class="filter-period-row">
-        <input type="date" name="start_date" value="{{ data.start_date.isoformat() }}">
+        <input type="date" name="start_date" value="{{ data.start_date.isoformat() }}" id="dashboard-start-date">
         <span>até</span>
-        <input type="date" name="end_date" value="{{ data.end_date.isoformat() }}">
+        <input type="date" name="end_date" value="{{ data.end_date.isoformat() }}" id="dashboard-end-date">
       </div>
     </div>
     <label class="filter-card">
       <span class="filter-label">Lote</span>
-      <select name="lot_id">
+      <select name="lot_id" id="dashboard-lot-select">
         <option value="">Todos</option>
         {% for lot in data.filter_options.lots %}
-        <option value="{{ lot.id }}" {{ 'selected' if data.filters.lot_id == lot.id else '' }}>{{ lot.lot_code }}</option>
+        <option value="{{ lot.id }}" data-start-date="{{ lot.start_date.isoformat() if lot.start_date else '' }}" data-end-date="{{ lot.end_date.isoformat() if lot.end_date else '' }}" {{ 'selected' if data.filters.lot_id == lot.id else '' }}>{{ lot.lot_code }}</option>
         {% endfor %}
       </select>
     </label>
@@ -69,7 +69,7 @@
       <article class="kpi-card"><span class="kpi-icon blue"><i class="fa-solid fa-layer-group"></i></span><div><small>Lotes ativos</small><strong>{{ data.summary.lots_active }}</strong></div></article>
       <article class="kpi-card"><span class="kpi-icon blue"><i class="fa-solid fa-building"></i></span><div><small>Unidades ativas</small><strong>{{ data.summary.units_active }}</strong></div></article>
       <article class="kpi-card"><span class="kpi-icon green"><i class="fa-solid fa-weight-hanging"></i></span><div><small>Biomassa estimada</small><strong>{{ data.summary.biomass_estimated or 0 }} kg</strong></div></article>
-      <article class="kpi-card"><span class="kpi-icon orange"><i class="fa-solid fa-wheat-awn"></i></span><div><small>Ração hoje</small><strong>{{ data.summary.feed_today or 0 }} kg</strong></div></article>
+      <article class="kpi-card"><span class="kpi-icon orange"><i class="fa-solid fa-wheat-awn"></i></span><div><small>{{ data.summary.feed_total_lot_label }}</small><strong>{% if data.summary.feed_total_lot is not none %}{{ data.summary.feed_total_lot or 0 }} kg{% else %}{{ data.summary.feed_today or 0 }} kg{% endif %}</strong></div></article>
       <article class="kpi-card"><span class="kpi-icon purple"><i class="fa-solid fa-money-bill-wave"></i></span><div><small>Custo acumulado</small><strong>{{ data.summary.cost_accumulated|money }}</strong></div></article>
       <article class="kpi-card"><span class="kpi-icon blue"><i class="fa-solid fa-arrow-trend-up"></i></span><div><small>Faturamento</small><strong>{{ data.summary.revenue_period|money }}</strong></div></article>
       <article class="kpi-card"><span class="kpi-icon green"><i class="fa-solid fa-chart-line"></i></span><div><small>Resultado</small><strong class="{{ 'positive' if data.summary.result_period >= 0 else 'negative' }}">{{ data.summary.result_period|money }}</strong></div></article>
@@ -289,6 +289,21 @@
 
 {% block extra_scripts %}
 <script>
+(function () {
+  const lotSelect = document.getElementById('dashboard-lot-select');
+  const startInput = document.getElementById('dashboard-start-date');
+  const endInput = document.getElementById('dashboard-end-date');
+  if (!lotSelect || !startInput) return;
+
+  lotSelect.addEventListener('change', function () {
+    const selected = lotSelect.options[lotSelect.selectedIndex];
+    const startDate = selected ? selected.dataset.startDate : '';
+    const endDate = selected ? selected.dataset.endDate : '';
+    if (startDate) startInput.value = startDate;
+    if (endInput && endDate) endInput.value = endDate;
+  });
+})();
+
 const growthCtx = document.getElementById('growthChart');
 if (growthCtx) {
   const growthPayload = {{ data.chart_payload.growth|tojson }};
