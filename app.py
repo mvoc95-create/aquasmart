@@ -5961,6 +5961,54 @@ def nursery_pl_age_for_lot(lot, target_date: date | None, protocol_key: str | No
 
 
 
+
+
+def feeding_table_expected_weight_for_lot(lot: Lot, target_date: date | None = None, age_days: int | None = None, operational_phase: str | None = None):
+    """Peso esperado pela idade de PL da tabela base de alimentação editável.
+
+    A biometria deve comparar o peso real contra a linha operacional da tabela
+    de alimentação (PL/J/E), não contra um cálculo genérico por dias de fase.
+    Assim, se o lote entrou em PL11 e hoje está com 38 dias de fazenda, a linha
+    buscada é PL49/J49/E49 conforme a fase operacional disponível.
+    """
+    if not lot:
+        return None
+    if target_date is None:
+        if age_days is None:
+            target_date = local_today()
+        elif getattr(lot, 'start_date', None):
+            target_date = lot.start_date + timedelta(days=max(int(age_days or 0), 0))
+        else:
+            target_date = local_today()
+    if age_days is None and getattr(lot, 'start_date', None):
+        age_days = max((target_date - lot.start_date).days, 0)
+
+    phase = normalize_phase_value(operational_phase)
+    if not phase and getattr(lot, 'id', None):
+        allocation = (active_allocations_for_lot(lot, on_date=target_date) or [None])[-1]
+        phase = allocation_operational_phase(allocation) or normalize_phase_value(getattr(lot, 'phase', None))
+    phase = phase or normalize_phase_value(getattr(lot, 'phase', None))
+
+    pl_age = nursery_pl_age_for_lot(lot, target_date, protocol_key=DEFAULT_NURSERY_PROTOCOL_KEY)
+    row = get_nursery_protocol_row_by_pl_age(pl_age, operational_phase=phase, protocol_key=DEFAULT_NURSERY_PROTOCOL_KEY)
+    if not row:
+        return None
+
+    expected_weight = parse_float(row.get('individual_weight_g') or row.get('weight_g'), None)
+    if expected_weight is None:
+        return None
+    return {
+        'expected_weight_g': round(expected_weight, 4),
+        'confidence': 70,
+        'similar_cases': 0,
+        'source': 'Tabela base de alimentação por idade de PL',
+        'pl_age': pl_age,
+        'stage_label': row.get('stage_label') or f'PL{pl_age}',
+        'standard_feed_rate_pct': row.get('feed_rate_pct'),
+        'standard_survival_pct': row.get('survival_pct'),
+        'standard_fcr': row.get('estimated_fcr'),
+    }
+
 def grams_to_kg(value):
     return round((value or 0) / 1000.0, 3)
 
@@ -7927,6 +7975,88 @@ def lot_total_revenue(lot_id: int):
     return round(total, 2)
 
 
+def lot_total_feed_offered_kg(lot_id: int, start_date: date | None = None, end_date: date | None = None, include_unsynced_nursery: bool = True):
+    """Total de ração ofertada do lote em kg.
+
+    DailyManagement é a fonte principal porque as telas Berçário/Juvenil/Engorda
+    sincronizam automaticamente seus mixes para o Manejo Diário. O bloco final
+    soma apenas lançamentos antigos de NurseryFeeding que por algum motivo ainda
+    não possuem manejo integrado, evitando dupla contagem.
+    """
+    if not lot_id:
+        return 0.0
+    query = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.lot_id == lot_id)
+    if start_date:
+        query = query.filter(DailyManagement.manage_date >= start_date)
+    if end_date:
+        query = query.filter(DailyManagement.manage_date <= end_date)
+    total = float(query.scalar() or 0)
+
+    if include_unsynced_nursery:
+        nursery_query = NurseryFeeding.query.filter(NurseryFeeding.lot_id == lot_id)
+        if start_date:
+            nursery_query = nursery_query.filter(NurseryFeeding.feed_date >= start_date)
+        if end_date:
+            nursery_query = nursery_query.filter(NurseryFeeding.feed_date <= end_date)
+        for entry in nursery_query.all():
+            if not entry.id:
+                continue
+            sync_query = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(
+                DailyManagement.lot_id == lot_id,
+                DailyManagement.unit_id == entry.unit_id,
+                DailyManagement.manage_date == entry.feed_date,
+                DailyManagement.notes.contains(nursery_management_source_marker(entry.id)),
+            )
+            synced_total = float(sync_query.scalar() or 0)
+            if synced_total <= 0:
+                total += float(entry.quantity_kg or 0)
+    return round(total, 3)
+
+
+def lot_initial_weight_g_for_fcr(lot: Lot):
+    """Peso inicial usado no FCR parcial.
+
+    Não usa Lot.estimated_weight_g como primeira opção porque essa coluna é
+    atualizada pela última biometria; usar ela como peso inicial derruba o ganho
+    de biomassa e distorce o FCR parcial.
+    """
+    if not lot:
+        return 0.0
+    table_start = feeding_table_expected_weight_for_lot(lot, target_date=lot.start_date, age_days=0)
+    if table_start and table_start.get('expected_weight_g'):
+        return float(table_start['expected_weight_g'])
+    observations = merged_weight_observations(lot.id) if getattr(lot, 'id', None) else []
+    if observations and observations[0].get('weight_g'):
+        return float(observations[0]['weight_g'])
+    return float(parse_float(getattr(lot, 'estimated_weight_g', None), 0) or 0)
+
+
+def lot_partial_fcr_snapshot(lot: Lot, records_by_lot: dict[int, list[DailyManagement]] | None = None, allocations_by_lot: dict[int, list[LotUnitAllocation]] | None = None, on_date: date | None = None):
+    """FCR parcial = ração acumulada / biomassa produzida.
+
+    Biomassa produzida considera biomassa atual + biomassa já despescada -
+    biomassa inicial estimada pela tabela de idade PL. Isso mantém o indicador
+    correto em lote ativo, lote com despesca parcial e lote dividido em viveiros.
+    """
+    if not lot:
+        return {'total_feed_kg': 0.0, 'initial_biomass_kg': 0.0, 'current_biomass_kg': 0.0, 'harvested_kg': 0.0, 'biomass_gain_kg': 0.0, 'fcr': None}
+    on_date = on_date or local_today()
+    total_feed = lot_total_feed_offered_kg(lot.id, start_date=lot.start_date, end_date=on_date)
+    initial_weight_g = lot_initial_weight_g_for_fcr(lot)
+    initial_biomass = ((lot.initial_count or 0) * (initial_weight_g or 0)) / 1000.0
+    current_biomass = latest_biomass_for_lot(lot, records_by_lot or defaultdict(list), allocations_by_lot or defaultdict(list)) or 0.0
+    harvested_kg = lot_total_harvested_kg(lot.id)
+    biomass_gain = max((current_biomass or 0) + (harvested_kg or 0) - initial_biomass, 0)
+    return {
+        'total_feed_kg': round(total_feed, 3),
+        'initial_biomass_kg': round(initial_biomass, 3),
+        'current_biomass_kg': round(current_biomass or 0, 3),
+        'harvested_kg': round(harvested_kg or 0, 3),
+        'biomass_gain_kg': round(biomass_gain, 3),
+        'fcr': round(total_feed / biomass_gain, 2) if biomass_gain > 0 else None,
+    }
+
+
 def build_allocation_rows(lot: Lot, on_date=None):
     on_date = on_date or local_today()
     allocations = LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit)).filter(
@@ -8006,7 +8136,7 @@ def lot_financial_summary(lot: Lot):
             survival_pct = round((allocation_live_count_for_lot(lot) / lot.initial_count) * 100, 2)
     else:
         survival_pct = None
-    total_feed_offered = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
+    total_feed_offered = lot_total_feed_offered_kg(lot.id)
     harvested_kg = lot_total_harvested_kg(lot.id)
     fcr_real = round(total_feed_offered / harvested_kg, 2) if harvested_kg else None
     return {
@@ -8039,10 +8169,7 @@ def sale_financial_summary(sale: Sale):
         harvested_units = int(round((sale.quantity_kg * 1000) / sale.average_weight_g)) if sale.average_weight_g else 0
     lot_harvested_units = lot_total_harvested_units(sale.lot_id)
     survival_pct = round((lot_harvested_units / sale.lot.initial_count) * 100, 2) if sale.lot.initial_count else None
-    total_feed_offered = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(
-        DailyManagement.lot_id == sale.lot_id,
-        DailyManagement.manage_date <= sale.sale_date,
-    ).scalar() or 0
+    total_feed_offered = lot_total_feed_offered_kg(sale.lot_id, end_date=sale.sale_date)
     harvested_kg_lot = lot_total_harvested_kg(sale.lot_id)
     fcr_real = round(total_feed_offered / harvested_kg_lot, 2) if harvested_kg_lot else None
     return {
@@ -8898,7 +9025,7 @@ def phase_fcr_baselines():
         harvested_kg = lot_total_harvested_kg(lot.id)
         if harvested_kg <= 0:
             continue
-        total_feed = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.lot_id == lot.id).scalar() or 0
+        total_feed = lot_total_feed_offered_kg(lot.id)
         if total_feed > 0:
             values[lot.phase].append(round(total_feed / harvested_kg, 2))
     return {phase: (sum(items) / len(items) if items else None) for phase, items in values.items()}
@@ -8922,8 +9049,8 @@ def predict_lot_metrics(lot: Lot, records_by_lot: dict[int, list[DailyManagement
     predicted_survival = survival_now
     if survival_now is not None and lot.initial_count:
         predicted_survival = round(max(survival_now - ((recent_mortality / lot.initial_count) * 100), 0), 1)
-    total_feed = sum(record.feed_offered_kg or 0 for record in records)
-    partial_fcr = round(total_feed / current_biomass, 2) if current_biomass and current_biomass > 0 else None
+    partial_snapshot = lot_partial_fcr_snapshot(lot, records_by_lot, allocations_by_lot, on_date=today)
+    partial_fcr = partial_snapshot['fcr']
     predicted_fcr = partial_fcr if partial_fcr is not None else phase_fcr_map.get(lot.phase)
     if predicted_fcr is not None:
         predicted_fcr = round(predicted_fcr, 2)
@@ -8956,11 +9083,6 @@ def predict_lot_metrics(lot: Lot, records_by_lot: dict[int, list[DailyManagement
 
 def dashboard_data():
     today = local_today()
-    default_start = month_start(today)
-    start_date = parse_date(request.args.get('start_date'), default_start)
-    end_date = parse_date(request.args.get('end_date'), today)
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
 
     selected_lot_id = parse_int(request.args.get('lot_id'))
     selected_unit_id = parse_int(request.args.get('unit_id'))
@@ -8971,6 +9093,22 @@ def dashboard_data():
     config = get_water_reference_config()
     all_units = Unit.query.filter_by(active=True).order_by(Unit.phase, Unit.name).all()
     all_lots = Lot.query.options(joinedload(Lot.unit)).order_by(Lot.start_date.desc(), Lot.lot_code.asc()).all()
+    selected_lot = next((lot for lot in all_lots if lot.id == selected_lot_id), None)
+
+    # Quando um lote é selecionado, o dashboard passa a enxergar o ciclo inteiro
+    # dele por padrão. Isso evita que custo, venda, gráfico e indicadores fiquem
+    # presos no mês atual enquanto o operador está analisando um lote específico.
+    default_start = selected_lot.start_date if selected_lot and selected_lot.start_date else month_start(today)
+    default_end = selected_lot.end_date if selected_lot and selected_lot.end_date else today
+    start_date = parse_date(request.args.get('start_date'), default_start)
+    end_date = parse_date(request.args.get('end_date'), default_end)
+    if selected_lot and selected_lot.start_date:
+        start_date = selected_lot.start_date
+        if end_date < start_date:
+            end_date = default_end if default_end >= start_date else start_date
+    elif end_date < start_date:
+        start_date, end_date = end_date, start_date
+
     supplier_options = sorted({lot.larva_supplier for lot in all_lots if lot.larva_supplier})
 
     def lot_matches_filters(lot: Lot):
@@ -9095,11 +9233,12 @@ def dashboard_data():
     avg_weight = weighted_average([(latest_weight_map.get(lot.id), lot_active_qty_map.get(lot.id)) for lot in active_lots], digits=1)
     avg_survival = weighted_average([(survival_map.get(lot.id), lot.initial_count or 0) for lot in active_lots], digits=1)
 
-    total_feed_offered_active = round(sum(record.feed_offered_kg or 0 for record in mgmt_records if record.lot_id in active_lot_ids), 1)
+    partial_fcr_snapshots = [lot_partial_fcr_snapshot(lot, records_by_lot, allocations_by_lot, on_date=today) for lot in active_lots]
+    total_feed_offered_active = round(sum(item['total_feed_kg'] for item in partial_fcr_snapshots), 1)
     total_biomass_active = round(sum(value for value in latest_biomass_map.values() if value is not None), 1)
-    total_initial_biomass_active = round(sum(((lot.initial_count or 0) * (lot.estimated_weight_g or 0)) / 1000 for lot in active_lots), 1)
-    biomass_gain_active = round(max(total_biomass_active - total_initial_biomass_active, 0), 1)
+    biomass_gain_active = round(sum(item['biomass_gain_kg'] for item in partial_fcr_snapshots), 1)
     partial_fcr = round(total_feed_offered_active / biomass_gain_active, 2) if biomass_gain_active > 0 else None
+    selected_lot_feed_total_kg = round(lot_total_feed_offered_kg(selected_lot.id), 1) if selected_lot else None
 
     lot_summaries = [lot_financial_summary(lot) for lot in active_lots]
     total_feed_cost = round(sum(summary['feed_cost'] for summary in lot_summaries), 2)
@@ -9301,6 +9440,8 @@ def dashboard_data():
             'units_active': len(active_units),
             'biomass_estimated': total_biomass_active,
             'feed_today': round(sum(record.feed_offered_kg or 0 for record in mgmt_today_records), 1),
+            'feed_total_lot': selected_lot_feed_total_kg,
+            'feed_total_lot_label': 'Ração total do lote' if selected_lot else 'Ração hoje',
             'cost_accumulated': total_cost_active,
             'revenue_period': total_revenue_period,
             'result_period': total_profit_period,
@@ -14248,7 +14389,11 @@ def standard_growout_curve_by_weight(weight_g: float | int | None):
 
 
 def standard_expected_weight_at_age(lot: Lot, age_days: int):
-    """Peso esperado inicial, com a tabela como base e deslocamento pelo primeiro dado real do lote."""
+    """Peso esperado inicial pela tabela base de alimentação e idade de PL."""
+    table_base = feeding_table_expected_weight_for_lot(lot, age_days=age_days)
+    if table_base:
+        return table_base
+
     if is_nursery_lot(lot):
         base = nursery_protocol_curve_for_lot(lot, age_days)
         if base:
@@ -14801,7 +14946,7 @@ def build_growth_analysis(lot):
     observations = merged_weight_observations(lot.id)
     for obs in observations:
         days = max((obs['date'] - lot.start_date).days, 0)
-        curve = adaptive_expected_weight_at_age(lot, days)
+        curve = feeding_table_expected_weight_for_lot(lot, target_date=obs['date'], age_days=days) or adaptive_expected_weight_at_age(lot, days)
         real_weight = round(obs['weight_g'] or 0, 2)
         expected_weight = round(curve['expected_weight_g'] or 0, 2)
         points.append({
@@ -14817,7 +14962,7 @@ def build_growth_analysis(lot):
     projection_7 = smart_growth_projection(lot, 7)
     projection_14 = smart_growth_projection(lot, 14)
     current_age = max((local_today() - lot.start_date).days, 0)
-    curve_today = adaptive_expected_weight_at_age(lot, current_age)
+    curve_today = feeding_table_expected_weight_for_lot(lot, target_date=local_today(), age_days=current_age) or adaptive_expected_weight_at_age(lot, current_age)
     current_weight = parse_float(current_weight_for_lot(lot), None)
     summary = None
     if points:
@@ -15347,7 +15492,7 @@ def biometrics_page():
             continue
         age_days = max((row.sample_date - row.lot.start_date).days, 0)
         days_at_farm = inclusive_day_count(row.lot.start_date, row.sample_date)
-        expected = adaptive_expected_weight_at_age(row.lot, age_days)
+        expected = feeding_table_expected_weight_for_lot(row.lot, target_date=row.sample_date, age_days=age_days) or adaptive_expected_weight_at_age(row.lot, age_days)
         linked_management = DailyManagement.query.filter(DailyManagement.lot_id == row.lot_id, DailyManagement.manage_date == row.sample_date).first()
         enriched_rows.append({
             'row': row,
