@@ -69,7 +69,7 @@
   <div class="nursery-summary-strip">
     <div class="summary-chip"><strong>{{ '%.2f'|format(plan.feed_rate_pct) }}%</strong><span>taxa de alimentação</span></div>
     <div class="summary-chip"><strong>{{ '{:,.0f}'.format(plan.total_day_g).replace(',', '.') }} g</strong><span>{{ '%.3f'|format(plan.total_day_kg) }} kg no dia</span></div>
-    <div class="summary-chip"><strong>{{ plan.score_factor_label }}</strong><span>correção acumulada{% if plan.intestinal_score is not none %} · último score {{ '%.1f'|format(plan.intestinal_score) }}{% endif %}{% if plan.correction_source_date %} de {{ plan.correction_source_date|brdate }}{% endif %}</span></div>
+    <div class="summary-chip"><strong>{{ plan.score_factor_label }}</strong><span>correção ativa{% if plan.intestinal_score is not none %} · último score {{ '%.1f'|format(plan.intestinal_score) }}{% endif %}{% if plan.correction_source_date %} de {{ plan.correction_source_date|brdate }}{% endif %}</span></div>
     <div class="summary-chip"><strong>{{ plan.feedings_per_day }}</strong><span>alimentações no dia</span></div>
     <div class="summary-chip"><strong>{% if plan.per_feeding_min_g != plan.per_feeding_max_g %}{{ '{:,.0f}'.format(plan.per_feeding_min_g).replace(',', '.') }}–{{ '{:,.0f}'.format(plan.per_feeding_max_g).replace(',', '.') }} g{% else %}{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g{% endif %}</strong><span>por porção</span></div>
   </div>
@@ -146,12 +146,12 @@
           <input type="number" step="0.1" min="0" max="4" name="intestinal_score" class="intestinal-score-input" value="{{ '%.1f'|format(plan.existing_entry.intestinal_score) if plan.existing_entry and plan.existing_entry.intestinal_score is not none else '' }}" placeholder="Ex.: 2,9">
         </label>
         {% set existing_adjustment = plan.existing_entry.score_adjustment_pct if plan.existing_entry and plan.existing_entry.score_adjustment_pct is not none else none %}
-        <label>Ajuste da ração para amanhã (%)
-          <input type="number" step="0.1" name="score_adjustment_pct" class="score-adjustment-input" value="{{ '%.1f'|format(existing_adjustment) if existing_adjustment is not none else '' }}" placeholder="Ex.: 0 ou 10">
-          <span class="helper-text">Preenche automático pelo score, mas pode ser alterado antes de salvar.</span>
+        <label>Novo ajuste para amanhã (%)
+          <input type="number" step="0.1" name="score_adjustment_pct" class="score-adjustment-input" value="{{ '%.1f'|format(existing_adjustment) if existing_adjustment is not none else '' }}" placeholder="Ex.: vazio, 10 ou 0">
+          <span class="helper-text">Vazio mantém a correção ativa. +10 aplica 10% sobre o valor já corrigido. 0 zera e volta para a tabela.</span>
         </label>
       </div>
-      <div class="full selection-info score-adjustment-info">O score lançado hoje não altera a alimentação de hoje. A partir de amanhã, o sistema usa o percentual salvo ao lado do score. Sugestão padrão: 0,0–1,0 +30%; 1,1–2,0 +20%; 2,1–3,0 +10%; 3,1–3,5 mantém; 3,6–4,0 -10%.</div>
+      <div class="full selection-info score-adjustment-info">O score lançado hoje não altera a alimentação de hoje. A partir da próxima programação, o ajuste informado entra sobre a correção ativa. Ex.: se já está +10% e você lançar mais +10%, a correção ativa vira +21% sobre a tabela base. Deixe vazio para manter; digite 0 para zerar. Sugestão padrão: 0,0–1,0 +30%; 1,1–2,0 +20%; 2,1–3,0 +10%; 3,1–3,5 mantém; 3,6–4,0 -10%.</div>
 
       <div class="full selection-info nursery-water-inline-info">A marcação dos aditivos de água fica na tabela <strong>Manejo da água / controles</strong>, logo acima. Deixe marcado apenas o que foi utilizado no dia.</div>
 
@@ -216,18 +216,33 @@ document.querySelectorAll('.nursery-entry-form').forEach((form) => {
   const fillSuggestedAdjustment = (force = false) => {
     const suggestion = suggestedNurseryAdjustmentPct(scoreInput.value);
     if (suggestion === '') return;
+    if (suggestion === '0') {
+      if (force || !adjustmentInput.dataset.manualEdited) {
+        adjustmentInput.value = '';
+      }
+      if (info) {
+        info.textContent = 'Score na faixa de manter: deixe o ajuste vazio para conservar a correção ativa. Para zerar e voltar para a tabela base, digite 0 manualmente.';
+      }
+      return;
+    }
     if (force || !adjustmentInput.dataset.manualEdited) {
       adjustmentInput.value = suggestion;
     }
     if (info) {
-      info.textContent = `Sugestão pelo score: ${formatAdjustmentLabel(suggestion)}. Você pode manter essa sugestão ou editar o percentual antes de salvar. Esse ajuste só entra a partir de amanhã.`;
+      info.textContent = `Sugestão pelo score: ${formatAdjustmentLabel(suggestion)}. Esse percentual entra sobre a correção ativa a partir de amanhã.`;
     }
   };
 
   adjustmentInput.addEventListener('input', () => {
     adjustmentInput.dataset.manualEdited = 'true';
     if (info) {
-      info.textContent = `Ajuste manual definido: ${formatAdjustmentLabel(adjustmentInput.value)}. O sistema vai usar este percentual salvo para corrigir a ração a partir de amanhã.`;
+      if (!adjustmentInput.value) {
+        info.textContent = 'Ajuste vazio: a correção ativa será mantida para a próxima programação.';
+      } else if (Number.parseFloat(String(adjustmentInput.value).replace(',', '.')) === 0) {
+        info.textContent = 'Ajuste 0%: a correção ativa será zerada e a próxima programação volta para a tabela base.';
+      } else {
+        info.textContent = `Ajuste manual definido: ${formatAdjustmentLabel(adjustmentInput.value)} sobre a correção ativa atual. Esse ajuste entra a partir de amanhã.`;
+      }
     }
   });
 
