@@ -252,7 +252,11 @@ class NurseryFeeding(db.Model):
     lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
     quantity_kg = db.Column(db.Float, nullable=False, default=0)
     intestinal_score = db.Column(db.Float)
+    # Ajuste incremental informado no lançamento: +10 aplica 10% sobre a correção ativa;
+    # 0 zera a correção; vazio mantém o fator ativo anterior.
     score_adjustment_pct = db.Column(db.Float)
+    # Fator de correção que fica ativo após este lançamento. Ex.: 1.10, 1.21 etc.
+    active_feed_factor = db.Column(db.Float)
     # JSON com os aditivos/insumos de água marcados no lançamento do berçário.
     # Mantém o histórico do que foi realmente utilizado para refazer Manejo + Estoque.
     water_items_json = db.Column(db.Text)
@@ -6075,36 +6079,108 @@ def nursery_adjustment_pct_label(adjustment_pct):
     return 'sem ajuste'
 
 
+def nursery_next_active_feed_factor(previous_factor, adjustment_pct):
+    """Calcula o fator ativo depois de um novo lançamento.
+
+    Regras de operação:
+    - ajuste vazio/None: mantém a correção ativa anterior;
+    - ajuste 0%: zera e volta para a tabela base;
+    - ajuste positivo/negativo: aplica sobre a correção já ativa.
+      Ex.: fator 1,10 com novo +10% vira 1,21.
+    """
+    try:
+        factor = float(previous_factor or 1.0)
+    except (TypeError, ValueError):
+        factor = 1.0
+    if adjustment_pct is None:
+        return round(factor, 6)
+    try:
+        adjustment_pct = float(adjustment_pct)
+    except (TypeError, ValueError):
+        return round(factor, 6)
+    if abs(adjustment_pct) < 0.000001:
+        return 1.0
+    next_factor = factor * nursery_adjustment_pct_factor(adjustment_pct)
+    return round(max(next_factor, 0.0), 6)
+
+
+def nursery_adjustment_pct_from_form(raw_adjustment, intestinal_score):
+    """Interpreta o campo de ajuste incremental da tela.
+
+    Campo vazio mantém a correção ativa. Quando há score, o sistema só cria
+    ajuste automático se a sugestão for diferente de 0. Assim score na faixa
+    "mantém" não zera a correção por acidente. Para zerar, o usuário digita 0.
+    """
+    raw_text = str(raw_adjustment or '').strip()
+    if raw_text:
+        return parse_float(raw_text)
+    if intestinal_score is not None:
+        suggested = nursery_score_adjustment_pct(intestinal_score)
+        if abs(suggested) >= 0.000001:
+            return suggested
+    return None
+
+
+def apply_nursery_adjustment_state_from_request(entry):
+    previous_adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
+    entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
+    entry.score_adjustment_pct = nursery_adjustment_pct_from_form(
+        request.form.get('score_adjustment_pct'),
+        entry.intestinal_score,
+    )
+    entry.active_feed_factor = nursery_next_active_feed_factor(
+        previous_adjustment['factor'],
+        entry.score_adjustment_pct,
+    )
+    return previous_adjustment
+
+
 def nursery_cumulative_adjustments(lot_id: int | None, target_date: date):
+    """Retorna a correção de ração ativa para a data informada.
+
+    A correção fica gravada como fator ativo no último lançamento anterior do
+    lote. Um novo +10% não substitui o fator: ele aplica sobre o valor já
+    corrigido. Ex.: +10% ativo e novo +10% = +21% sobre a tabela base.
+    Campo vazio mantém o fator; 0% zera a correção ativa.
+    """
     if not lot_id or not target_date:
         return {'factor': 1.0, 'events': []}
 
-    records = NurseryFeeding.query.filter(
+    record = NurseryFeeding.query.filter(
         NurseryFeeding.lot_id == lot_id,
         NurseryFeeding.feed_date < target_date,
         or_(
-            NurseryFeeding.intestinal_score.isnot(None),
+            NurseryFeeding.active_feed_factor.isnot(None),
             NurseryFeeding.score_adjustment_pct.isnot(None),
+            NurseryFeeding.intestinal_score.isnot(None),
         ),
-    ).order_by(NurseryFeeding.feed_date.asc(), NurseryFeeding.id.asc()).all()
+    ).order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc()).first()
 
-    cumulative_factor = 1.0
-    events = []
-    for record in records:
-        daily_adjustment_pct = nursery_record_adjustment_pct(record)
-        daily_factor = nursery_adjustment_pct_factor(daily_adjustment_pct)
-        cumulative_factor *= daily_factor
-        events.append({
+    if not record:
+        return {'factor': 1.0, 'events': []}
+
+    adjustment_pct = record.score_adjustment_pct
+    if record.active_feed_factor is not None:
+        factor = float(record.active_feed_factor or 1.0)
+    else:
+        # Compatibilidade com lançamentos antigos: usa o último percentual como
+        # fator ativo, sem reprocessar todo o histórico antigo do lote.
+        adjustment_pct = nursery_record_adjustment_pct(record)
+        factor = nursery_adjustment_pct_factor(adjustment_pct)
+
+    return {
+        'factor': factor,
+        'events': [{
             'date': record.feed_date,
             'score': record.intestinal_score,
-            'adjustment_pct': daily_adjustment_pct,
-            'adjustment_label': nursery_adjustment_pct_label(daily_adjustment_pct),
-            'factor': daily_factor,
-            'factor_label': nursery_score_factor_label(daily_factor),
-            'cumulative_factor': cumulative_factor,
-            'cumulative_label': nursery_score_factor_label(cumulative_factor),
-        })
-    return {'factor': cumulative_factor, 'events': events}
+            'adjustment_pct': adjustment_pct,
+            'adjustment_label': nursery_adjustment_pct_label(adjustment_pct) if adjustment_pct is not None else 'mantido',
+            'factor': factor,
+            'factor_label': nursery_score_factor_label(factor),
+            'cumulative_factor': factor,
+            'cumulative_label': nursery_score_factor_label(factor),
+        }],
+    }
 
 
 def build_even_schedule(total_day_g: int, feedings_per_day: int):
@@ -7270,6 +7346,7 @@ def run_lightweight_migrations():
     if 'nursery_feeding' in tables:
         nursery_feeding_columns = get_columns('nursery_feeding')
         add_column_if_missing('nursery_feeding', nursery_feeding_columns, 'score_adjustment_pct', 'ALTER TABLE nursery_feeding ADD COLUMN score_adjustment_pct FLOAT', 'ALTER TABLE nursery_feeding ADD COLUMN score_adjustment_pct DOUBLE PRECISION')
+        add_column_if_missing('nursery_feeding', nursery_feeding_columns, 'active_feed_factor', 'ALTER TABLE nursery_feeding ADD COLUMN active_feed_factor FLOAT', 'ALTER TABLE nursery_feeding ADD COLUMN active_feed_factor DOUBLE PRECISION')
         add_column_if_missing('nursery_feeding', nursery_feeding_columns, 'water_items_json', 'ALTER TABLE nursery_feeding ADD COLUMN water_items_json TEXT', 'ALTER TABLE nursery_feeding ADD COLUMN water_items_json TEXT')
 
     if 'water_monitoring' in tables:
@@ -13411,6 +13488,7 @@ def save_all_stage_feed_entries_for_date(phase, target_date):
         entry.unit_id = unit.id
         entry.lot_id = lot.id
         entry.quantity_kg = plan.get('total_day_kg') or grams_to_kg(plan.get('total_day_g') or 0)
+        entry.active_feed_factor = plan.get('score_factor') or 1.0
         entry.water_items_json = json.dumps(selected_nursery_water_items_for_plan(plan), ensure_ascii=False)
         if not (entry.notes or '').strip():
             entry.notes = 'Salvo automaticamente pelo botão Salvar todas as rações do dia.'
@@ -13501,14 +13579,10 @@ def nursery_feed_page():
         entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
         lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else active_lot
         submitted_quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
-        entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
-        entry.score_adjustment_pct = parse_float(request.form.get('score_adjustment_pct'))
-        if entry.score_adjustment_pct is None and entry.intestinal_score is not None:
-            entry.score_adjustment_pct = nursery_score_adjustment_pct(entry.intestinal_score)
+        adjustment = apply_nursery_adjustment_state_from_request(entry)
         entry.quantity_kg = submitted_quantity_kg
         entry.notes = request.form.get('notes')
 
-        adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
         plan_for_submission = build_nursery_protocol_for_date(
             lot,
             unit,
@@ -13591,14 +13665,10 @@ def juvenile_feed_page():
         entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
         lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else active_lot
         submitted_quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
-        entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
-        entry.score_adjustment_pct = parse_float(request.form.get('score_adjustment_pct'))
-        if entry.score_adjustment_pct is None and entry.intestinal_score is not None:
-            entry.score_adjustment_pct = nursery_score_adjustment_pct(entry.intestinal_score)
+        adjustment = apply_nursery_adjustment_state_from_request(entry)
         entry.quantity_kg = submitted_quantity_kg
         entry.notes = request.form.get('notes')
 
-        adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
         plan_for_submission = build_nursery_protocol_for_date(
             lot,
             unit,
@@ -13680,14 +13750,10 @@ def growout_feed_page():
         entry.lot_id = parse_int(request.form.get('lot_id')) or (active_lot.id if active_lot else None)
         lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else active_lot
         submitted_quantity_kg = parse_float(request.form.get('quantity_kg'), 0) or 0
-        entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
-        entry.score_adjustment_pct = parse_float(request.form.get('score_adjustment_pct'))
-        if entry.score_adjustment_pct is None and entry.intestinal_score is not None:
-            entry.score_adjustment_pct = nursery_score_adjustment_pct(entry.intestinal_score)
+        adjustment = apply_nursery_adjustment_state_from_request(entry)
         entry.quantity_kg = submitted_quantity_kg
         entry.notes = request.form.get('notes')
 
-        adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
         plan_for_submission = build_nursery_protocol_for_date(
             lot,
             unit,
