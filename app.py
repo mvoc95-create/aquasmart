@@ -6992,6 +6992,293 @@ def build_stage_feed_digest_for_date(target_date: date | None = None, phase: str
     return plans
 
 
+
+FEED_PREPARATION_PHASES = [
+    ('bercario', 'Berçário'),
+    ('juvenil', 'Juvenil'),
+    ('engorda', 'Engorda'),
+]
+
+
+def kg_from_grams(value):
+    return round((value or 0) / 1000.0, 3)
+
+
+def add_feed_preparation_total(bucket, label, grams, phase=None, unit_name=None, lot_code=None, target_date=None):
+    label = re.sub(r'\s+', ' ', (label or 'Ração sem identificação').strip()) or 'Ração sem identificação'
+    row = bucket.setdefault(label, {
+        'label': label,
+        'total_g': 0,
+        'phase_totals': defaultdict(int),
+        'units': set(),
+        'lots': set(),
+        'dates': set(),
+    })
+    grams = int(round(grams or 0))
+    row['total_g'] += grams
+    if phase:
+        row['phase_totals'][phase] += grams
+    if unit_name:
+        row['units'].add(unit_name)
+    if lot_code:
+        row['lots'].add(lot_code)
+    if target_date:
+        row['dates'].add(target_date)
+    return row
+
+
+def add_preparation_additive_total(bucket, item, phase=None, unit_name=None, lot_code=None, target_date=None):
+    if not item:
+        return None
+    label = re.sub(r'\s+', ' ', (item.get('label') or item.get('source_label') or 'Aditivo sem identificação').strip()) or 'Aditivo sem identificação'
+    unit = (item.get('measure_unit') or '').strip() or 'un'
+    key = (label, unit)
+    row = bucket.setdefault(key, {
+        'label': label,
+        'measure_unit': unit,
+        'total_quantity': 0.0,
+        'phase_totals': defaultdict(float),
+        'units': set(),
+        'lots': set(),
+        'dates': set(),
+    })
+    qty = parse_float(item.get('quantity'), 0) or 0
+    row['total_quantity'] += qty
+    if phase:
+        row['phase_totals'][phase] += qty
+    if unit_name:
+        row['units'].add(unit_name)
+    if lot_code:
+        row['lots'].add(lot_code)
+    if target_date:
+        row['dates'].add(target_date)
+    return row
+
+
+def feed_preparation_unit_key(plan):
+    unit = plan.get('unit')
+    lot = plan.get('lot')
+    return (getattr(unit, 'id', None), getattr(lot, 'id', None))
+
+
+def format_feed_preparation_mix_line(mixes):
+    parts = []
+    for item in mixes or []:
+        grams = int(round(item.get('grams') or 0))
+        if grams <= 0:
+            continue
+        parts.append(f"{item.get('label')}: {format_decimal_pt(kg_from_grams(grams), 3)} kg")
+    return '; '.join(parts) or 'Sem mix cadastrado'
+
+
+def build_feed_preparation_whatsapp_text(plan_data):
+    start_date = plan_data['start_date']
+    end_date = plan_data['end_date']
+    lines = [
+        f"*Preparo da ração — {start_date.strftime('%d/%m')} a {end_date.strftime('%d/%m/%Y')}*",
+        f"Total da semana: *{format_decimal_pt(plan_data['grand_total_kg'], 3)} kg* de ração",
+        '',
+        'Separar/preparar as rações da semana conforme abaixo. As rações preparadas devem ficar identificadas por produto, fase e viveiro/lote para evitar troca na hora do trato.',
+    ]
+
+    if plan_data.get('feed_totals'):
+        lines.extend(['', '*Total por ração*'])
+        for row in plan_data['feed_totals']:
+            lines.append(f"- {row['label']}: {format_decimal_pt(row['total_kg'], 3)} kg")
+
+    if plan_data.get('additive_totals'):
+        lines.extend(['', '*Aditivos/insumos previstos no protocolo*'])
+        for row in plan_data['additive_totals']:
+            lines.append(f"- {row['label']}: {format_decimal_pt(row['total_quantity'], 2)} {row['measure_unit']}")
+
+    if plan_data.get('phase_totals'):
+        lines.extend(['', '*Total por fase*'])
+        for phase in plan_data['phase_totals']:
+            if phase['total_kg'] <= 0:
+                continue
+            lines.append(f"- {phase['label']}: {format_decimal_pt(phase['total_kg'], 3)} kg")
+
+    if plan_data.get('unit_totals'):
+        lines.extend(['', '*Separação por viveiro/lote*'])
+        for row in plan_data['unit_totals']:
+            if row['total_kg'] <= 0:
+                continue
+            lot_part = f" · Lote {row['lot_code']}" if row.get('lot_code') else ''
+            lines.append(f"- {row['phase_label']} · {row['unit_name']}{lot_part}: {format_decimal_pt(row['total_kg'], 3)} kg")
+            if row.get('mix_line'):
+                lines.append(f"  Mix: {row['mix_line']}")
+
+    if plan_data.get('daily_totals'):
+        lines.extend(['', '*Conferência por dia*'])
+        for day in plan_data['daily_totals']:
+            lines.append(f"- {weekday_label_pt(day['date'])} {day['date'].strftime('%d/%m')}: {format_decimal_pt(day['total_kg'], 3)} kg")
+
+    lines.extend([
+        '',
+        'Obs.: este texto vem da mesma programação das abas Alimentação Berçário, Juvenil e Engorda. Conferir estoque físico antes de preparar.'
+    ])
+    return '\n'.join(lines)
+
+
+def build_feed_preparation_plan(start_date: date | None = None, days: int = 7):
+    start_date = start_date or local_today()
+    try:
+        days = int(days or 7)
+    except (TypeError, ValueError):
+        days = 7
+    days = max(1, min(days, 31))
+    end_date = start_date + timedelta(days=days - 1)
+
+    phase_meta = {key: {'phase': key, 'label': label, 'total_g': 0, 'feeds': defaultdict(int), 'units_count': 0} for key, label in FEED_PREPARATION_PHASES}
+    feed_totals_map = OrderedDict()
+    additive_totals_map = OrderedDict()
+    unit_totals_map = OrderedDict()
+    daily_rows = []
+    daily_totals = []
+    grand_total_g = 0
+    plan_count = 0
+
+    for offset in range(days):
+        target_date = start_date + timedelta(days=offset)
+        day_total_g = 0
+        day_units = set()
+        for phase_key, phase_label_text in FEED_PREPARATION_PHASES:
+            phase_plans = build_stage_feed_digest_for_date(target_date, phase=phase_key)
+            for plan in phase_plans:
+                unit = plan.get('unit')
+                lot = plan.get('lot')
+                unit_name = getattr(unit, 'name', 'Sem unidade')
+                lot_code = getattr(lot, 'lot_code', '')
+                total_day_g = int(round(plan.get('total_day_g') or 0))
+                mixes = [item for item in plan.get('mixes', []) if int(round(item.get('grams') or 0)) > 0]
+                additives = selected_nursery_water_items_for_plan(plan)
+                plan_count += 1
+                grand_total_g += total_day_g
+                day_total_g += total_day_g
+                if getattr(unit, 'id', None):
+                    day_units.add(unit.id)
+                phase_meta[phase_key]['total_g'] += total_day_g
+
+                unit_key = (phase_key, getattr(unit, 'id', None), getattr(lot, 'id', None))
+                unit_row = unit_totals_map.setdefault(unit_key, {
+                    'phase': phase_key,
+                    'phase_label': phase_label_text,
+                    'unit_name': unit_name,
+                    'lot_code': lot_code,
+                    'total_g': 0,
+                    'feeds': defaultdict(int),
+                    'dates': set(),
+                })
+                unit_row['total_g'] += total_day_g
+                unit_row['dates'].add(target_date)
+
+                for item in mixes:
+                    grams = int(round(item.get('grams') or 0))
+                    label = item.get('label') or 'Ração sem identificação'
+                    add_feed_preparation_total(feed_totals_map, label, grams, phase_key, unit_name, lot_code, target_date)
+                    phase_meta[phase_key]['feeds'][label] += grams
+                    unit_row['feeds'][label] += grams
+
+                for additive in additives:
+                    add_preparation_additive_total(additive_totals_map, additive, phase_key, unit_name, lot_code, target_date)
+
+                daily_rows.append({
+                    'date': target_date,
+                    'weekday': weekday_label_pt(target_date),
+                    'phase': phase_key,
+                    'phase_label': phase_label_text,
+                    'unit_name': unit_name,
+                    'lot_code': lot_code,
+                    'stage_label': plan.get('stage_label'),
+                    'total_g': total_day_g,
+                    'total_kg': kg_from_grams(total_day_g),
+                    'mixes': [{'label': item.get('label'), 'grams': int(round(item.get('grams') or 0)), 'kg': kg_from_grams(item.get('grams') or 0)} for item in mixes],
+                    'additives': additives,
+                })
+        daily_totals.append({
+            'date': target_date,
+            'weekday': weekday_label_pt(target_date),
+            'total_g': day_total_g,
+            'total_kg': kg_from_grams(day_total_g),
+            'units_count': len(day_units),
+        })
+
+    feed_totals = []
+    for row in feed_totals_map.values():
+        phase_breakdown = []
+        for phase_key, phase_label_text in FEED_PREPARATION_PHASES:
+            grams = row['phase_totals'].get(phase_key, 0)
+            if grams:
+                phase_breakdown.append({'phase': phase_key, 'label': phase_label_text, 'kg': kg_from_grams(grams), 'grams': grams})
+        feed_totals.append({
+            'label': row['label'],
+            'total_g': row['total_g'],
+            'total_kg': kg_from_grams(row['total_g']),
+            'phase_breakdown': phase_breakdown,
+            'units_count': len(row['units']),
+            'lots_count': len(row['lots']),
+        })
+    feed_totals.sort(key=lambda item: (-item['total_g'], item['label'].lower()))
+
+    additive_totals = []
+    for row in additive_totals_map.values():
+        additive_totals.append({
+            'label': row['label'],
+            'measure_unit': row['measure_unit'],
+            'total_quantity': round(row['total_quantity'], 3),
+            'units_count': len(row['units']),
+            'lots_count': len(row['lots']),
+        })
+    additive_totals.sort(key=lambda item: (-item['total_quantity'], item['label'].lower()))
+
+    phase_totals = []
+    for phase_key, phase_label_text in FEED_PREPARATION_PHASES:
+        meta = phase_meta[phase_key]
+        phase_totals.append({
+            'phase': phase_key,
+            'label': phase_label_text,
+            'total_g': meta['total_g'],
+            'total_kg': kg_from_grams(meta['total_g']),
+            'feed_count': len(meta['feeds']),
+        })
+
+    unit_totals = []
+    phase_order = {key: idx for idx, (key, _) in enumerate(FEED_PREPARATION_PHASES)}
+    for row in unit_totals_map.values():
+        mixes = [
+            {'label': label, 'grams': grams, 'kg': kg_from_grams(grams)}
+            for label, grams in sorted(row['feeds'].items(), key=lambda item: (-item[1], item[0].lower()))
+        ]
+        unit_totals.append({
+            'phase': row['phase'],
+            'phase_label': row['phase_label'],
+            'unit_name': row['unit_name'],
+            'lot_code': row['lot_code'],
+            'total_g': row['total_g'],
+            'total_kg': kg_from_grams(row['total_g']),
+            'days_count': len(row['dates']),
+            'mixes': mixes,
+            'mix_line': format_feed_preparation_mix_line(mixes),
+        })
+    unit_totals.sort(key=lambda item: (phase_order.get(item['phase'], 9), item['unit_name'].lower(), item.get('lot_code') or ''))
+
+    plan_data = {
+        'start_date': start_date,
+        'end_date': end_date,
+        'days': days,
+        'plan_count': plan_count,
+        'grand_total_g': grand_total_g,
+        'grand_total_kg': kg_from_grams(grand_total_g),
+        'feed_totals': feed_totals,
+        'additive_totals': additive_totals,
+        'phase_totals': phase_totals,
+        'unit_totals': unit_totals,
+        'daily_totals': daily_totals,
+        'daily_rows': daily_rows,
+    }
+    plan_data['whatsapp_text'] = build_feed_preparation_whatsapp_text(plan_data)
+    return plan_data
+
 def build_nursery_digest_for_date(target_date: date | None = None):
     return build_stage_feed_digest_for_date(target_date, phase='bercario')
 
@@ -13533,6 +13820,23 @@ def handle_save_all_stage_feed(phase, endpoint_name, success_label):
         )
     db.session.commit()
     return redirect(url_for(endpoint_name, feed_date=feed_date.isoformat()))
+
+
+
+@app.route('/feed-preparation')
+@login_required
+@requires_permission('management_manage')
+def feed_preparation_page():
+    start_date = parse_date(request.args.get('start_date'), local_today())
+    days = parse_int(request.args.get('days')) or 7
+    plan_data = build_feed_preparation_plan(start_date=start_date, days=days)
+    return render_template(
+        'feed_preparation.html',
+        selected_start_date=start_date,
+        selected_days=plan_data['days'],
+        plan=plan_data,
+        phase_choices=FEED_PREPARATION_PHASES,
+    )
 
 
 @app.post('/nursery-feed/save-all')
