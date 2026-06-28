@@ -6160,13 +6160,22 @@ def nursery_cumulative_adjustments(lot_id: int | None, target_date: date):
         return {'factor': 1.0, 'events': []}
 
     adjustment_pct = record.score_adjustment_pct
-    if record.active_feed_factor is not None:
+    if adjustment_pct is not None:
+        # Ajuste manual/por score é sempre incremental sobre a correção que
+        # estava ativa antes deste lançamento. Recalcular aqui evita que um
+        # "Salvar todas as rações do dia" posterior sobrescreva um ajuste
+        # negativo já informado no card individual.
+        previous = nursery_cumulative_adjustments(lot_id, record.feed_date)
+        factor = nursery_next_active_feed_factor(previous.get('factor', 1.0), adjustment_pct)
+    elif record.active_feed_factor is not None:
         factor = float(record.active_feed_factor or 1.0)
     else:
-        # Compatibilidade com lançamentos antigos: usa o último percentual como
-        # fator ativo, sem reprocessar todo o histórico antigo do lote.
+        # Compatibilidade com lançamentos antigos sem active_feed_factor: aplica
+        # o percentual sugerido pelo score sobre a correção anterior, mantendo a
+        # mesma regra incremental usada nos lançamentos atuais.
         adjustment_pct = nursery_record_adjustment_pct(record)
-        factor = nursery_adjustment_pct_factor(adjustment_pct)
+        previous = nursery_cumulative_adjustments(lot_id, record.feed_date)
+        factor = nursery_next_active_feed_factor(previous.get('factor', 1.0), adjustment_pct)
 
     return {
         'factor': factor,
@@ -13775,7 +13784,15 @@ def save_all_stage_feed_entries_for_date(phase, target_date):
         entry.unit_id = unit.id
         entry.lot_id = lot.id
         entry.quantity_kg = plan.get('total_day_kg') or grams_to_kg(plan.get('total_day_g') or 0)
-        entry.active_feed_factor = plan.get('score_factor') or 1.0
+        if entry.score_adjustment_pct is not None:
+            previous_adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
+            entry.active_feed_factor = nursery_next_active_feed_factor(
+                previous_adjustment.get('factor', 1.0),
+                entry.score_adjustment_pct,
+            )
+        else:
+            plan_factor = plan.get('score_factor')
+            entry.active_feed_factor = plan_factor if plan_factor is not None else 1.0
         entry.water_items_json = json.dumps(selected_nursery_water_items_for_plan(plan), ensure_ascii=False)
         if not (entry.notes or '').strip():
             entry.notes = 'Salvo automaticamente pelo botão Salvar todas as rações do dia.'
