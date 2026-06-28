@@ -147,8 +147,8 @@
         </label>
         {% set existing_adjustment = plan.existing_entry.score_adjustment_pct if plan.existing_entry and plan.existing_entry.score_adjustment_pct is not none else none %}
         <label>Novo ajuste para amanhã (%)
-          <input type="number" step="0.1" name="score_adjustment_pct" class="score-adjustment-input" value="{{ '%.1f'|format(existing_adjustment) if existing_adjustment is not none else '' }}" placeholder="Ex.: vazio, 10 ou 0">
-          <span class="helper-text">Vazio mantém a correção ativa. +10 aplica 10% sobre o valor já corrigido. 0 zera e volta para a tabela.</span>
+          <input type="number" step="0.1" name="score_adjustment_pct" class="score-adjustment-input" value="{{ '%.1f'|format(existing_adjustment) if existing_adjustment is not none else '' }}" placeholder="Ex.: vazio, -15, 10 ou 0">
+          <span class="helper-text">Vazio mantém a correção ativa. +10 aumenta 10% sobre o valor já corrigido. -15 reduz 15% sobre o valor corrigido. 0 zera e volta para a tabela.</span>
         </label>
       </div>
       <div class="full selection-info score-adjustment-info">O score lançado hoje não altera a alimentação de hoje. A partir da próxima programação, o ajuste informado entra sobre a correção ativa. Ex.: se já está +10% e você lançar mais +10%, a correção ativa vira +21% sobre a tabela base. Deixe vazio para manter; digite 0 para zerar. Sugestão padrão: 0,0–1,0 +30%; 1,1–2,0 +20%; 2,1–3,0 +10%; 3,1–3,5 mantém; 3,6–4,0 -10%.</div>
