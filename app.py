@@ -1142,7 +1142,7 @@ def parse_int(value, default=None):
 # SP1 = PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO; RG1 = PROTOCOLO DE ALIMENTAÇÃO RIO GRANDE DO SUL.
 # As rações trituradas foram vinculadas ao estoque real conforme orientação:
 # - Triturada 500-900 -> AQUAVITA 40#1
-# - Triturada 800-1200 -> SAMARIA 40#2
+# - Triturada 800-1200 -> AQUAVITA 40#2 (equivalente da SAMARIA 40#2)
 # - Probiótico pastilha -> AQUAPRO ECO
 NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
          'sheet_name': 'Protocolo de Alimentacao SP1 -',
@@ -1978,7 +1978,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'biomass_kg': 151.156,
                    'estimated_fcr': None,
                    'mixes': [{'label': 'AQUAVITA 40#1', 'grams': 5384.9325},
-                             {'label': 'SAMARIA 40#2', 'grams': 1794.9775}],
+                             {'label': 'AQUAVITA 40#2', 'grams': 1794.9775}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -2013,7 +2013,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'biomass_kg': 162.9021,
                    'estimated_fcr': None,
                    'mixes': [{'label': 'AQUAVITA 40#1', 'grams': 3868.9255},
-                             {'label': 'SAMARIA 40#2', 'grams': 3868.9255}],
+                             {'label': 'AQUAVITA 40#2', 'grams': 3868.9255}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -2048,7 +2048,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'biomass_kg': 174.582,
                    'estimated_fcr': None,
                    'mixes': [{'label': 'AQUAVITA 40#1', 'grams': 2073.1613},
-                             {'label': 'SAMARIA 40#2', 'grams': 6219.4838}],
+                             {'label': 'AQUAVITA 40#2', 'grams': 6219.4838}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -2075,7 +2075,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 737.0243,
                    'biomass_kg': 186.1956,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 8844.2922}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 8844.2922}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -2102,7 +2102,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 782.7327,
                    'biomass_kg': 197.743,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 9392.7925}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 9392.7925}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -2143,7 +2143,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 828.1788,
                    'biomass_kg': 209.2241,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 9938.1459}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 9938.1459}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -2177,7 +2177,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 863.8696,
                    'biomass_kg': 218.2407,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 10366.4356}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 10366.4356}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -2204,7 +2204,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 908.8175,
                    'biomass_kg': 229.596,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 10905.81}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 10905.81}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -2231,7 +2231,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 953.5031,
                    'biomass_kg': 240.885,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 11442.0375}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 11442.0375}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3084,7 +3084,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'biomass_kg': 164.2752,
                    'estimated_fcr': None,
                    'mixes': [{'label': 'AQUAVITA 40#1', 'grams': 8993.7291},
-                             {'label': 'SAMARIA 40#2', 'grams': 2997.9097}],
+                             {'label': 'AQUAVITA 40#2', 'grams': 2997.9097}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3119,7 +3119,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'biomass_kg': 177.0408,
                    'estimated_fcr': None,
                    'mixes': [{'label': 'AQUAVITA 40#1', 'grams': 6138.659},
-                             {'label': 'SAMARIA 40#2', 'grams': 6138.659}],
+                             {'label': 'AQUAVITA 40#2', 'grams': 6138.659}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3154,7 +3154,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'biomass_kg': 189.7344,
                    'estimated_fcr': None,
                    'mixes': [{'label': 'AQUAVITA 40#1', 'grams': 3124.9267},
-                             {'label': 'SAMARIA 40#2', 'grams': 9374.7801}],
+                             {'label': 'AQUAVITA 40#2', 'grams': 9374.7801}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3181,7 +3181,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 1055.3881,
                    'biomass_kg': 202.356,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 12664.6572}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 12664.6572}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3208,7 +3208,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 1064.7985,
                    'biomass_kg': 214.9056,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 12777.5824}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 12777.5824}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3249,7 +3249,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 1070.2905,
                    'biomass_kg': 227.3832,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 12843.4866}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 12843.4866}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3283,7 +3283,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 1060.5945,
                    'biomass_kg': 237.1824,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 12727.1343}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 12727.1343}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3310,7 +3310,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 1059.9892,
                    'biomass_kg': 249.5232,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 12719.8709}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 12719.8709}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3337,7 +3337,7 @@ NURSERY_PROTOCOLS = {'sp1': {'name': 'PROTOCOLO DE ALIMENTAÇÃO SÃO PAULO',
                    'per_feeding_g': 1056.5024,
                    'biomass_kg': 261.792,
                    'estimated_fcr': None,
-                   'mixes': [{'label': 'SAMARIA 40#2', 'grams': 12678.0292}],
+                   'mixes': [{'label': 'AQUAVITA 40#2', 'grams': 12678.0292}],
                    'water_items': [{'label': 'Melaço',
                                     'source_label': 'Melaço (gr)',
                                     'category': 'aditivo',
@@ -3466,7 +3466,7 @@ def build_rg1_lote2_aquatec_rows():
         if t500:
             mixes.append({'label': 'AQUAVITA 40#1', 'grams': t500})
         if t800:
-            mixes.append({'label': 'SAMARIA 40#2', 'grams': t800})
+            mixes.append({'label': 'AQUAVITA 40#2', 'grams': t800})
         rows.append({
             'pl_stage': pl_stage,
             'day': day,
@@ -3506,16 +3506,16 @@ NURSERY_FEED_STOCK_ALIASES = {
     'mem 200 300': ['MeM 200-300', 'MEM 200-300', 'MeM 200/300', 'MEM 200/300'],
     'mem 300 500': ['MeM 300-500', 'MEM 300-500', 'MeM 300/500', 'MEM 300/500'],
     'triturada 1': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
-    'triturada 2': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
+    'triturada 2': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'AquaVita 40/2 (1,0-1,8mm)', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
     'triturada 500 900': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
     'triturada 500 900 um': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40 1'],
-    'triturada 800 1200': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
-    'triturada 800 1200 um': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
+    'triturada 800 1200': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'AquaVita 40/2 (1,0-1,8mm)', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
+    'triturada 800 1200 um': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'AquaVita 40/2 (1,0-1,8mm)', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
     'aquavita 40 1': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40/1'],
     'aquavita 40 1 0 5 1 0mm': ['AQUAVITA 40#1', 'AQUAVITA 40 #1', 'AQUAVITA 40/1'],
     'aquavita 40 2': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'AquaVita 40/2 (1,0-1,8mm)', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02', 'SAMARIA 40#2', 'SAMARIA 40 #2'],
     'aquavita 40 2 1 0 1 8mm': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'AquaVita 40/2 (1,0-1,8mm)', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02', 'SAMARIA 40#2', 'SAMARIA 40 #2'],
-    'samaria 40 2': ['SAMARIA 40#2', 'SAMARIA 40 #2', 'AQUAVITA 40#2', 'AQUAVITA 40 #2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
+    'samaria 40 2': ['AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'AquaVita 40/2 (1,0-1,8mm)', 'SAMARIA 40#2', 'SAMARIA 40 #2', 'SAMARIA 40 2', 'JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02'],
     # Mantém compatibilidade com nomes técnicos antigos que já possam estar no histórico.
     # Correção: SM Starter 400/#02 é equivalente da AQUAVITA 40#2, nunca da 40#1.
     'juvenil 40 sm starter 400': ['JUVENIL 40 - SM starter 400 E #02', 'JUVENIL 40 - SM starter 400', 'JUVENIL 40 - #02', 'AQUAVITA 40#2', 'AQUAVITA 40 #2', 'AQUAVITA 40/2', 'SAMARIA 40#2'],
@@ -5732,14 +5732,79 @@ def get_protocol_feed_labels(rows=None):
     return list(labels.keys())
 
 
+def protocol_feed_mapping_is_compatible(label: str, product) -> bool:
+    """Confere se um vínculo manual da tabela base aponta para a família correta.
+
+    Um vínculo salvo errado, como "AquaVita 40/1" apontando para "AquaVita 35",
+    não deve ser obedecido pela integração automática do Manejo Diário.
+    """
+    if not product:
+        return False
+    product_text = f'{product.full_name} {product.brand or ""} {product.feed_type or ""} {product.technical_summary or ""}'
+    try:
+        label_sizes = nursery_feed_size_tokens(label)
+        product_sizes = nursery_feed_size_tokens(product_text)
+        if label_sizes and product_sizes and not label_sizes.intersection(product_sizes):
+            return False
+        # Quando a linha do protocolo tem tamanho explícito, o produto também precisa
+        # carregar esse tamanho/grupo ou bater por alias forte. Isso bloqueia marca genérica.
+        if label_sizes and not product_sizes:
+            alias_norms = [normalize_text(item) for item in nursery_feed_stock_alias_labels(label)]
+            product_norms = [
+                normalize_text(product.full_name),
+                normalize_text(f'{product.brand} {product.feed_type}'),
+                normalize_text(f'{product.full_name} {product.technical_summary or ""}'),
+            ]
+            alias_norms = [item for item in alias_norms if item]
+            product_norms = [item for item in product_norms if item]
+            if not any(alias_norm == prod_norm or alias_norm in prod_norm for alias_norm in alias_norms for prod_norm in product_norms):
+                return False
+    except Exception:
+        return True
+    return True
+
+
+def _protocol_feed_map_product(mapping, requested_label: str):
+    if not mapping or not mapping.feed_product_id:
+        return None
+    product = db.session.get(FeedProduct, mapping.feed_product_id)
+    if protocol_feed_mapping_is_compatible(requested_label, product):
+        return product
+    return None
+
+
 def get_protocol_feed_map(label: str):
     label = (label or '').strip()
     if not label or not has_app_context():
         return None
     try:
+        # 1) Regra principal: obedecer ao vínculo EXATO salvo na aba
+        #    "Cadastro de ração" da Tabela Base de Alimentação.
         mapping = FeedingProtocolFeedMap.query.filter_by(protocol_label=label).first()
-        if mapping and mapping.feed_product_id:
-            return db.session.get(FeedProduct, mapping.feed_product_id)
+        product = _protocol_feed_map_product(mapping, label)
+        if product:
+            return product
+
+        # 2) Se o nome da linha mudou, mas é a mesma família/granulometria, reaproveita
+        #    o vínculo já salvo na Tabela Base. Ex.: coluna "AquaVita 40/2" vinculada
+        #    no cadastro também resolve uma linha antiga "SAMARIA 40#2".
+        label_sizes = nursery_feed_size_tokens(label)
+        if label_sizes:
+            compatible_maps = []
+            for candidate in FeedingProtocolFeedMap.query.filter(FeedingProtocolFeedMap.feed_product_id.isnot(None)).all():
+                candidate_sizes = nursery_feed_size_tokens(candidate.protocol_label or '')
+                if candidate_sizes and not label_sizes.intersection(candidate_sizes):
+                    continue
+                candidate_product = _protocol_feed_map_product(candidate, label)
+                if candidate_product:
+                    compatible_maps.append((
+                        2 if normalize_text(candidate.protocol_label or '') in [normalize_text(item) for item in nursery_feed_stock_alias_labels(label)] else 1,
+                        candidate.updated_at or datetime.min,
+                        candidate_product,
+                    ))
+            if compatible_maps:
+                compatible_maps.sort(key=lambda item: (item[0], item[1]), reverse=True)
+                return compatible_maps[0][2]
     except Exception:
         return None
     return None
@@ -6432,24 +6497,28 @@ def nursery_feed_alias_tokens(label: str):
 def nursery_feed_stock_alias_labels(label: str):
     """Retorna nomes equivalentes do estoque para itens técnicos da tabela do berçário."""
     normalized = normalize_text(label)
-    aliases = [label]
+    aliases = []
     for key, values in NURSERY_FEED_STOCK_ALIASES.items():
         if normalized == normalize_text(key):
+            # Quando existe uma equivalência operacional cadastrada, ela vem antes
+            # do texto original. Ex.: SAMARIA 40#2 deve procurar AquaVita 40#2
+            # antes de aceitar uma Samaria antiga no estoque.
             aliases.extend(values)
+            break
+    aliases.append(label)
     # A tabela nova já usa os nomes reais do estoque para as trituradas, mas mantemos
     # esta ponte para compatibilidade com linhas antigas chamadas "Triturada 1/2".
     return [item for item in dict.fromkeys(aliases) if (item or '').strip()]
 
 
 def nursery_feed_size_tokens(value: str):
-    """Extrai identificadores de tamanho usados nas rações do protocolo.
+    """Extrai identificadores de tamanho/grupo usados nas rações do protocolo.
 
-    A trava evita duas confusões comuns:
-    - NutriSphera 225 cair no produto 450, e vice-versa.
-    - AquaVita 40/2 cair por similaridade no produto 40#1.
-
-    No estoque da fazenda, "JUVENIL 40 - SM starter 400 E #02" é tratado
-    como equivalente operacional da AquaVita 40#2 / AquaVita 40/2.
+    Esta função é a trava principal contra baixa de estoque na ração errada.
+    Ela separa rações que compartilham a mesma marca, mas não são equivalentes:
+    AquaVita 40#1, AquaVita/Samaria 40#2, AquaVita JUV. 38, AquaVita 35
+    e IRCA/CarciMax 30. Assim, a busca nunca deve escolher AquaVita 35 só
+    porque o texto "AquaVita" aparece no protocolo da 40#1.
     """
     normalized = normalize_text(value)
     tokens = nursery_feed_alias_tokens(value)
@@ -6458,17 +6527,23 @@ def nursery_feed_size_tokens(value: str):
     if 'nutrisfera' in tokens or 'nutrisphera' in tokens:
         size_tokens.update(token for token in tokens if token in {'225', '450'})
 
-    # AquaVita 40/1: 0,5-1,0 mm. Evita casar com 40/2.
+    # Nomes técnicos antigos da tabela.
+    if 'triturada' in tokens or 'triturado' in tokens:
+        if all(token in tokens for token in {'500', '900'}) or 'triturada 1' in normalized:
+            size_tokens.add('40_1')
+        if all(token in tokens for token in {'800', '1200'}) or 'triturada 2' in normalized:
+            size_tokens.add('40_2')
+
+    # AquaVita 40/1: 0,5-1,0 mm. Evita casar com 40/2, 38 ou 35.
     if (
         'aquavita 40 1' in normalized
         or 'aquavita 40 01' in normalized
-        or ('aquavita' in tokens and '40' in tokens and ('#1' in value or ' 1' in f' {normalized} '))
+        or ('aquavita' in tokens and '40' in tokens and ('#1' in value or '/1' in value or '01' in tokens))
     ):
-        # Se a string também carrega 40/2, a prioridade é 40/2.
         if 'aquavita 40 2' not in normalized and 'aquavita 40 02' not in normalized:
             size_tokens.add('40_1')
 
-    # AquaVita 40/2 / #02 / SM Starter 400: 1,0-1,8 mm.
+    # AquaVita 40/2 / Samaria 40#2 / SM Starter 400 #02: 1,0-1,8 mm.
     if (
         'aquavita 40 2' in normalized
         or 'aquavita 40 02' in normalized
@@ -6479,6 +6554,14 @@ def nursery_feed_size_tokens(value: str):
     ):
         size_tokens.discard('40_1')
         size_tokens.add('40_2')
+
+    # Rações maiores do juvenil/engorda. Estas precisam ser incompatíveis com 40#1/40#2.
+    if ('aquavita' in tokens and '38' in tokens) or ('juv' in tokens and '38' in tokens):
+        size_tokens.add('38_15')
+    if 'aquavita' in tokens and '35' in tokens:
+        size_tokens.add('35_20')
+    if (('irca' in tokens or 'carcimax' in tokens) and '30' in tokens) or 'carcimax 30' in normalized:
+        size_tokens.add('30_24')
 
     return size_tokens
 
@@ -6510,15 +6593,25 @@ def find_nursery_feed_product_by_alias(label: str, products, exclude_product_id=
             normalize_text(f'{product.brand} {product.feed_type} {product.technical_summary or ""}'),
         ]
         product_norms = [item for item in product_norms if item]
-        for alias_norm in alias_norms:
-            # Correspondência exata continua preferida. A correspondência parcial só vale
-            # quando o número/tamanho da ração é compatível.
-            if any(alias_norm == prod_norm or alias_norm in prod_norm or prod_norm in alias_norm for prod_norm in product_norms):
-                candidate = (product.active, nursery_product_stock(product.id), product.full_name.lower(), product)
+        for alias_idx, alias_norm in enumerate(alias_norms):
+            # Correspondência exata ou alias contido no nome completo do produto.
+            # Não aceitamos mais o inverso (ex.: produto "AQUAVITA" dentro de
+            # alias "AQUAVITA 40#1"), porque isso fazia a AquaVita 35 vencer
+            # por saldo de estoque mesmo quando a linha do protocolo era 40#1.
+            match_quality = 0
+            for prod_norm in product_norms:
+                if alias_norm == prod_norm:
+                    match_quality = max(match_quality, 3)
+                elif alias_norm in prod_norm:
+                    match_quality = max(match_quality, 2)
+            if match_quality:
+                # Avalia todos os aliases do mesmo produto, não só o primeiro que bate.
+                # Assim "SAMARIA 40#2" pode preferir "AquaVita 40/2 (1,0-1,8mm)"
+                # quando essa equivalência estiver antes na lista operacional.
+                candidate = (match_quality, -alias_idx, product.active, nursery_product_stock(product.id), product.full_name.lower(), product)
                 if best is None or candidate > best:
                     best = candidate
-                break
-    return best[3] if best else None
+    return best[-1] if best else None
 
 
 def nursery_protocol_product_names():
@@ -6727,6 +6820,86 @@ def find_or_create_nursery_feed_product(label: str, exclude_product_id=None, cre
     db.session.add(product)
     db.session.flush()
     return product
+
+
+def repair_protocol_feed_maps():
+    """Limpa vínculos incompatíveis da tabela base e tenta religar ao produto correto.
+
+    O problema visto no Manejo Diário normalmente nasce de uma dessas duas fontes:
+    1) busca por similaridade ampla demais;
+    2) vínculo antigo da Tabela Base salvo em produto de outra granulometria.
+    Esta rotina corrige a segunda fonte na inicialização, sem criar produto novo.
+    """
+    if not has_app_context():
+        return
+    changed = False
+    try:
+        mappings = FeedingProtocolFeedMap.query.order_by(FeedingProtocolFeedMap.id.asc()).all()
+    except Exception:
+        return
+
+    for mapping in mappings:
+        label = (mapping.protocol_label or '').strip()
+        current_product = db.session.get(FeedProduct, mapping.feed_product_id) if mapping.feed_product_id else None
+        if mapping.feed_product_id and not protocol_feed_mapping_is_compatible(label, current_product):
+            mapping.feed_product_id = None
+            mapping.updated_at = datetime.utcnow()
+            changed = True
+
+        if not mapping.feed_product_id:
+            # Primeiro tenta reaproveitar o vínculo de uma coluna equivalente da Tabela Base
+            # antes de cair na busca por nome/estoque.
+            product = get_protocol_feed_map(label) or find_or_create_nursery_feed_product(label, create_missing=False)
+            if product and protocol_feed_mapping_is_compatible(label, product):
+                mapping.feed_product_id = product.id
+                mapping.updated_at = datetime.utcnow()
+                changed = True
+
+    if changed:
+        db.session.commit()
+
+
+def auto_nursery_mix_label_from_management(record) -> str | None:
+    notes = record.notes or ''
+    if '[Integração' not in notes or 'Produto do mix:' not in notes:
+        return None
+    match = re.search(r'^Produto do mix:\s*(.+?)\s*$', notes, flags=re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def repair_auto_nursery_management_feed_links():
+    """Reaponta baixas antigas do Manejo Diário para a ração correta do mix.
+
+    Só mexe em lançamentos criados pela integração da alimentação, identificados
+    pelas notas com "Produto do mix:". Manejos manuais ficam intactos.
+    """
+    if not has_app_context():
+        return
+    try:
+        records = DailyManagement.query.filter(
+            DailyManagement.feed_offered_kg > 0,
+            DailyManagement.notes.contains('Produto do mix:'),
+        ).order_by(DailyManagement.id.asc()).all()
+    except Exception:
+        return
+
+    changed = False
+    for record in records:
+        label = auto_nursery_mix_label_from_management(record)
+        if not label:
+            continue
+        product = find_or_create_nursery_feed_product(label, create_missing=False)
+        if not product or not protocol_feed_mapping_is_compatible(label, product):
+            continue
+        if record.feed_product_id == product.id:
+            continue
+        movement = get_management_feed_movement(record.id)
+        sync_management_feed_movement(record, product, record.feed_offered_kg or 0, existing_movement=movement)
+        record.updated_at = datetime.utcnow()
+        changed = True
+
+    if changed:
+        db.session.commit()
 
 
 def resolve_nursery_mix_label(label: str) -> str:
@@ -7744,6 +7917,8 @@ def run_lightweight_migrations():
     db.session.commit()
     sync_feed_products_from_legacy_movements()
     normalize_auto_nursery_feed_product_names()
+    repair_protocol_feed_maps()
+    repair_auto_nursery_management_feed_links()
     cleanup_ghost_feed_products()
 
 
