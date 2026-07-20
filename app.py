@@ -24,6 +24,9 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 import io
 from openpyxl import Workbook
+from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
@@ -590,6 +593,11 @@ class Sale(db.Model):
     unit_price = db.Column(db.Float, nullable=False)
     average_weight_g = db.Column(db.Float)
     harvested_units = db.Column(db.Integer)
+    # O fechamento precisa ficar persistido na própria despesca. Sem isso, o
+    # recálculo das alocações a partir das transferências pode reabrir um viveiro
+    # que já foi totalmente despescado.
+    close_unit_after_sale = db.Column(db.Boolean)
+    close_lot_after_sale = db.Column(db.Boolean)
     notes = db.Column(db.Text)
     unit = db.relationship('Unit')
     lot = db.relationship('Lot')
@@ -668,6 +676,18 @@ def money_filter(value):
     if value is None:
         value = 0
     return f'R$ {value:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+
+
+@app.template_filter('number_br')
+def number_br_filter(value, decimals=0):
+    if value is None:
+        return '—'
+    try:
+        decimals = int(decimals)
+        formatted = f'{float(value):,.{decimals}f}'
+        return formatted.replace(',', 'X').replace('.', ',').replace('X', '.')
+    except (TypeError, ValueError):
+        return str(value)
 
 
 @app.context_processor
@@ -7811,6 +7831,10 @@ def run_lightweight_migrations():
         sale_columns = get_columns('sale')
         add_column_if_missing('sale', sale_columns, 'average_weight_g', 'ALTER TABLE sale ADD COLUMN average_weight_g FLOAT', 'ALTER TABLE sale ADD COLUMN average_weight_g DOUBLE PRECISION')
         add_column_if_missing('sale', sale_columns, 'harvested_units', 'ALTER TABLE sale ADD COLUMN harvested_units INTEGER', 'ALTER TABLE sale ADD COLUMN harvested_units INTEGER')
+        # Sem DEFAULT de propósito: NULL identifica lançamentos antigos, permitindo
+        # inferir a intenção pelo mapa de alocações antes do primeiro recálculo.
+        add_column_if_missing('sale', sale_columns, 'close_unit_after_sale', 'ALTER TABLE sale ADD COLUMN close_unit_after_sale BOOLEAN', 'ALTER TABLE sale ADD COLUMN close_unit_after_sale BOOLEAN')
+        add_column_if_missing('sale', sale_columns, 'close_lot_after_sale', 'ALTER TABLE sale ADD COLUMN close_lot_after_sale BOOLEAN', 'ALTER TABLE sale ADD COLUMN close_lot_after_sale BOOLEAN')
 
     if 'nursery_feeding' in tables:
         nursery_feeding_columns = get_columns('nursery_feeding')
@@ -7913,6 +7937,7 @@ def run_lightweight_migrations():
     backfill_lot_allocations_and_status()
     sync_transfer_phase_history()
     sync_transfer_close_source_flags()
+    sync_sale_close_flags()
     rebuild_all_lot_allocations_from_transfer_history()
     db.session.commit()
     sync_feed_products_from_legacy_movements()
@@ -8029,6 +8054,59 @@ def sync_transfer_close_source_flags():
         if closed_source:
             transfer.close_source_after_transfer = True
             changed = True
+    if changed:
+        db.session.flush()
+
+
+def sync_sale_close_flags():
+    """Preserva fechamentos antigos de viveiro antes de reconstruir alocações.
+
+    As versões anteriores encerravam a alocação diretamente, mas não guardavam
+    essa escolha na tabela Sale. Quando o mapa era reconstruído apenas pelas
+    transferências, o viveiro despescado voltava a ficar ativo. Para registros
+    antigos (flags NULL), inferimos o fechamento pelo end_date já existente.
+    """
+    changed = False
+    for sale in Sale.query.order_by(Sale.sale_date.asc(), Sale.id.asc()).all():
+        if sale.close_unit_after_sale is not None or sale.close_lot_after_sale is not None:
+            continue
+
+        inferred_close_unit = False
+        inferred_close_lot = False
+        if sale.lot_id and sale.unit_id and sale.sale_date:
+            closed_allocation = LotUnitAllocation.query.filter(
+                LotUnitAllocation.lot_id == sale.lot_id,
+                LotUnitAllocation.unit_id == sale.unit_id,
+                LotUnitAllocation.end_date == sale.sale_date,
+            ).first()
+            inferred_close_unit = bool(closed_allocation)
+
+            lot = db.session.get(Lot, sale.lot_id)
+            if lot and lot.status == 'encerrado' and lot.end_date == sale.sale_date and lot.closed_reason == 'despesca_venda':
+                closed_units_same_day = {
+                    row.unit_id
+                    for row in LotUnitAllocation.query.filter(
+                        LotUnitAllocation.lot_id == sale.lot_id,
+                        LotUnitAllocation.start_date <= sale.sale_date,
+                        LotUnitAllocation.end_date == sale.sale_date,
+                        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+                    ).all()
+                    if row.unit_id
+                }
+                if len(closed_units_same_day) > 1:
+                    # Fechar várias unidades na mesma despesca só acontece quando
+                    # foi solicitado o encerramento do lote inteiro.
+                    inferred_close_lot = True
+                    inferred_close_unit = True
+                else:
+                    # Último viveiro do lote: basta persistir o fechamento da unidade;
+                    # o recálculo encerrará o lote automaticamente por não haver saldo.
+                    inferred_close_unit = True
+
+        sale.close_unit_after_sale = inferred_close_unit
+        sale.close_lot_after_sale = inferred_close_lot
+        changed = True
+
     if changed:
         db.session.flush()
 
@@ -8222,6 +8300,14 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             'inferred_first_source': False,
         }
 
+    # Fechamentos gerados por despesca serão reaplicados abaixo a partir das flags
+    # persistidas em Sale. Isso permite editar a despesca e também evita que o
+    # recálculo das transferências reabra a unidade encerrada.
+    if lot.status == 'encerrado' and lot.closed_reason == 'despesca_venda':
+        lot.status = 'ativo'
+        lot.end_date = None
+        lot.closed_reason = None
+
     final_end_date = lot.end_date if lot.status == 'encerrado' else None
     for unit_id, payload in state.items():
         add_allocation(
@@ -8233,6 +8319,8 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             payload.get('phase'),
         )
 
+    db.session.flush()
+    apply_sale_closures_to_lot(lot, cleanup_future=True)
     db.session.flush()
     return warnings
 
@@ -8281,9 +8369,48 @@ def sync_lot_allocations_after_lot_edit(lot: Lot, old_unit_id=None, old_initial_
     return
 
 
-def close_lot(lot: Lot, close_date: date, reason: str = 'encerrado_manual'):
+def cleanup_future_stage_feed_entries_for_closed_allocation(lot_id: int, unit_id: int, close_date: date) -> int:
+    """Remove apenas rações automáticas inválidas após o fechamento do viveiro.
+
+    Se o mesmo lote voltar futuramente para a unidade por uma nova transferência,
+    os lançamentos dessa nova alocação são preservados. Registros manuais do Manejo
+    Diário não são apagados; o cálculo do FCR os valida pelo período da alocação.
+    """
+    if not lot_id or not unit_id or not close_date:
+        return 0
+    removed = 0
+    future_entries = NurseryFeeding.query.filter(
+        NurseryFeeding.lot_id == lot_id,
+        NurseryFeeding.unit_id == unit_id,
+        NurseryFeeding.feed_date > close_date,
+    ).all()
+    for entry in future_entries:
+        if find_active_allocation(lot_id, unit_id, entry.feed_date):
+            continue
+        delete_nursery_management_records(entry)
+        db.session.delete(entry)
+        removed += 1
+    return removed
+
+
+def cleanup_future_stage_feed_entries_for_closed_lot(lot_id: int, close_date: date) -> int:
+    if not lot_id or not close_date:
+        return 0
+    removed = 0
+    entries = NurseryFeeding.query.filter(
+        NurseryFeeding.lot_id == lot_id,
+        NurseryFeeding.feed_date > close_date,
+    ).all()
+    for entry in entries:
+        delete_nursery_management_records(entry)
+        db.session.delete(entry)
+        removed += 1
+    return removed
+
+
+def close_lot(lot: Lot, close_date: date, reason: str = 'encerrado_manual', cleanup_future: bool = True):
     if not lot:
-        return
+        return 0
     lot.status = 'encerrado'
     lot.end_date = close_date
     lot.closed_reason = reason
@@ -8291,6 +8418,70 @@ def close_lot(lot: Lot, close_date: date, reason: str = 'encerrado_manual'):
         LotUnitAllocation.lot_id == lot.id,
         or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date > close_date),
     ).update({'end_date': close_date}, synchronize_session=False)
+    return cleanup_future_stage_feed_entries_for_closed_lot(lot.id, close_date) if cleanup_future else 0
+
+
+def apply_sale_closures_to_lot(lot: Lot, cleanup_future: bool = True):
+    """Reaplica fechamentos de despesca sem encerrar indevidamente o lote inteiro.
+
+    Cada venda pode encerrar somente a unidade correspondente. O lote permanece
+    ativo enquanto houver qualquer outra alocação com saldo após a data da venda.
+    """
+    result = {'closed_units': 0, 'closed_lot': False, 'removed_future_feeds': 0}
+    if not lot or not lot.id:
+        return result
+
+    sales = Sale.query.filter(Sale.lot_id == lot.id).order_by(Sale.sale_date.asc(), Sale.id.asc()).all()
+    for sale in sales:
+        if not sale.sale_date:
+            continue
+
+        if sale.close_lot_after_sale is True:
+            result['removed_future_feeds'] += close_lot(
+                lot,
+                sale.sale_date,
+                reason='despesca_venda',
+                cleanup_future=cleanup_future,
+            )
+            result['closed_lot'] = True
+            break
+
+        if sale.close_unit_after_sale is not True or not sale.unit_id:
+            continue
+
+        allocation = find_active_allocation(lot.id, sale.unit_id, sale.sale_date)
+        if allocation:
+            if allocation.end_date is None or allocation.end_date > sale.sale_date:
+                allocation.end_date = sale.sale_date
+            # Mantém quantity_allocated para histórico, rateio e fotografia da
+            # despesca. A data final já impede a unidade de aparecer nos dias seguintes.
+            result['closed_units'] += 1
+            db.session.flush()
+
+        if cleanup_future:
+            result['removed_future_feeds'] += cleanup_future_stage_feed_entries_for_closed_allocation(
+                lot.id,
+                sale.unit_id,
+                sale.sale_date,
+            )
+
+        remaining = LotUnitAllocation.query.filter(
+            LotUnitAllocation.lot_id == lot.id,
+            LotUnitAllocation.start_date <= sale.sale_date,
+            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date > sale.sale_date),
+            or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+        ).count()
+        if remaining == 0:
+            result['removed_future_feeds'] += close_lot(
+                lot,
+                sale.sale_date,
+                reason='despesca_venda',
+                cleanup_future=cleanup_future,
+            )
+            result['closed_lot'] = True
+            break
+
+    return result
 
 
 def lot_current_units(lot: Lot, on_date=None):
@@ -8523,6 +8714,36 @@ def lot_total_revenue(lot_id: int):
     return round(total, 2)
 
 
+def lot_allocation_periods_by_unit(lot_id: int):
+    periods = defaultdict(list)
+    if not lot_id:
+        return periods
+    allocations = LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot_id,
+        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+    ).order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc()).all()
+    for allocation in allocations:
+        periods[allocation.unit_id].append((allocation.start_date, allocation.end_date))
+    return periods
+
+
+def date_is_inside_allocation_period(periods_by_unit, unit_id: int | None, target_date: date | None):
+    """Valida se um lançamento pertence a um período operacional do viveiro.
+
+    Lançamentos antigos sem unidade, ou lotes legados ainda sem mapa de alocação,
+    continuam sendo aceitos para não apagar histórico válido.
+    """
+    if not target_date or not unit_id:
+        return True
+    unit_periods = periods_by_unit.get(unit_id)
+    if not unit_periods:
+        return not bool(periods_by_unit)
+    return any(
+        start_date and start_date <= target_date and (end_date is None or end_date >= target_date)
+        for start_date, end_date in unit_periods
+    )
+
+
 def lot_total_feed_offered_kg(lot_id: int, start_date: date | None = None, end_date: date | None = None, include_unsynced_nursery: bool = True):
     """Total de ração ofertada do lote em kg.
 
@@ -8533,12 +8754,17 @@ def lot_total_feed_offered_kg(lot_id: int, start_date: date | None = None, end_d
     """
     if not lot_id:
         return 0.0
-    query = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(DailyManagement.lot_id == lot_id)
+    periods_by_unit = lot_allocation_periods_by_unit(lot_id)
+    query = DailyManagement.query.filter(DailyManagement.lot_id == lot_id)
     if start_date:
         query = query.filter(DailyManagement.manage_date >= start_date)
     if end_date:
         query = query.filter(DailyManagement.manage_date <= end_date)
-    total = float(query.scalar() or 0)
+    total = sum(
+        float(record.feed_offered_kg or 0)
+        for record in query.all()
+        if date_is_inside_allocation_period(periods_by_unit, record.unit_id, record.manage_date)
+    )
 
     if include_unsynced_nursery:
         nursery_query = NurseryFeeding.query.filter(NurseryFeeding.lot_id == lot_id)
@@ -8548,6 +8774,8 @@ def lot_total_feed_offered_kg(lot_id: int, start_date: date | None = None, end_d
             nursery_query = nursery_query.filter(NurseryFeeding.feed_date <= end_date)
         for entry in nursery_query.all():
             if not entry.id:
+                continue
+            if not date_is_inside_allocation_period(periods_by_unit, entry.unit_id, entry.feed_date):
                 continue
             sync_query = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(
                 DailyManagement.lot_id == lot_id,
@@ -9695,6 +9923,36 @@ def dashboard_data():
         sales_records = []
         transfer_records = []
         allocation_records = []
+
+    # Não deixa registros lançados fora do período real daquele viveiro aparecerem
+    # no dashboard (ração do dia, último manejo, biometria e demais indicadores).
+    # Isso é essencial quando apenas um viveiro do lote foi despescado e o lote
+    # continua ativo em outra unidade.
+    allocation_periods_by_lot = defaultdict(lambda: defaultdict(list))
+    for allocation in allocation_records:
+        if allocation.quantity_allocated is not None and allocation.quantity_allocated <= 0:
+            continue
+        allocation_periods_by_lot[allocation.lot_id][allocation.unit_id].append(
+            (allocation.start_date, allocation.end_date)
+        )
+
+    def record_belongs_to_operational_period(lot_id, unit_id, record_date):
+        if not lot_id:
+            return True
+        return date_is_inside_allocation_period(
+            allocation_periods_by_lot.get(lot_id, {}),
+            unit_id,
+            record_date,
+        )
+
+    mgmt_records = [
+        record for record in mgmt_records
+        if record_belongs_to_operational_period(record.lot_id, record.unit_id, record.manage_date)
+    ]
+    nursery_records = [
+        record for record in nursery_records
+        if record_belongs_to_operational_period(record.lot_id, record.unit_id, record.feed_date)
+    ]
 
     records_by_lot = defaultdict(list)
     for record in mgmt_records:
@@ -13824,6 +14082,606 @@ def delete_supply_product(product_id):
     return redirect(url_for('supplies_page'))
 
 
+LOT_REPORT_PHASE_ORDER = ('bercario', 'juvenil', 'engorda')
+LOT_REPORT_PHASE_LABELS = {'bercario': 'Berçário', 'juvenil': 'Juvenil', 'engorda': 'Engorda'}
+
+
+def lot_report_phase_label(value):
+    phase = normalize_phase_value(value)
+    return LOT_REPORT_PHASE_LABELS.get(phase, value or 'Não identificada')
+
+
+def lot_report_weighted_average(rows, value_key, weight_key):
+    weighted_total = 0.0
+    weight_total = 0.0
+    for row in rows:
+        value = parse_float(row.get(value_key), None)
+        weight = parse_float(row.get(weight_key), None)
+        if value is None or weight is None or weight <= 0:
+            continue
+        weighted_total += value * weight
+        weight_total += weight
+    return round(weighted_total / weight_total, 3) if weight_total > 0 else None
+
+
+def lot_report_union_days(intervals):
+    """Conta dias corridos únicos, sem duplicar dias quando o lote está dividido."""
+    normalized = sorted(
+        [(start, end) for start, end in intervals if start and end and end >= start],
+        key=lambda item: (item[0], item[1]),
+    )
+    if not normalized:
+        return 0
+    merged = []
+    for start, end in normalized:
+        if not merged or start > merged[-1][1] + timedelta(days=1):
+            merged.append([start, end])
+        elif end > merged[-1][1]:
+            merged[-1][1] = end
+    return sum((end - start).days + 1 for start, end in merged)
+
+
+def lot_report_phase_for_date(lot_id, unit_id, target_date, fallback=None):
+    if lot_id and unit_id and target_date:
+        allocation = find_active_allocation(lot_id, unit_id, target_date)
+        phase = allocation_operational_phase(allocation)
+        if phase:
+            return phase
+    phase = normalize_phase_value(fallback)
+    if phase:
+        return phase
+    unit = db.session.get(Unit, unit_id) if unit_id else None
+    return normalize_phase_value(unit.phase if unit else None)
+
+
+def lot_report_transfer_phase(transfer, side):
+    if side == 'source':
+        return normalize_phase_value(transfer.source_phase) or normalize_phase_value(transfer.source_unit.phase if transfer.source_unit else None)
+    return normalize_phase_value(transfer.destination_phase) or normalize_phase_value(transfer.destination_unit.phase if transfer.destination_unit else None)
+
+
+def lot_report_current_count(lot, on_date):
+    rows = LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+    ).all()
+    return int(sum(int(row.quantity_allocated or 0) for row in rows))
+
+
+def lot_report_fixed_cost(lot, report_end):
+    """Rateia custos fixos no histórico sem excluir lotes que hoje estão encerrados."""
+    if not lot or not lot.start_date or not report_end or report_end < lot.start_date:
+        return 0.0
+    total = 0.0
+    cursor = lot.start_date
+    while cursor <= report_end:
+        fixed_costs = FixedCost.query.filter(
+            FixedCost.start_date <= cursor,
+            or_(FixedCost.end_date.is_(None), FixedCost.end_date >= cursor),
+            FixedCost.active.is_(True),
+        ).all()
+        if fixed_costs:
+            allocations = (
+                LotUnitAllocation.query
+                .join(Lot, Lot.id == LotUnitAllocation.lot_id)
+                .filter(
+                    LotUnitAllocation.start_date <= cursor,
+                    or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= cursor),
+                    or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+                    Lot.start_date <= cursor,
+                    or_(Lot.end_date.is_(None), Lot.end_date >= cursor),
+                )
+                .all()
+            )
+            divisor = len(allocations) or 1
+            lot_allocations = sum(1 for allocation in allocations if allocation.lot_id == lot.id)
+            if lot_allocations:
+                daily_cost = sum(float(cost.monthly_amount or 0) / 30 for cost in fixed_costs)
+                total += daily_cost * (lot_allocations / divisor)
+        cursor += timedelta(days=1)
+    return round(total, 2)
+
+
+def lot_report_harvested_units(sales):
+    total = 0
+    for sale in sales:
+        harvested = int(sale.harvested_units or 0)
+        if harvested <= 0 and sale.average_weight_g and sale.quantity_kg:
+            harvested = int(round((sale.quantity_kg * 1000) / sale.average_weight_g))
+        total += max(harvested, 0)
+    return total
+
+
+def lot_report_feed_name(record):
+    if record.feed_product:
+        return record.feed_product.full_name
+    notes = (record.notes or '').strip()
+    if notes:
+        match = re.search(r'(?:ração|racao)\s*[:\-]\s*([^|;]+)', notes, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return 'Ração sem identificação'
+
+
+def build_lot_final_report(lot: Lot):
+    """Monta o relatório zootécnico final/atual de um lote, fase por fase."""
+    if not lot:
+        return None
+
+    allocations = (
+        LotUnitAllocation.query.options(joinedload(LotUnitAllocation.unit))
+        .filter(LotUnitAllocation.lot_id == lot.id)
+        .order_by(LotUnitAllocation.start_date.asc(), LotUnitAllocation.id.asc())
+        .all()
+    )
+    transfers = (
+        Transfer.query.options(joinedload(Transfer.source_unit), joinedload(Transfer.destination_unit))
+        .filter(Transfer.source_lot_id == lot.id)
+        .order_by(Transfer.transfer_date.asc(), Transfer.id.asc())
+        .all()
+    )
+    management_rows = (
+        DailyManagement.query.options(joinedload(DailyManagement.unit), joinedload(DailyManagement.feed_product))
+        .filter(DailyManagement.lot_id == lot.id)
+        .order_by(DailyManagement.manage_date.asc(), DailyManagement.id.asc())
+        .all()
+    )
+    nursery_rows = (
+        NurseryFeeding.query.options(joinedload(NurseryFeeding.unit))
+        .filter(NurseryFeeding.lot_id == lot.id)
+        .order_by(NurseryFeeding.feed_date.asc(), NurseryFeeding.id.asc())
+        .all()
+    )
+    biometrics = (
+        BiometricsSample.query.options(joinedload(BiometricsSample.unit))
+        .filter(BiometricsSample.lot_id == lot.id)
+        .order_by(BiometricsSample.sample_date.asc(), BiometricsSample.id.asc())
+        .all()
+    )
+    sales = (
+        Sale.query.options(joinedload(Sale.unit))
+        .filter(Sale.lot_id == lot.id)
+        .order_by(Sale.sale_date.asc(), Sale.id.asc())
+        .all()
+    )
+
+    activity_dates = [lot.start_date]
+    activity_dates.extend(row.end_date for row in allocations if row.end_date)
+    activity_dates.extend(row.transfer_date for row in transfers if row.transfer_date)
+    activity_dates.extend(row.manage_date for row in management_rows if row.manage_date)
+    activity_dates.extend(row.sample_date for row in biometrics if row.sample_date)
+    activity_dates.extend(row.sale_date for row in sales if row.sale_date)
+    report_end = lot.end_date or (local_today() if lot.status == 'ativo' else max((day for day in activity_dates if day), default=local_today()))
+    if report_end < lot.start_date:
+        report_end = lot.start_date
+
+    phase_map = {
+        phase: {
+            'phase': phase,
+            'label': LOT_REPORT_PHASE_LABELS[phase],
+            'intervals': [],
+            'units': set(),
+            'entry_qty': 0,
+            'transferred_out_qty': 0,
+            'harvested_units': 0,
+            'current_qty': 0,
+            'entry_weight_rows': [],
+            'exit_weight_rows': [],
+            'feed_kg': 0.0,
+            'feed_cost': 0.0,
+            'biometry_count': 0,
+        }
+        for phase in LOT_REPORT_PHASE_ORDER
+    }
+
+    for allocation in allocations:
+        phase = allocation_operational_phase(allocation) or normalize_phase_value(lot.phase)
+        if phase not in phase_map or not allocation.start_date:
+            continue
+        end_date = allocation.end_date or report_end
+        if end_date > report_end:
+            end_date = report_end
+        if end_date < allocation.start_date:
+            continue
+        phase_map[phase]['intervals'].append((allocation.start_date, end_date))
+        if allocation.unit:
+            phase_map[phase]['units'].add(allocation.unit.name)
+
+    dated_allocations = [row for row in allocations if row.start_date]
+    initial_phase = None
+    if dated_allocations:
+        first_allocation = min(dated_allocations, key=lambda row: (row.start_date, row.id or 0))
+        initial_phase = allocation_operational_phase(first_allocation)
+    initial_phase = initial_phase or normalize_phase_value(lot.phase) or 'bercario'
+    if initial_phase in phase_map:
+        phase_map[initial_phase]['entry_qty'] = int(lot.initial_count or 0)
+        initial_weight = lot_initial_weight_g_for_fcr(lot)
+        if initial_weight is not None:
+            phase_map[initial_phase]['entry_weight_rows'].append({'weight_g': initial_weight, 'qty': lot.initial_count or 1})
+
+    transfer_rows = []
+    for transfer in transfers:
+        if not transfer.transfer_date or transfer.transfer_date > report_end:
+            continue
+        source_phase = lot_report_transfer_phase(transfer, 'source')
+        destination_phase = lot_report_transfer_phase(transfer, 'destination')
+        quantity = int(transfer.transferred_qty or 0)
+        source_period = next((
+            allocation for allocation in reversed(allocations)
+            if allocation.unit_id == transfer.source_unit_id
+            and allocation.start_date
+            and allocation.start_date <= transfer.transfer_date
+            and (allocation.end_date is None or allocation.end_date >= transfer.transfer_date - timedelta(days=1))
+        ), None)
+        days_in_source = None
+        if source_period and transfer.transfer_date:
+            days_in_source = max((transfer.transfer_date - source_period.start_date).days, 0)
+
+        transfer_rows.append({
+            'date': transfer.transfer_date,
+            'source_unit': transfer.source_unit.name if transfer.source_unit else '—',
+            'destination_unit': transfer.destination_unit.name if transfer.destination_unit else '—',
+            'source_phase': source_phase,
+            'source_phase_label': lot_report_phase_label(source_phase),
+            'destination_phase': destination_phase,
+            'destination_phase_label': lot_report_phase_label(destination_phase),
+            'quantity': quantity,
+            'average_weight_g': transfer.avg_weight_g,
+            'days_in_source': days_in_source,
+            'closed_source': bool(transfer.close_source_after_transfer),
+            'notes': transfer.notes,
+        })
+
+        if source_phase in phase_map and destination_phase in phase_map and source_phase != destination_phase:
+            phase_map[source_phase]['transferred_out_qty'] += quantity
+            phase_map[destination_phase]['entry_qty'] += quantity
+            if transfer.avg_weight_g is not None:
+                phase_map[source_phase]['exit_weight_rows'].append({'weight_g': transfer.avg_weight_g, 'qty': quantity or 1})
+                phase_map[destination_phase]['entry_weight_rows'].append({'weight_g': transfer.avg_weight_g, 'qty': quantity or 1})
+
+    periods_by_unit = lot_allocation_periods_by_unit(lot.id)
+    feed_groups = defaultdict(lambda: {'quantity_kg': 0.0, 'cost': 0.0, 'records': 0})
+    feed_without_product_kg = 0.0
+    for record in management_rows:
+        if not record.manage_date or record.manage_date > report_end or not date_is_inside_allocation_period(periods_by_unit, record.unit_id, record.manage_date):
+            continue
+        quantity = float(record.feed_offered_kg or 0)
+        if quantity <= 0:
+            continue
+        phase = lot_report_phase_for_date(lot.id, record.unit_id, record.manage_date, record.unit.phase if record.unit else lot.phase)
+        phase = phase if phase in phase_map else initial_phase
+        feed_name = lot_report_feed_name(record)
+        cost = float(record.feed_total_cost or 0)
+        if cost <= 0 and record.feed_unit_cost:
+            cost = quantity * float(record.feed_unit_cost or 0)
+        group = feed_groups[(phase, feed_name)]
+        group['quantity_kg'] += quantity
+        group['cost'] += cost
+        group['records'] += 1
+        if phase in phase_map:
+            phase_map[phase]['feed_kg'] += quantity
+            phase_map[phase]['feed_cost'] += cost
+        if not record.feed_product_id:
+            feed_without_product_kg += quantity
+
+    for entry in nursery_rows:
+        if not entry.feed_date or entry.feed_date > report_end or not date_is_inside_allocation_period(periods_by_unit, entry.unit_id, entry.feed_date):
+            continue
+        synced_total = db.session.query(func.coalesce(func.sum(DailyManagement.feed_offered_kg), 0)).filter(
+            DailyManagement.lot_id == lot.id,
+            DailyManagement.unit_id == entry.unit_id,
+            DailyManagement.manage_date == entry.feed_date,
+            DailyManagement.notes.contains(nursery_management_source_marker(entry.id)),
+        ).scalar() or 0
+        if float(synced_total or 0) > 0:
+            continue
+        quantity = float(entry.quantity_kg or 0)
+        if quantity <= 0:
+            continue
+        phase = lot_report_phase_for_date(lot.id, entry.unit_id, entry.feed_date, entry.unit.phase if entry.unit else 'bercario') or 'bercario'
+        feed_name = 'Histórico de berçário sem detalhamento do produto'
+        group = feed_groups[(phase, feed_name)]
+        group['quantity_kg'] += quantity
+        group['records'] += 1
+        if phase in phase_map:
+            phase_map[phase]['feed_kg'] += quantity
+
+    feed_rows = []
+    for (phase, feed_name), values in sorted(feed_groups.items(), key=lambda item: (LOT_REPORT_PHASE_ORDER.index(item[0][0]) if item[0][0] in LOT_REPORT_PHASE_ORDER else 99, -item[1]['quantity_kg'], item[0][1])):
+        feed_rows.append({
+            'phase': phase,
+            'phase_label': lot_report_phase_label(phase),
+            'feed_name': feed_name,
+            'quantity_kg': round(values['quantity_kg'], 3),
+            'cost': round(values['cost'], 2),
+            'records': values['records'],
+        })
+
+    biometry_rows = []
+    for sample in biometrics:
+        if not sample.sample_date or sample.sample_date > report_end:
+            continue
+        phase = lot_report_phase_for_date(lot.id, sample.unit_id, sample.sample_date, sample.unit.phase if sample.unit else lot.phase)
+        expected = feeding_table_expected_weight_for_lot(
+            lot,
+            target_date=sample.sample_date,
+            age_days=max((sample.sample_date - lot.start_date).days, 0),
+            operational_phase=phase,
+        )
+        expected_weight = float(expected.get('expected_weight_g') or 0) if expected else None
+        deviation_pct = None
+        if expected_weight and sample.average_weight_g is not None:
+            deviation_pct = round(((sample.average_weight_g - expected_weight) / expected_weight) * 100, 1)
+        biometry_rows.append({
+            'date': sample.sample_date,
+            'phase': phase,
+            'phase_label': lot_report_phase_label(phase),
+            'unit_name': sample.unit.name if sample.unit else '—',
+            'sample_size': sample.sample_size,
+            'average_weight_g': sample.average_weight_g,
+            'cv_pct': sample.cv_pct,
+            'estimated_biomass_kg': sample.estimated_biomass_kg,
+            'weekly_gain_g': sample.weekly_gain_g,
+            'expected_weight_g': round(expected_weight, 3) if expected_weight else None,
+            'deviation_pct': deviation_pct,
+            'notes': sample.notes,
+        })
+        if phase in phase_map:
+            phase_map[phase]['biometry_count'] += 1
+
+    sale_rows = []
+    sale_weight_rows = defaultdict(list)
+    for sale in sales:
+        if not sale.sale_date or sale.sale_date > report_end:
+            continue
+        phase = lot_report_phase_for_date(lot.id, sale.unit_id, sale.sale_date, sale.unit.phase if sale.unit else lot.phase)
+        harvested_units = int(sale.harvested_units or 0)
+        if harvested_units <= 0 and sale.average_weight_g and sale.quantity_kg:
+            harvested_units = int(round((sale.quantity_kg * 1000) / sale.average_weight_g))
+        revenue = round(float(sale.quantity_kg or 0) * float(sale.unit_price or 0), 2)
+        sale_rows.append({
+            'date': sale.sale_date,
+            'phase': phase,
+            'phase_label': lot_report_phase_label(phase),
+            'unit_name': sale.unit.name if sale.unit else '—',
+            'client_name': sale.client_name,
+            'channel': sale.channel,
+            'quantity_kg': round(float(sale.quantity_kg or 0), 2),
+            'unit_price': round(float(sale.unit_price or 0), 2),
+            'revenue': revenue,
+            'average_weight_g': sale.average_weight_g,
+            'harvested_units': harvested_units,
+            'closed_unit': bool(sale.close_unit_after_sale),
+            'closed_lot': bool(sale.close_lot_after_sale),
+            'notes': sale.notes,
+        })
+        if phase in phase_map:
+            phase_map[phase]['harvested_units'] += harvested_units
+            if sale.average_weight_g is not None:
+                sale_weight_rows[phase].append({'weight_g': sale.average_weight_g, 'qty': harvested_units or max(int(sale.quantity_kg or 0), 1)})
+
+    active_on_end = LotUnitAllocation.query.filter(
+        LotUnitAllocation.lot_id == lot.id,
+        LotUnitAllocation.start_date <= report_end,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= report_end),
+        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+    ).all()
+    for allocation in active_on_end:
+        phase = allocation_operational_phase(allocation)
+        if phase in phase_map:
+            phase_map[phase]['current_qty'] += int(allocation.quantity_allocated or 0)
+
+    phase_rows = []
+    for phase in LOT_REPORT_PHASE_ORDER:
+        payload = phase_map[phase]
+        if not payload['intervals'] and not payload['feed_kg'] and not payload['biometry_count'] and not payload['entry_qty'] and not payload['harvested_units']:
+            continue
+        start_date = min((item[0] for item in payload['intervals']), default=None)
+        end_date = max((item[1] for item in payload['intervals']), default=None)
+        entry_weight = lot_report_weighted_average(payload['entry_weight_rows'], 'weight_g', 'qty')
+        exit_weight = lot_report_weighted_average(payload['exit_weight_rows'], 'weight_g', 'qty')
+        if sale_weight_rows.get(phase):
+            exit_weight = lot_report_weighted_average(sale_weight_rows[phase], 'weight_g', 'qty') or exit_weight
+        phase_biometrics = [row for row in biometry_rows if row['phase'] == phase]
+        if entry_weight is None and phase_biometrics:
+            entry_weight = phase_biometrics[0]['average_weight_g']
+        if exit_weight is None and phase_biometrics:
+            exit_weight = phase_biometrics[-1]['average_weight_g']
+        phase_rows.append({
+            'phase': phase,
+            'label': payload['label'],
+            'start_date': start_date,
+            'end_date': end_date,
+            'days': lot_report_union_days(payload['intervals']),
+            'units': sorted(payload['units']),
+            'entry_qty': int(payload['entry_qty'] or 0),
+            'transferred_out_qty': int(payload['transferred_out_qty'] or 0),
+            'harvested_units': int(payload['harvested_units'] or 0),
+            'current_qty': int(payload['current_qty'] or 0),
+            'entry_weight_g': round(entry_weight, 3) if entry_weight is not None else None,
+            'exit_weight_g': round(exit_weight, 3) if exit_weight is not None else None,
+            'feed_kg': round(payload['feed_kg'], 3),
+            'feed_cost': round(payload['feed_cost'], 2),
+            'biometry_count': payload['biometry_count'],
+        })
+
+    total_feed_kg = round(sum(row['quantity_kg'] for row in feed_rows), 3)
+    total_feed_cost = round(sum(row['cost'] for row in feed_rows), 2)
+    total_harvest_kg = round(sum(row['quantity_kg'] for row in sale_rows), 2)
+    harvested_units = sum(row['harvested_units'] for row in sale_rows)
+    current_count = lot_report_current_count(lot, report_end) if lot.status == 'ativo' else 0
+    accounted_units = harvested_units + current_count
+    survival_pct = round((accounted_units / lot.initial_count) * 100, 2) if lot.initial_count else None
+    average_harvest_weight = lot_report_weighted_average(
+        [{'weight_g': row['average_weight_g'], 'qty': row['harvested_units']} for row in sale_rows],
+        'weight_g',
+        'qty',
+    )
+    revenue = round(sum(row['revenue'] for row in sale_rows), 2)
+    supply_cost = 0.0
+    supply_usages = (
+        ManagementSupplyUsage.query
+        .join(DailyManagement, DailyManagement.id == ManagementSupplyUsage.management_id)
+        .filter(DailyManagement.lot_id == lot.id)
+        .all()
+    )
+    for usage in supply_usages:
+        management = usage.management
+        if not management or not management.manage_date or management.manage_date > report_end:
+            continue
+        if not date_is_inside_allocation_period(periods_by_unit, management.unit_id, management.manage_date):
+            continue
+        supply_cost += float(usage.total_cost or 0)
+    supply_cost = round(supply_cost, 2)
+    larva_cost = lot_larva_cost(lot)
+    fixed_cost = lot_report_fixed_cost(lot, report_end)
+    total_cost = round(total_feed_cost + supply_cost + larva_cost + fixed_cost, 2)
+    if lot.status == 'ativo':
+        fcr_snapshot = lot_partial_fcr_snapshot(lot, on_date=report_end)
+        fcr = fcr_snapshot.get('fcr')
+        biomass_gain_kg = fcr_snapshot.get('biomass_gain_kg')
+    else:
+        fcr = round(total_feed_kg / total_harvest_kg, 2) if total_harvest_kg > 0 else None
+        biomass_gain_kg = total_harvest_kg
+
+    growth_by_date = {}
+    for observation in merged_weight_observations(lot.id):
+        target_date = observation.get('date')
+        if not target_date or target_date > report_end:
+            continue
+        active_phases = [
+            allocation_operational_phase(allocation)
+            for allocation in allocations
+            if allocation.start_date and allocation.start_date <= target_date and (allocation.end_date is None or allocation.end_date >= target_date)
+        ]
+        phase_rank = {'bercario': 1, 'juvenil': 2, 'engorda': 3}
+        phase = max((item for item in active_phases if item), key=lambda item: phase_rank.get(item, 0), default=initial_phase)
+        expected = feeding_table_expected_weight_for_lot(
+            lot,
+            target_date=target_date,
+            age_days=max((target_date - lot.start_date).days, 0),
+            operational_phase=phase,
+        )
+        growth_by_date[target_date] = {
+            'date': target_date.strftime('%d/%m/%Y'),
+            'actual': round(float(observation.get('weight_g') or 0), 3),
+            'expected': round(float(expected.get('expected_weight_g') or 0), 3) if expected and expected.get('expected_weight_g') is not None else None,
+            'phase': lot_report_phase_label(phase),
+            'source': observation.get('source_label'),
+        }
+    growth_chart = [growth_by_date[key] for key in sorted(growth_by_date)]
+
+    feed_totals_by_name = defaultdict(float)
+    feed_by_phase_name = defaultdict(lambda: defaultdict(float))
+    for row in feed_rows:
+        feed_totals_by_name[row['feed_name']] += row['quantity_kg']
+        feed_by_phase_name[row['phase']][row['feed_name']] += row['quantity_kg']
+    top_feed_names = [name for name, _value in sorted(feed_totals_by_name.items(), key=lambda item: item[1], reverse=True)[:8]]
+    feed_chart = {
+        'labels': [row['label'] for row in phase_rows],
+        'datasets': [
+            {
+                'label': feed_name,
+                'data': [round(feed_by_phase_name[row['phase']].get(feed_name, 0), 3) for row in phase_rows],
+            }
+            for feed_name in top_feed_names
+        ],
+    }
+    if len(feed_totals_by_name) > len(top_feed_names):
+        feed_chart['datasets'].append({
+            'label': 'Outras rações',
+            'data': [
+                round(sum(value for name, value in feed_by_phase_name[row['phase']].items() if name not in top_feed_names), 3)
+                for row in phase_rows
+            ],
+        })
+
+    population_chart = []
+    for row in phase_rows:
+        if row['entry_qty']:
+            population_chart.append({'label': f"Entrada {row['label']}", 'value': row['entry_qty']})
+    if harvested_units:
+        population_chart.append({'label': 'Despescadas', 'value': harvested_units})
+    if current_count:
+        population_chart.append({'label': 'Saldo estimado atual', 'value': current_count})
+
+    data_warnings = []
+    if not biometry_rows:
+        data_warnings.append('Não há biometrias cadastradas para este lote.')
+    if transfer_rows and any(row['average_weight_g'] is None for row in transfer_rows):
+        data_warnings.append('Uma ou mais transferências não possuem peso médio informado.')
+    if sale_rows and any(not row['harvested_units'] and not row['average_weight_g'] for row in sale_rows):
+        data_warnings.append('Uma ou mais despescas não possuem número de animais nem peso médio; a sobrevivência pode ficar incompleta.')
+    if feed_without_product_kg > 0:
+        data_warnings.append(f'{feed_without_product_kg:.3f} kg de ração estão sem produto identificado no Manejo Diário.')
+    if not transfers and len(phase_rows) > 1:
+        data_warnings.append('O lote possui mais de uma fase, mas não há transferências cadastradas para explicar a mudança.')
+
+    first_weight = growth_chart[0]['actual'] if growth_chart else None
+    last_weight = growth_chart[-1]['actual'] if growth_chart else None
+    average_daily_gain = None
+    if len(growth_chart) >= 2:
+        first_date = min(growth_by_date)
+        last_date = max(growth_by_date)
+        elapsed = (last_date - first_date).days
+        if elapsed > 0:
+            average_daily_gain = round((last_weight - first_weight) / elapsed, 3)
+
+    return {
+        'lot': lot,
+        'report_end': report_end,
+        'cycle_days': (report_end - lot.start_date).days + 1,
+        'status_label': 'Ativo' if lot.status == 'ativo' else 'Encerrado',
+        'phase_rows': phase_rows,
+        'feed_rows': feed_rows,
+        'transfer_rows': transfer_rows,
+        'biometry_rows': biometry_rows,
+        'sale_rows': sale_rows,
+        'growth_chart': growth_chart,
+        'feed_chart': feed_chart,
+        'population_chart': population_chart,
+        'data_warnings': data_warnings,
+        'kpis': {
+            'initial_count': int(lot.initial_count or 0),
+            'harvested_units': harvested_units,
+            'current_count': current_count,
+            'survival_pct': survival_pct,
+            'total_feed_kg': total_feed_kg,
+            'total_feed_cost': total_feed_cost,
+            'total_harvest_kg': total_harvest_kg,
+            'average_harvest_weight_g': average_harvest_weight,
+            'fcr': fcr,
+            'biomass_gain_kg': biomass_gain_kg,
+            'revenue': revenue,
+            'feed_cost': total_feed_cost,
+            'supply_cost': supply_cost,
+            'larva_cost': larva_cost,
+            'fixed_cost': fixed_cost,
+            'total_cost': total_cost,
+            'profit': round(revenue - total_cost, 2),
+            'first_weight_g': first_weight,
+            'last_weight_g': last_weight,
+            'average_daily_gain_g': average_daily_gain,
+        },
+    }
+
+
+def style_lot_report_worksheet(ws, freeze='A2'):
+    if freeze:
+        ws.freeze_panes = freeze
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = PatternFill('solid', fgColor='0F766E')
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    for column in ws.columns:
+        values = [str(cell.value) if cell.value is not None else '' for cell in column[:200]]
+        width = min(max(max((len(value) for value in values), default=8) + 2, 11), 42)
+        ws.column_dimensions[get_column_letter(column[0].column)].width = width
+    ws.auto_filter.ref = ws.dimensions
+
+
 @app.get('/managerial-reports')
 @login_required
 @requires_permission('dashboard')
@@ -13836,6 +14694,7 @@ def managerial_reports_page():
     feed_snapshot = build_feed_stock_snapshot()
     supply_snapshot = build_supply_stock_snapshot()
     active_lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
+    report_lots = Lot.query.order_by(Lot.start_date.desc(), Lot.id.desc()).all()
     lot_summaries = [lot_financial_summary(lot) for lot in active_lots]
     sales_rows = Sale.query.options(joinedload(Sale.lot), joinedload(Sale.unit)).filter(Sale.sale_date >= start_date).order_by(Sale.sale_date.desc()).all()
     sales_summaries = [summary for sale in sales_rows if (summary := sale_financial_summary(sale))]
@@ -13867,6 +14726,205 @@ def managerial_reports_page():
         water_alert_rows=water_alert_rows[:20],
         management_rows=management_rows[:20],
         financial_totals=financial_totals,
+        report_lots=report_lots,
+    )
+
+
+
+@app.get('/managerial-reports/lot-final')
+@login_required
+@requires_permission('dashboard')
+def lot_final_report_page():
+    lots = Lot.query.order_by(Lot.start_date.desc(), Lot.id.desc()).all()
+    lot_id = request.args.get('lot_id', type=int)
+    if lot_id is None and lots:
+        closed_lot = next((item for item in lots if item.status == 'encerrado'), None)
+        lot_id = (closed_lot or lots[0]).id
+    lot = db.session.get(Lot, lot_id) if lot_id else None
+    if lot_id and not lot:
+        abort(404)
+    report = build_lot_final_report(lot) if lot else None
+    return render_template(
+        'lot_final_report.html',
+        lots=lots,
+        selected_lot_id=lot_id,
+        report=report,
+    )
+
+
+@app.get('/managerial-reports/lot-final/<int:lot_id>.xlsx')
+@login_required
+@requires_permission('dashboard')
+def export_lot_final_report(lot_id):
+    lot = db.session.get(Lot, lot_id)
+    if not lot:
+        abort(404)
+    report = build_lot_final_report(lot)
+    kpis = report['kpis']
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Resumo'
+    ws.append(['Indicador', 'Valor'])
+    summary_rows = [
+        ('Lote', lot.lot_code),
+        ('Status', report['status_label']),
+        ('Fornecedor de PL', lot.larva_supplier or ''),
+        ('Entrada', lot.start_date.strftime('%d/%m/%Y') if lot.start_date else ''),
+        ('Data final do relatório', report['report_end'].strftime('%d/%m/%Y')),
+        ('Dias de ciclo', report['cycle_days']),
+        ('PLs iniciais', kpis['initial_count']),
+        ('Animais despescados', kpis['harvested_units']),
+        ('Saldo estimado atual', kpis['current_count']),
+        ('Sobrevivência final/estimada (%)', kpis['survival_pct']),
+        ('Ração total (kg)', kpis['total_feed_kg']),
+        ('Custo da ração', kpis['feed_cost']),
+        ('Custo de insumos', kpis['supply_cost']),
+        ('Custo das PLs', kpis['larva_cost']),
+        ('Custo fixo rateado', kpis['fixed_cost']),
+        ('Biomassa despescada (kg)', kpis['total_harvest_kg']),
+        ('Peso médio de despesca (g)', kpis['average_harvest_weight_g']),
+        ('FCR', kpis['fcr']),
+        ('Receita', kpis['revenue']),
+        ('Custo total do lote', kpis['total_cost']),
+        ('Resultado', kpis['profit']),
+        ('Primeiro peso registrado (g)', kpis['first_weight_g']),
+        ('Último peso registrado (g)', kpis['last_weight_g']),
+        ('Ganho médio diário (g/dia)', kpis['average_daily_gain_g']),
+    ]
+    for row in summary_rows:
+        ws.append(row)
+    style_lot_report_worksheet(ws)
+    ws.auto_filter.ref = f'A1:B{ws.max_row}'
+
+    ws = wb.create_sheet('Fases')
+    ws.append(['Fase', 'Início', 'Fim', 'Dias', 'Unidades', 'Quantidade de entrada', 'Peso de entrada (g)', 'Transferidos para próxima fase', 'Animais despescados', 'Saldo atual', 'Peso de saída (g)', 'Ração (kg)', 'Custo ração', 'Biometrias'])
+    for row in report['phase_rows']:
+        ws.append([
+            row['label'],
+            row['start_date'].strftime('%d/%m/%Y') if row['start_date'] else '',
+            row['end_date'].strftime('%d/%m/%Y') if row['end_date'] else '',
+            row['days'],
+            ', '.join(row['units']),
+            row['entry_qty'],
+            row['entry_weight_g'],
+            row['transferred_out_qty'],
+            row['harvested_units'],
+            row['current_qty'],
+            row['exit_weight_g'],
+            row['feed_kg'],
+            row['feed_cost'],
+            row['biometry_count'],
+        ])
+    style_lot_report_worksheet(ws)
+
+    ws = wb.create_sheet('Racoes por fase')
+    ws.append(['Fase', 'Ração', 'Quantidade (kg)', 'Custo', 'Lançamentos'])
+    for row in report['feed_rows']:
+        ws.append([row['phase_label'], row['feed_name'], row['quantity_kg'], row['cost'], row['records']])
+    style_lot_report_worksheet(ws)
+
+    ws = wb.create_sheet('Transferencias')
+    ws.append(['Data', 'Origem', 'Fase origem', 'Destino', 'Fase destino', 'Quantidade', 'Peso médio (g)', 'Dias na origem', 'Origem encerrada', 'Observações'])
+    for row in report['transfer_rows']:
+        ws.append([
+            row['date'].strftime('%d/%m/%Y') if row['date'] else '',
+            row['source_unit'],
+            row['source_phase_label'],
+            row['destination_unit'],
+            row['destination_phase_label'],
+            row['quantity'],
+            row['average_weight_g'],
+            row['days_in_source'],
+            'Sim' if row['closed_source'] else 'Não',
+            row['notes'] or '',
+        ])
+    style_lot_report_worksheet(ws)
+
+    ws = wb.create_sheet('Biometrias')
+    ws.append(['Data', 'Fase', 'Unidade', 'Amostra', 'Peso médio (g)', 'Peso esperado (g)', 'Desvio (%)', 'CV (%)', 'Biomassa estimada (kg)', 'Ganho semanal (g)', 'Observações'])
+    for row in report['biometry_rows']:
+        ws.append([
+            row['date'].strftime('%d/%m/%Y') if row['date'] else '',
+            row['phase_label'],
+            row['unit_name'],
+            row['sample_size'],
+            row['average_weight_g'],
+            row['expected_weight_g'],
+            row['deviation_pct'],
+            row['cv_pct'],
+            row['estimated_biomass_kg'],
+            row['weekly_gain_g'],
+            row['notes'] or '',
+        ])
+    style_lot_report_worksheet(ws)
+
+    ws = wb.create_sheet('Despescas')
+    ws.append(['Data', 'Fase', 'Unidade', 'Cliente', 'Canal', 'Quantidade (kg)', 'Peso médio (g)', 'Animais', 'Preço/kg', 'Receita', 'Encerrou viveiro', 'Encerrou lote', 'Observações'])
+    for row in report['sale_rows']:
+        ws.append([
+            row['date'].strftime('%d/%m/%Y') if row['date'] else '',
+            row['phase_label'],
+            row['unit_name'],
+            row['client_name'],
+            row['channel'],
+            row['quantity_kg'],
+            row['average_weight_g'],
+            row['harvested_units'],
+            row['unit_price'],
+            row['revenue'],
+            'Sim' if row['closed_unit'] else 'Não',
+            'Sim' if row['closed_lot'] else 'Não',
+            row['notes'] or '',
+        ])
+    style_lot_report_worksheet(ws)
+
+    chart_ws = wb.create_sheet('Graficos')
+    chart_ws.append(['Data', 'Peso real (g)', 'Peso esperado (g)', 'Fase', 'Fonte'])
+    for row in report['growth_chart']:
+        chart_ws.append([row['date'], row['actual'], row['expected'], row['phase'], row['source']])
+    chart_ws['G1'] = 'Fase'
+    chart_ws['H1'] = 'Ração total (kg)'
+    for index, row in enumerate(report['phase_rows'], start=2):
+        chart_ws.cell(index, 7, row['label'])
+        chart_ws.cell(index, 8, row['feed_kg'])
+    style_lot_report_worksheet(chart_ws)
+
+    if len(report['growth_chart']) >= 2:
+        growth_chart = LineChart()
+        growth_chart.title = 'Crescimento do lote'
+        growth_chart.y_axis.title = 'Peso médio (g)'
+        growth_chart.x_axis.title = 'Data'
+        growth_chart.height = 9
+        growth_chart.width = 18
+        data = Reference(chart_ws, min_col=2, max_col=3, min_row=1, max_row=1 + len(report['growth_chart']))
+        categories = Reference(chart_ws, min_col=1, min_row=2, max_row=1 + len(report['growth_chart']))
+        growth_chart.add_data(data, titles_from_data=True)
+        growth_chart.set_categories(categories)
+        chart_ws.add_chart(growth_chart, 'J2')
+
+    if report['phase_rows']:
+        feed_chart = BarChart()
+        feed_chart.title = 'Ração consumida por fase'
+        feed_chart.y_axis.title = 'Ração (kg)'
+        feed_chart.x_axis.title = 'Fase'
+        feed_chart.height = 8
+        feed_chart.width = 16
+        data = Reference(chart_ws, min_col=8, min_row=1, max_row=1 + len(report['phase_rows']))
+        categories = Reference(chart_ws, min_col=7, min_row=2, max_row=1 + len(report['phase_rows']))
+        feed_chart.add_data(data, titles_from_data=True)
+        feed_chart.set_categories(categories)
+        chart_ws.add_chart(feed_chart, 'J20')
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    safe_code = re.sub(r'[^A-Za-z0-9_-]+', '_', lot.lot_code or str(lot.id))
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'relatorio_final_lote_{safe_code}.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
 
@@ -14404,6 +15462,7 @@ def sales_page():
         if form_mode == 'edit' and not sale:
             flash('Registro de despesca não encontrado.', 'warning')
             return redirect(url_for('sales_page'))
+        old_lot_id = sale.lot_id if form_mode == 'edit' else None
         sale.sale_date = sale_date
         sale.unit_id = unit_id
         sale.lot_id = lot_id
@@ -14413,25 +15472,33 @@ def sales_page():
         sale.unit_price = parse_float(request.form['unit_price'], 0) or 0
         sale.average_weight_g = average_weight_g
         sale.harvested_units = harvested_units
+        sale.close_unit_after_sale = request.form.get('close_unit_after_sale', '1') == '1'
+        sale.close_lot_after_sale = request.form.get('close_lot_after_sale', '0') == '1'
         sale.notes = request.form.get('notes')
         if form_mode != 'edit':
             db.session.add(sale)
-            if lot_id and unit_id and request.form.get('close_unit_after_sale', '1') == '1':
-                allocation = find_active_allocation(lot_id, unit_id, sale_date)
-                if allocation:
-                    allocation.end_date = sale_date
-                    allocation.quantity_allocated = 0
-                remaining = LotUnitAllocation.query.filter(LotUnitAllocation.lot_id == lot_id, LotUnitAllocation.start_date <= sale_date, or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date > sale_date)).count()
-                if remaining == 0:
-                    lot = db.session.get(Lot, lot_id)
-                    if lot:
-                        close_lot(lot, sale_date, reason='despesca_venda')
-            elif lot_id and request.form.get('close_lot_after_sale', '0') == '1':
-                lot = db.session.get(Lot, lot_id)
-                if lot:
-                    close_lot(lot, sale_date, reason='despesca_venda')
+        db.session.flush()
+
+        rebuild_warnings = []
+        for affected_lot_id in {item for item in (old_lot_id, lot_id) if item}:
+            affected_lot = db.session.get(Lot, affected_lot_id)
+            if not affected_lot:
+                continue
+            rebuild_warnings.extend(rebuild_lot_allocations_from_transfer_history(affected_lot))
+            sync_lot_phase_from_allocations(affected_lot, local_today())
+
         db.session.commit()
-        flash('Despesca/venda salva com sucesso.', 'success')
+        current_lot = db.session.get(Lot, lot_id) if lot_id else None
+        if sale.close_lot_after_sale:
+            closure_label = ' O lote inteiro foi encerrado.'
+        elif sale.close_unit_after_sale and current_lot and current_lot.status == 'ativo':
+            closure_label = ' Somente este viveiro foi encerrado; o lote continua ativo nas demais unidades.'
+        elif sale.close_unit_after_sale:
+            closure_label = ' Este era o último viveiro ativo, então o lote também foi encerrado.'
+        else:
+            closure_label = ' A venda foi registrada sem encerrar o viveiro.'
+        warning_label = f" Revise: {' | '.join(rebuild_warnings[:3])}" if rebuild_warnings else ''
+        flash(f'Despesca/venda salva com sucesso.{closure_label}{warning_label}', 'success' if not rebuild_warnings else 'warning')
         return redirect(url_for('sales_page'))
     units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
     lots = Lot.query.order_by(Lot.start_date.desc()).all()
