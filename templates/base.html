@@ -139,7 +139,7 @@
           </div>
         </details>
 
-        <details class="nav-group" {% if current_endpoint in ['charts_page', 'managerial_reports_page'] %}open{% endif %}>
+        <details class="nav-group" {% if current_endpoint in ['charts_page', 'managerial_reports_page', 'lot_final_report_page'] %}open{% endif %}>
           <summary class="nav-group-summary">
             <span class="nav-group-label"><i class="fa-solid fa-file-chart-column"></i><span>Relatórios</span></span>
             <i class="fa-solid fa-chevron-right nav-group-chevron"></i>
@@ -147,7 +147,7 @@
           <div class="nav-submenu">
             {% if current_user.is_authenticated and current_user.has_permission('dashboard') %}
             <a class="nav-sublink {{ 'active' if current_endpoint == 'charts_page' else '' }}" href="{{ url_for('charts_page') }}">Gráficos</a>
-            <a class="nav-sublink {{ 'active' if current_endpoint == 'managerial_reports_page' else '' }}" href="{{ url_for('managerial_reports_page') }}">Relatórios gerenciais</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint in ['managerial_reports_page', 'lot_final_report_page'] else '' }}" href="{{ url_for('managerial_reports_page') }}">Relatórios gerenciais</a>
             {% endif %}
           </div>
         </details>

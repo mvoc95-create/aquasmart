@@ -1,0 +1,199 @@
+{% extends 'base.html' %}
+{% block page_title %}Relatório final do lote{% endblock %}
+{% block page_subtitle %}Histórico completo do lote, da entrada das PLs à despesca, com consumo por fase, transferências, biometrias e indicadores finais.{% endblock %}
+{% block extra_head %}
+<style>
+.lot-report-toolbar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}.lot-report-toolbar label{min-width:min(420px,100%);flex:1}.lot-report-toolbar .action-stack{padding-bottom:1px;flex-wrap:wrap}
+.lot-report-hero{background:linear-gradient(135deg,#ecfeff 0%,#eff6ff 55%,#f8fafc 100%);border-color:#bae6fd}.lot-report-identity{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;flex-wrap:wrap}.lot-report-identity h2{font-size:30px;margin:0 0 6px}.lot-report-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.report-chip{display:inline-flex;align-items:center;gap:7px;padding:8px 11px;border-radius:999px;background:#fff;border:1px solid #cbd5e1;font-size:12px;font-weight:800;color:#334155}.report-chip.active{background:#ecfdf5;border-color:#86efac;color:#166534}.report-chip.closed{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+.lot-report-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:18px}.lot-report-kpi{padding:16px;border:1px solid #dbeafe;border-radius:18px;background:rgba(255,255,255,.88)}.lot-report-kpi span{display:block;color:#64748b;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.lot-report-kpi strong{display:block;margin-top:7px;font-size:23px;line-height:1.1}.lot-report-kpi small{display:block;color:#64748b;margin-top:5px;line-height:1.4}
+.phase-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}.phase-summary-card{border:1px solid var(--line);border-radius:20px;padding:18px;background:#fff}.phase-summary-card h3{margin:0;font-size:21px}.phase-summary-card .phase-period{color:var(--muted);font-size:13px;margin:5px 0 14px}.phase-metrics{display:grid;grid-template-columns:1fr 1fr;gap:9px}.phase-metric{padding:10px 12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0}.phase-metric span{display:block;font-size:11px;color:#64748b;text-transform:uppercase;font-weight:800}.phase-metric strong{display:block;margin-top:4px;font-size:15px}.phase-units{margin-top:12px;color:#475569;font-size:13px;line-height:1.5}
+.report-chart-grid{display:grid;grid-template-columns:2fr 1fr;gap:16px}.report-chart-card{border:1px solid var(--line);border-radius:20px;padding:18px;background:#fff;min-height:360px}.report-chart-card.full{grid-column:1/-1}.report-chart-card h3{margin:0 0 4px}.report-chart-card p{margin:0 0 14px;color:var(--muted);font-size:13px}.report-chart-wrap{height:310px;position:relative}.report-chart-card.full .report-chart-wrap{height:390px}
+.report-section-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-end;flex-wrap:wrap}.report-section-title p{margin:5px 0 0;color:var(--muted)}.report-table th{white-space:nowrap}.report-table td{font-variant-numeric:tabular-nums}.phase-tag{display:inline-flex;padding:6px 9px;border-radius:999px;background:#e0f2fe;color:#075985;font-size:11px;font-weight:900}.positive-value{color:#15803d;font-weight:800}.negative-value{color:#b91c1c;font-weight:800}.warning-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}.warning-list li{padding:11px 13px;border-radius:13px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-size:13px;font-weight:700}.report-conclusion{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.conclusion-card{padding:16px;border-radius:18px;border:1px solid var(--line);background:#f8fafc}.conclusion-card span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;font-weight:800}.conclusion-card strong{display:block;font-size:20px;margin-top:6px}.print-only{display:none}
+@media(max-width:1100px){.lot-report-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.report-chart-grid{grid-template-columns:1fr}.report-chart-card.full{grid-column:auto}.report-conclusion{grid-template-columns:1fr}}
+@media(max-width:650px){.lot-report-kpis{grid-template-columns:1fr}.phase-metrics{grid-template-columns:1fr}.lot-report-toolbar .action-stack{width:100%}.lot-report-toolbar .action-stack a,.lot-report-toolbar .action-stack button{flex:1}.report-chart-wrap,.report-chart-card.full .report-chart-wrap{height:300px}}
+@media print{
+  @page{size:A4 landscape;margin:10mm}.sidebar,.topbar,.flash-stack,.lot-report-toolbar,.no-print{display:none!important}.print-only{display:block}.app-shell,.modern-shell{display:block!important}.main,.modern-main{padding:0!important;margin:0!important}.content-grid{display:block!important}.panel{box-shadow:none!important;break-inside:avoid;margin-bottom:10px;padding:14px}.lot-report-kpis{grid-template-columns:repeat(4,1fr)}.report-chart-grid{grid-template-columns:1fr 1fr}.report-chart-card.full{grid-column:1/-1}.report-chart-wrap{height:260px}.report-chart-card.full .report-chart-wrap{height:300px}.table-wrap{overflow:visible;border-radius:0}table{font-size:9px}th,td{padding:5px 6px}.report-section-break{break-before:page}.page-title,.page-subtitle{display:none}.lot-report-hero{break-after:page}.phase-summary-grid{grid-template-columns:repeat(3,1fr)}
+}
+</style>
+{% endblock %}
+{% block content %}
+<section class="panel no-print">
+  <form method="get" action="{{ url_for('lot_final_report_page') }}" class="lot-report-toolbar">
+    <label>Selecionar outro lote
+      <select name="lot_id" required>
+        {% for lot in lots %}
+        <option value="{{ lot.id }}" {% if selected_lot_id == lot.id %}selected{% endif %}>{{ lot.lot_code }} · {{ lot.start_date|brdate }} · {{ lot.status|status_label }} · {{ lot.initial_count|number_br(0) }} PLs</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="action-stack">
+      <button type="submit">Atualizar relatório</button>
+      {% if report %}<a class="secondary-link-button" href="{{ url_for('export_lot_final_report', lot_id=report.lot.id) }}"><i class="fa-solid fa-file-excel"></i> Baixar Excel</a>{% endif %}
+      {% if report %}<button class="secondary-button" type="button" onclick="window.print()"><i class="fa-solid fa-print"></i> Imprimir / salvar PDF</button>{% endif %}
+      <a class="secondary-link-button" href="{{ url_for('managerial_reports_page') }}">Voltar</a>
+    </div>
+  </form>
+</section>
+
+{% if not report %}
+<section class="panel"><p class="empty-state">Nenhum lote disponível para gerar o relatório.</p></section>
+{% else %}
+<section class="panel lot-report-hero">
+  <div class="print-only"><strong>AquaSmart · Relatório zootécnico final</strong></div>
+  <div class="lot-report-identity">
+    <div>
+      <p class="panel-kicker">Relatório completo do ciclo</p>
+      <h2>Lote {{ report.lot.lot_code }}</h2>
+      <p class="muted-line">Da entrada das PLs até {{ 'a posição atual' if report.lot.status == 'ativo' else 'o encerramento do lote' }}.</p>
+      <div class="lot-report-meta">
+        <span class="report-chip {{ 'active' if report.lot.status == 'ativo' else 'closed' }}"><i class="fa-solid {{ 'fa-circle-play' if report.lot.status == 'ativo' else 'fa-circle-check' }}"></i> {{ report.status_label }}</span>
+        <span class="report-chip"><i class="fa-solid fa-calendar"></i> {{ report.lot.start_date|brdate }} a {{ report.report_end|brdate }}</span>
+        <span class="report-chip"><i class="fa-solid fa-clock"></i> {{ report.cycle_days }} dias</span>
+        <span class="report-chip"><i class="fa-solid fa-truck-ramp-box"></i> {{ report.lot.larva_supplier or 'Fornecedor não informado' }}</span>
+        {% if report.lot.entry_pl_stage %}<span class="report-chip">Entrada PL{{ report.lot.entry_pl_stage }}</span>{% endif %}
+      </div>
+    </div>
+    <div class="report-chip"><i class="fa-solid fa-shrimp"></i> {{ report.lot.species or 'Litopenaeus vannamei' }}</div>
+  </div>
+
+  <div class="lot-report-kpis">
+    <article class="lot-report-kpi"><span>PLs iniciais</span><strong>{{ report.kpis.initial_count|number_br(0) }}</strong><small>Quantidade colocada na entrada do lote.</small></article>
+    <article class="lot-report-kpi"><span>Ração total</span><strong>{{ report.kpis.total_feed_kg|number_br(3) }} kg</strong><small>Custo registrado: {{ report.kpis.total_feed_cost|money }}.</small></article>
+    <article class="lot-report-kpi"><span>Biomassa despescada</span><strong>{{ report.kpis.total_harvest_kg|number_br(2) }} kg</strong><small>{{ report.kpis.harvested_units|number_br(0) }} animais estimados/registrados.</small></article>
+    <article class="lot-report-kpi"><span>Sobrevivência {{ 'estimada' if report.lot.status == 'ativo' else 'final' }}</span><strong>{{ report.kpis.survival_pct|number_br(2) }}{% if report.kpis.survival_pct is not none %}%{% endif %}</strong><small>{% if report.lot.status == 'ativo' %}Inclui {{ report.kpis.current_count|number_br(0) }} animais ainda alocados.{% else %}Animais despescados ÷ PLs iniciais.{% endif %}</small></article>
+    <article class="lot-report-kpi"><span>FCR {{ 'parcial' if report.lot.status == 'ativo' else 'final' }}</span><strong>{{ report.kpis.fcr|number_br(2) }}</strong><small>Ração acumulada em relação à biomassa produzida.</small></article>
+    <article class="lot-report-kpi"><span>Peso médio de despesca</span><strong>{{ report.kpis.average_harvest_weight_g|number_br(2) }}{% if report.kpis.average_harvest_weight_g is not none %} g{% endif %}</strong><small>Consolidado das despescas registradas.</small></article>
+    <article class="lot-report-kpi"><span>Receita</span><strong>{{ report.kpis.revenue|money }}</strong><small>Custo total calculado: {{ report.kpis.total_cost|money }}.</small></article>
+    <article class="lot-report-kpi"><span>Resultado do lote</span><strong class="{{ 'positive-value' if report.kpis.profit >= 0 else 'negative-value' }}">{{ report.kpis.profit|money }}</strong><small>Receita menos custos registrados e rateados.</small></article>
+  </div>
+</section>
+
+{% if report.data_warnings %}
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Qualidade dos dados</p><h2>Pontos que merecem conferência</h2></div></div>
+  <ul class="warning-list">{% for warning in report.data_warnings %}<li><i class="fa-solid fa-triangle-exclamation"></i> {{ warning }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head report-section-title"><div><p class="panel-kicker">Linha do tempo</p><h2>Resumo por fase</h2><p>O número de dias não duplica períodos em que o lote ficou dividido entre duas unidades da mesma fase.</p></div></div>
+  <div class="phase-summary-grid">
+    {% for phase in report.phase_rows %}
+    <article class="phase-summary-card">
+      <h3>{{ phase.label }}</h3>
+      <p class="phase-period">{{ phase.start_date|brdate }} a {{ phase.end_date|brdate }} · <strong>{{ phase.days }} dias</strong></p>
+      <div class="phase-metrics">
+        <div class="phase-metric"><span>Entrada</span><strong>{{ phase.entry_qty|number_br(0) }} animais</strong></div>
+        <div class="phase-metric"><span>Peso de entrada</span><strong>{{ phase.entry_weight_g|number_br(3) }}{% if phase.entry_weight_g is not none %} g{% endif %}</strong></div>
+        <div class="phase-metric"><span>Transferidos</span><strong>{{ phase.transferred_out_qty|number_br(0) }}</strong></div>
+        <div class="phase-metric"><span>Peso de saída</span><strong>{{ phase.exit_weight_g|number_br(3) }}{% if phase.exit_weight_g is not none %} g{% endif %}</strong></div>
+        <div class="phase-metric"><span>Ração</span><strong>{{ phase.feed_kg|number_br(3) }} kg</strong></div>
+        <div class="phase-metric"><span>Biometrias</span><strong>{{ phase.biometry_count }}</strong></div>
+        {% if phase.harvested_units %}<div class="phase-metric"><span>Despescados</span><strong>{{ phase.harvested_units|number_br(0) }}</strong></div>{% endif %}
+        {% if phase.current_qty %}<div class="phase-metric"><span>Saldo atual</span><strong>{{ phase.current_qty|number_br(0) }}</strong></div>{% endif %}
+      </div>
+      <p class="phase-units"><strong>Unidades:</strong> {{ phase.units|join(', ') if phase.units else 'não identificadas' }}<br><strong>Custo da ração:</strong> {{ phase.feed_cost|money }}</p>
+    </article>
+    {% else %}
+    <p class="empty-state">Ainda não há alocações suficientes para montar as fases do lote.</p>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel report-section-break">
+  <div class="panel-head report-section-title"><div><p class="panel-kicker">Gráficos</p><h2>Evolução zootécnica do lote</h2><p>Crescimento real x esperado, consumo de ração por fase e fluxo populacional.</p></div></div>
+  <div class="report-chart-grid">
+    <article class="report-chart-card full">
+      <h3>Crescimento do lote</h3><p>Pesos registrados em biometrias, manejos ou transferências comparados à tabela base.</p>
+      {% if report.growth_chart %}<div class="report-chart-wrap"><canvas id="lotGrowthChart"></canvas></div>{% else %}<p class="empty-state">Sem pesos suficientes para gerar o gráfico.</p>{% endif %}
+    </article>
+    <article class="report-chart-card">
+      <h3>Ração por fase e produto</h3><p>Quantidade acumulada de cada ração.</p>
+      {% if report.feed_chart.datasets %}<div class="report-chart-wrap"><canvas id="lotFeedChart"></canvas></div>{% else %}<p class="empty-state">Sem ração registrada.</p>{% endif %}
+    </article>
+    <article class="report-chart-card">
+      <h3>Fluxo de animais</h3><p>Entradas por fase, animais despescados e saldo atual.</p>
+      {% if report.population_chart %}<div class="report-chart-wrap"><canvas id="lotPopulationChart"></canvas></div>{% else %}<p class="empty-state">Sem dados populacionais suficientes.</p>{% endif %}
+    </article>
+  </div>
+</section>
+
+<section class="panel report-section-break">
+  <div class="panel-head report-section-title"><div><p class="panel-kicker">Consumo</p><h2>Ração utilizada em cada fase</h2><p>Detalhamento por produto, quantidade e custo registrado.</p></div></div>
+  <div class="table-wrap"><table class="report-table"><thead><tr><th>Fase</th><th>Ração</th><th>Quantidade</th><th>Custo</th><th>Lançamentos</th></tr></thead><tbody>
+    {% for row in report.feed_rows %}<tr><td><span class="phase-tag">{{ row.phase_label }}</span></td><td><strong>{{ row.feed_name }}</strong></td><td>{{ row.quantity_kg|number_br(3) }} kg</td><td>{{ row.cost|money }}</td><td>{{ row.records }}</td></tr>{% else %}<tr><td colspan="5" class="empty-cell">Nenhum consumo de ração encontrado para o lote.</td></tr>{% endfor %}
+  </tbody><tfoot><tr><th colspan="2">Total</th><th>{{ report.kpis.total_feed_kg|number_br(3) }} kg</th><th>{{ report.kpis.total_feed_cost|money }}</th><th></th></tr></tfoot></table></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head report-section-title"><div><p class="panel-kicker">Movimentação</p><h2>Transferências entre fases e unidades</h2><p>Mostra tamanho, quantidade e tempo de permanência antes de cada transferência.</p></div></div>
+  <div class="table-wrap"><table class="report-table"><thead><tr><th>Data</th><th>Origem</th><th>Destino</th><th>Quantidade</th><th>Peso médio</th><th>Tempo na origem</th><th>Origem encerrada</th><th>Observações</th></tr></thead><tbody>
+    {% for row in report.transfer_rows %}<tr><td>{{ row.date|brdate }}</td><td><strong>{{ row.source_unit }}</strong><br><span class="phase-tag">{{ row.source_phase_label }}</span></td><td><strong>{{ row.destination_unit }}</strong><br><span class="phase-tag">{{ row.destination_phase_label }}</span></td><td>{{ row.quantity|number_br(0) }}</td><td>{{ row.average_weight_g|number_br(3) }}{% if row.average_weight_g is not none %} g{% endif %}</td><td>{{ row.days_in_source if row.days_in_source is not none else '—' }}{% if row.days_in_source is not none %} dias{% endif %}</td><td>{{ 'Sim' if row.closed_source else 'Não' }}</td><td>{{ row.notes or '—' }}</td></tr>{% else %}<tr><td colspan="8" class="empty-cell">Nenhuma transferência cadastrada.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="panel report-section-break">
+  <div class="panel-head report-section-title"><div><p class="panel-kicker">Crescimento</p><h2>Biometrias de todas as fases</h2><p>Histórico cronológico com peso real, esperado, CV, biomassa e ganho semanal.</p></div></div>
+  <div class="table-wrap"><table class="report-table"><thead><tr><th>Data</th><th>Fase</th><th>Unidade</th><th>Amostra</th><th>Peso real</th><th>Peso esperado</th><th>Desvio</th><th>CV</th><th>Biomassa</th><th>Ganho semanal</th><th>Observações</th></tr></thead><tbody>
+    {% for row in report.biometry_rows %}<tr><td>{{ row.date|brdate }}</td><td><span class="phase-tag">{{ row.phase_label }}</span></td><td>{{ row.unit_name }}</td><td>{{ row.sample_size|number_br(0) }}</td><td><strong>{{ row.average_weight_g|number_br(3) }} g</strong></td><td>{{ row.expected_weight_g|number_br(3) }}{% if row.expected_weight_g is not none %} g{% endif %}</td><td class="{{ 'positive-value' if row.deviation_pct is not none and row.deviation_pct >= 0 else 'negative-value' if row.deviation_pct is not none else '' }}">{{ row.deviation_pct|number_br(1) }}{% if row.deviation_pct is not none %}%{% endif %}</td><td>{{ row.cv_pct|number_br(2) }}{% if row.cv_pct is not none %}%{% endif %}</td><td>{{ row.estimated_biomass_kg|number_br(2) }}{% if row.estimated_biomass_kg is not none %} kg{% endif %}</td><td>{{ row.weekly_gain_g|number_br(3) }}{% if row.weekly_gain_g is not none %} g{% endif %}</td><td>{{ row.notes or '—' }}</td></tr>{% else %}<tr><td colspan="11" class="empty-cell">Nenhuma biometria cadastrada.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head report-section-title"><div><p class="panel-kicker">Resultado</p><h2>Despescas e vendas do lote</h2><p>Consolidação das saídas por viveiro, incluindo quantidade, tamanho, preço e fechamento.</p></div></div>
+  <div class="table-wrap"><table class="report-table"><thead><tr><th>Data</th><th>Viveiro</th><th>Cliente/canal</th><th>Quantidade</th><th>Peso médio</th><th>Animais</th><th>Preço/kg</th><th>Receita</th><th>Fechamento</th><th>Observações</th></tr></thead><tbody>
+    {% for row in report.sale_rows %}<tr><td>{{ row.date|brdate }}</td><td><strong>{{ row.unit_name }}</strong><br><span class="phase-tag">{{ row.phase_label }}</span></td><td>{{ row.client_name }}<br><small>{{ row.channel }}</small></td><td>{{ row.quantity_kg|number_br(2) }} kg</td><td>{{ row.average_weight_g|number_br(2) }}{% if row.average_weight_g is not none %} g{% endif %}</td><td>{{ row.harvested_units|number_br(0) }}</td><td>{{ row.unit_price|money }}</td><td><strong>{{ row.revenue|money }}</strong></td><td>{% if row.closed_lot %}Lote inteiro{% elif row.closed_unit %}Somente viveiro{% else %}Parcial{% endif %}</td><td>{{ row.notes or '—' }}</td></tr>{% else %}<tr><td colspan="10" class="empty-cell">Nenhuma despesca ou venda registrada.</td></tr>{% endfor %}
+  </tbody><tfoot><tr><th colspan="3">Total</th><th>{{ report.kpis.total_harvest_kg|number_br(2) }} kg</th><th>{{ report.kpis.average_harvest_weight_g|number_br(2) }}{% if report.kpis.average_harvest_weight_g is not none %} g{% endif %}</th><th>{{ report.kpis.harvested_units|number_br(0) }}</th><th></th><th>{{ report.kpis.revenue|money }}</th><th colspan="2"></th></tr></tfoot></table></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="panel-kicker">Síntese final</p><h2>Indicadores de encerramento</h2></div></div>
+  <div class="report-conclusion">
+    <article class="conclusion-card"><span>Evolução de peso</span><strong>{{ report.kpis.first_weight_g|number_br(3) }} → {{ report.kpis.last_weight_g|number_br(3) }} g</strong><small class="muted-line">Ganho médio registrado: {{ report.kpis.average_daily_gain_g|number_br(3) }} g/dia.</small></article>
+    <article class="conclusion-card"><span>Eficiência alimentar</span><strong>FCR {{ report.kpis.fcr|number_br(2) }}</strong><small class="muted-line">{{ report.kpis.total_feed_kg|number_br(3) }} kg de ração para {{ report.kpis.biomass_gain_kg|number_br(2) }} kg de biomassa produzida/calculada.</small></article>
+    <article class="conclusion-card"><span>Resultado econômico</span><strong class="{{ 'positive-value' if report.kpis.profit >= 0 else 'negative-value' }}">{{ report.kpis.profit|money }}</strong><small class="muted-line">Receita {{ report.kpis.revenue|money }} · custo {{ report.kpis.total_cost|money }}.</small></article>
+  </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const lotGrowthData = {{ report.growth_chart|tojson }};
+const lotFeedData = {{ report.feed_chart|tojson }};
+const lotPopulationData = {{ report.population_chart|tojson }};
+const chartPalette = ['#0f766e','#2563eb','#7c3aed','#ea580c','#16a34a','#dc2626','#0891b2','#ca8a04','#475569'];
+
+const growthCanvas = document.getElementById('lotGrowthChart');
+if (growthCanvas && lotGrowthData.length) {
+  new Chart(growthCanvas, {
+    type: 'line',
+    data: {
+      labels: lotGrowthData.map(item => item.date),
+      datasets: [
+        {label: 'Peso real', data: lotGrowthData.map(item => item.actual), borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,.12)', pointRadius: 4, borderWidth: 3, tension: .22, fill: true},
+        {label: 'Peso esperado', data: lotGrowthData.map(item => item.expected), borderColor: '#64748b', borderDash: [7,6], pointRadius: 2, borderWidth: 2, tension: .22, fill: false}
+      ]
+    },
+    options: {responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{callbacks:{afterBody(items){const row=lotGrowthData[items?.[0]?.dataIndex];return row ? [`Fase: ${row.phase}`,`Origem: ${row.source || '—'}`] : [];}}}},scales:{y:{beginAtZero:true,title:{display:true,text:'Peso médio (g)'}},x:{ticks:{maxRotation:45,minRotation:0}}}}
+  });
+}
+
+const feedCanvas = document.getElementById('lotFeedChart');
+if (feedCanvas && lotFeedData.datasets && lotFeedData.datasets.length) {
+  new Chart(feedCanvas, {
+    type: 'bar',
+    data: {labels: lotFeedData.labels,datasets: lotFeedData.datasets.map((dataset,index)=>({...dataset,backgroundColor:chartPalette[index%chartPalette.length],borderRadius:5}))},
+    options: {responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true,title:{display:true,text:'Ração (kg)'}}}}
+  });
+}
+
+const populationCanvas = document.getElementById('lotPopulationChart');
+if (populationCanvas && lotPopulationData.length) {
+  new Chart(populationCanvas, {
+    type: 'bar',
+    data: {labels:lotPopulationData.map(item=>item.label),datasets:[{label:'Animais',data:lotPopulationData.map(item=>item.value),backgroundColor:lotPopulationData.map((_,index)=>chartPalette[index%chartPalette.length]),borderRadius:7}]},
+    options: {responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,title:{display:true,text:'Quantidade de animais'}}}}
+  });
+}
+</script>
+{% endif %}
+{% endblock %}

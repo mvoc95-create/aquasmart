@@ -20,7 +20,20 @@
   <label>Preço por kg<input type="number" step="0.01" name="unit_price" value="{{ edit_sale.unit_price if edit_sale else '' }}" required></label>
   <label>Peso médio final (g)<input type="number" step="0.001" name="average_weight_g" value="{{ edit_sale.average_weight_g if edit_sale and edit_sale.average_weight_g is not none else '' }}"></label>
   <label>Qtd. camarões despescados<input type="number" name="harvested_units" value="{{ edit_sale.harvested_units if edit_sale and edit_sale.harvested_units is not none else '' }}"></label>
-  {% if not edit_sale %}<label>Encerrar este viveiro após a despesca?<select name="close_unit_after_sale"><option value="1">Sim</option><option value="0">Não</option></select></label><label>Encerrar lote inteiro?<select name="close_lot_after_sale"><option value="0">Não</option><option value="1">Sim</option></select></label>{% endif %}
+  <label>Encerrar este viveiro após a despesca?
+    <select name="close_unit_after_sale">
+      <option value="1" {% if not edit_sale or edit_sale.close_unit_after_sale is sameas true %}selected{% endif %}>Sim</option>
+      <option value="0" {% if edit_sale and edit_sale.close_unit_after_sale is not sameas true %}selected{% endif %}>Não</option>
+    </select>
+    <small>Use “Sim” quando a despesca terminou apenas este viveiro. O lote continua ativo onde ainda houver camarões.</small>
+  </label>
+  <label>Encerrar lote inteiro?
+    <select name="close_lot_after_sale">
+      <option value="0" {% if not edit_sale or edit_sale.close_lot_after_sale is not sameas true %}selected{% endif %}>Não</option>
+      <option value="1" {% if edit_sale and edit_sale.close_lot_after_sale is sameas true %}selected{% endif %}>Sim</option>
+    </select>
+    <small>Marque “Sim” somente quando não existir saldo desse lote em nenhum outro viveiro.</small>
+  </label>
   <label class="full">Observação<textarea name="notes">{{ edit_sale.notes if edit_sale else '' }}</textarea></label>
   <div class="form-actions action-row-between"><button type="submit">{{ 'Salvar alterações' if edit_sale else 'Salvar venda' }}</button>{% if edit_sale %}<a class="secondary-link-button" href="{{ url_for('sales_page') }}">Cancelar</a>{% endif %}</div>
 </form>

@@ -15,6 +15,30 @@
   </div>
 </section>
 
+<section class="panel lot-final-report-launcher">
+  <div class="panel-head compact-between">
+    <div>
+      <p class="panel-kicker">Relatório zootécnico completo</p>
+      <h2>Relatório final do lote</h2>
+      <p class="muted-line">Consolida entrada de PLs, tempo e ração por fase, transferências, biometrias, despescas, sobrevivência, FCR, resultado financeiro e gráficos.</p>
+    </div>
+  </div>
+  {% if report_lots %}
+  <form method="get" action="{{ url_for('lot_final_report_page') }}" class="form-grid compact-form lot-report-selector">
+    <label class="full">Selecione o lote
+      <select name="lot_id" required>
+        {% for lot in report_lots %}
+        <option value="{{ lot.id }}">{{ lot.lot_code }} · {{ lot.start_date|brdate }} · {{ lot.status|status_label }} · {{ lot.initial_count|number_br(0) }} PLs</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="form-actions"><button type="submit"><i class="fa-solid fa-file-waveform"></i> Gerar relatório completo</button></div>
+  </form>
+  {% else %}
+  <p class="empty-state">Cadastre um lote para gerar o relatório.</p>
+  {% endif %}
+</section>
+
 <section class="panel">
   <div class="panel-head"><div><p class="panel-kicker">Exportações</p><h2>Relatórios prontos</h2></div></div>
   <div class="report-cards-grid">
