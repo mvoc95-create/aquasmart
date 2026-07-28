@@ -6052,6 +6052,76 @@ def nursery_pl_age_for_lot(lot, target_date: date | None, protocol_key: str | No
 
 
 
+def protocol_population_for_lot_date(lot, target_date: date, operational_phase: str | None = None, protocol_key: str | None = None):
+    """População da linha-base do protocolo para uma data/fase operacional.
+
+    Essa função não representa o saldo real do lote. Ela fornece apenas o
+    denominador da curva de sobrevivência usado para transportar um marco real
+    de população de uma data para outra.
+    """
+    if not lot or not target_date:
+        return None
+    protocol_key = protocol_key or DEFAULT_NURSERY_PROTOCOL_KEY
+    phase = normalize_phase_value(operational_phase) or normalize_phase_value(getattr(lot, 'phase', None))
+    pl_age = nursery_pl_age_for_lot(lot, target_date, protocol_key=protocol_key)
+    row = get_nursery_protocol_row_by_pl_age(pl_age, operational_phase=phase, protocol_key=protocol_key)
+    if not row:
+        row = get_nursery_protocol_row_by_cycle_day(
+            nursery_cycle_day_for_lot(lot, target_date, protocol_key=protocol_key),
+            protocol_key=protocol_key,
+        )
+    if not row:
+        return None
+    population = parse_float(row.get('population'), None)
+    if population is None:
+        base_population = parse_float(get_nursery_protocol_base_population(protocol_key), None)
+        survival_pct = parse_float(row.get('survival_pct'), None)
+        if base_population is not None and survival_pct is not None:
+            population = base_population * (survival_pct / 100.0)
+    return population if population and population > 0 else None
+
+
+def project_population_marker_to_date(lot, marker_quantity, marker_date: date, target_date: date, operational_phase: str | None = None, protocol_key: str | None = None):
+    """Atualiza um marco de população pela curva de sobrevivência até a data-alvo.
+
+    ``quantity_allocated`` é a população estimada/real na data em que a alocação
+    começou. Antes desta correção, uma transferência parcial feita dias depois
+    subtraía os animais desse número antigo. A alimentação, porém, já usava a
+    população reduzida pela sobrevivência do protocolo. Isso podia fazer a ração
+    permanecer igual após retirar camarões.
+    """
+    try:
+        quantity = max(int(round(float(marker_quantity or 0))), 0)
+    except (TypeError, ValueError):
+        return 0
+    if quantity <= 0 or not marker_date or not target_date or target_date <= marker_date:
+        return quantity
+    protocol_key = protocol_key or DEFAULT_NURSERY_PROTOCOL_KEY
+    marker_population = protocol_population_for_lot_date(
+        lot, marker_date, operational_phase=operational_phase, protocol_key=protocol_key
+    )
+    target_population = protocol_population_for_lot_date(
+        lot, target_date, operational_phase=operational_phase, protocol_key=protocol_key
+    )
+    if not marker_population or not target_population:
+        return quantity
+    return max(int(round(quantity * (target_population / float(marker_population)))), 0)
+
+
+def estimated_allocation_population_on_date(allocation, target_date: date | None = None):
+    if not allocation:
+        return 0
+    target_date = target_date or local_today()
+    return project_population_marker_to_date(
+        allocation.lot,
+        allocation.quantity_allocated,
+        allocation.start_date,
+        target_date,
+        operational_phase=allocation_operational_phase(allocation),
+        protocol_key=nursery_protocol_key_for_unit(allocation.unit) if allocation.unit else DEFAULT_NURSERY_PROTOCOL_KEY,
+    )
+
+
 def feeding_table_expected_weight_for_lot(lot: Lot, target_date: date | None = None, age_days: int | None = None, operational_phase: str | None = None):
     """Peso esperado pela idade de PL da tabela base de alimentação editável.
 
@@ -8232,28 +8302,34 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
         elif not source_state.get('phase'):
             source_state['phase'] = source_phase
 
-        available_qty = int(source_state['qty']) if source_state else 0
+        # quantity_allocated é um marco na data de início da alocação, não uma
+        # fotografia eterna. Trazemos esse marco até a data da transferência pela
+        # curva de sobrevivência antes de retirar os camarões. Sem isso, era possível
+        # subtrair 50 mil de um saldo antigo e chegar exatamente à mesma população que
+        # a tela de ração já projetava para hoje.
+        available_qty = project_population_marker_to_date(
+            lot,
+            source_state.get('qty') if source_state else 0,
+            source_state.get('start_date') if source_state else transfer_date,
+            transfer_date,
+            operational_phase=source_state.get('phase') if source_state else source_phase,
+        )
         received_qty = qty_requested
 
-        if available_qty > 0 and qty_requested > available_qty and not source_state.get('inferred_first_source'):
-            # A contagem da transferência é tratada como dado real de campo.
-            # Em berçário/juvenil, a população inicial vem de estimativa por peso do laboratório;
-            # se a transferência real vier maior que o saldo teórico, ela recalibra o lote em vez de ser limitada.
-            received_qty = qty_requested
-            source_state['qty'] = qty_requested
+        if qty_requested > available_qty:
+            # A contagem da transferência é tratada como dado real de campo. Se ela
+            # superar a estimativa, passa a ser o novo mínimo conhecido da população
+            # presente na origem naquele momento.
+            if not inferred_missing_source:
+                warnings.append(
+                    f'Transferência #{transfer.id} informou {qty_requested:,} un., acima do saldo estimado de {available_qty:,} un.; a contagem real recalibrou o lote.'.replace(',', '.')
+                )
             available_qty = qty_requested
-            warnings.append(
-                f'Transferência #{transfer.id} informou {qty_requested:,} un., acima do saldo estimado; a contagem real recalibrou o lote.'.replace(',', '.')
-            )
 
-        # Se a origem foi reconstruída/inferida pela própria transferência, considera que a
-        # contagem informada substitui a expectativa anterior. Assim 11.000 transferidos
-        # deixam de competir com 265.000 esperados no dashboard.
-        effective_close_source = bool(
-            transfer.close_source_after_transfer
-            or inferred_missing_source
-            or (source_state.get('inferred_first_source') and first_valid_transfer and transfer.id == first_valid_transfer.id)
-        )
+        # A escolha do formulário é soberana: transferência parcial mantém o saldo
+        # estimado restante; encerramento explícito zera a origem. Não fechamos mais
+        # a origem apenas porque o lote mestre aponta atualmente para outra unidade.
+        effective_close_source = bool(transfer.close_source_after_transfer)
         removed_from_source = available_qty if effective_close_source else min(received_qty, available_qty)
 
         # Fecha o trecho anterior da origem e abre novo trecho apenas se ainda restou saldo.
@@ -8261,7 +8337,7 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             transfer.source_unit_id,
             source_state['start_date'],
             close_date,
-            available_qty,
+            source_state.get('qty'),
             source_state.get('notes') or 'Saldo anterior à transferência.',
             source_state.get('phase') or source_phase,
         )
@@ -8288,7 +8364,14 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
                 destination_state.get('notes') or 'Saldo anterior à nova entrada.',
                 destination_state.get('phase') or destination_phase,
             )
-            new_destination_qty = int(destination_state['qty']) + received_qty
+            destination_qty_at_transfer = project_population_marker_to_date(
+                lot,
+                destination_state.get('qty'),
+                destination_state.get('start_date'),
+                transfer_date,
+                operational_phase=destination_state.get('phase') or destination_phase,
+            )
+            new_destination_qty = int(destination_qty_at_transfer) + received_qty
         else:
             new_destination_qty = received_qty
 
@@ -13748,7 +13831,7 @@ def transfers_page():
             flash('Informe corretamente a fase de origem e a fase de destino.', 'danger')
             return redirect(url_for('transfers_page'))
 
-        available_qty = source_allocation.quantity_allocated if source_allocation else None
+        available_qty = estimated_allocation_population_on_date(source_allocation, transfer_date) if source_allocation else None
         if available_qty is not None and transferred_qty > available_qty and form_mode != 'edit':
             flash(
                 f'Quantidade informada ({transferred_qty:,} un.) maior que o saldo estimado da origem ({available_qty:,} un.). '
@@ -13791,22 +13874,6 @@ def transfers_page():
                 flash('Transferência atualizada e saldos vivos recalculados automaticamente.', 'success')
             return redirect(url_for('transfers_page'))
 
-        existing_allocation = find_active_allocation(src_lot.id, destination_unit_id, transfer_date)
-        if not existing_allocation:
-            db.session.add(LotUnitAllocation(
-                lot_id=src_lot.id,
-                unit_id=destination_unit_id,
-                start_date=transfer_date,
-                quantity_allocated=transferred_qty,
-                operational_phase=destination_phase,
-                notes='Transferência trifásica entre fases.'
-            ))
-        else:
-            existing_allocation.quantity_allocated = (existing_allocation.quantity_allocated or 0) + transferred_qty
-            existing_allocation.operational_phase = destination_phase or existing_allocation.operational_phase
-            if existing_allocation.end_date and existing_allocation.end_date <= transfer_date:
-                existing_allocation.end_date = None
-
         tr = Transfer(
             transfer_date=transfer_date,
             source_unit_id=src_id,
@@ -13822,14 +13889,11 @@ def transfers_page():
         )
         db.session.add(tr)
 
-        remaining_qty = None
-        if source_allocation.quantity_allocated is not None:
-            remaining_qty = max((source_allocation.quantity_allocated or 0) - transferred_qty, 0)
-            source_allocation.quantity_allocated = remaining_qty
-        should_close_source = close_source_after_transfer or remaining_qty == 0
-        tr.close_source_after_transfer = should_close_source
-        if should_close_source:
-            source_allocation.end_date = transfer_date
+        # Transfer é a fonte oficial. O mapa LotUnitAllocation será reconstruído
+        # abaixo usando a população projetada exatamente na data da movimentação.
+        # Evitamos alterar manualmente o marcador antigo, pois ele pertence à data
+        # de início da fase e não ao dia atual.
+        tr.close_source_after_transfer = close_source_after_transfer
 
         db.session.flush()
         sync_transfer_real_data_marker(tr)
@@ -13846,6 +13910,8 @@ def transfers_page():
     lots = Lot.query.filter_by(status='ativo').order_by(Lot.start_date.desc()).all()
     rows = Transfer.query.options(joinedload(Transfer.source_unit), joinedload(Transfer.destination_unit), joinedload(Transfer.source_lot)).order_by(Transfer.transfer_date.desc(), Transfer.id.desc()).limit(80).all()
     allocations = active_allocation_rows(local_today())
+    for allocation in allocations:
+        allocation.live_quantity_estimate = estimated_allocation_population_on_date(allocation, local_today())
     return render_template(
         'transfers.html',
         units=units,
