@@ -85,7 +85,7 @@
       <select name="source_allocation_id" id="source_allocation_id" required>
         <option value="">Selecione o lote/unidade de origem</option>
         {% for a in allocations %}
-        <option value="{{ a.id }}" data-phase="{{ a.operational_phase or (a.unit.phase if a.unit else '') }}">{{ a.lot.lot_code if a.lot else 'Lote' }} · {{ a.unit.name if a.unit else 'Unidade' }} · {{ (a.operational_phase or (a.unit.phase if a.unit else ''))|phase_label if (a.operational_phase or a.unit) else '' }} · saldo {{ '{:,.0f}'.format(a.quantity_allocated or 0).replace(',', '.') }}</option>
+        <option value="{{ a.id }}" data-phase="{{ a.operational_phase or (a.unit.phase if a.unit else '') }}">{{ a.lot.lot_code if a.lot else 'Lote' }} · {{ a.unit.name if a.unit else 'Unidade' }} · {{ (a.operational_phase or (a.unit.phase if a.unit else ''))|phase_label if (a.operational_phase or a.unit) else '' }} · saldo estimado hoje {{ '{:,.0f}'.format(a.live_quantity_estimate if a.live_quantity_estimate is defined else (a.quantity_allocated or 0)).replace(',', '.') }}</option>
         {% endfor %}
       </select>
     </label>
@@ -127,8 +127,8 @@
 
   <label>Encerrar origem após a transferência?
     <select name="close_source_allocation">
-      <option value="0" {% if edit_transfer and not edit_transfer.close_source_after_transfer %}selected{% endif %}>Não, é divisão parcial e fica saldo na origem</option>
-      <option value="1" {% if not edit_transfer or (edit_transfer and edit_transfer.close_source_after_transfer) %}selected{% endif %}>Sim, a contagem real substitui o saldo anterior</option>
+      <option value="0" {% if not edit_transfer or (edit_transfer and not edit_transfer.close_source_after_transfer) %}selected{% endif %}>Não, é divisão parcial e fica saldo na origem</option>
+      <option value="1" {% if edit_transfer and edit_transfer.close_source_after_transfer %}selected{% endif %}>Sim, encerrar toda a origem após transferir</option>
     </select>
   </label>
 
