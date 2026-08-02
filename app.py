@@ -505,6 +505,38 @@ class SupplyProduct(db.Model):
         return ' · '.join(details)
 
 
+class WaterManagementItem(db.Model):
+    """Coluna dinâmica da tabela de manejo da água e probióticos."""
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), unique=True, nullable=False)
+    default_measure_unit = db.Column(db.String(20), nullable=False, default='g')
+    supply_product_id = db.Column(db.Integer, db.ForeignKey('supply_product.id'))
+    sort_order = db.Column(db.Integer, nullable=False, default=0)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    supply_product = db.relationship('SupplyProduct')
+
+
+class WaterManagementUnitRule(db.Model):
+    """Regra de uso de uma coluna para um viveiro/berçário específico."""
+    id = db.Column(db.Integer, primary_key=True)
+    item_id = db.Column(db.Integer, db.ForeignKey('water_management_item.id'), nullable=False, index=True)
+    unit_id = db.Column(db.Integer, db.ForeignKey('unit.id'), nullable=False, index=True)
+    enabled = db.Column(db.Boolean, nullable=False, default=False)
+    quantity = db.Column(db.Float)
+    measure_unit = db.Column(db.String(20), nullable=False, default='g')
+    dosage_basis = db.Column(db.String(30), nullable=False, default='fixed')  # fixed / per_feed_kg
+    frequency_type = db.Column(db.String(30), nullable=False, default='daily')  # daily / weekly / cycle_start / between_cycles
+    weekdays_csv = db.Column(db.String(30), default='0')
+    scheduled_time = db.Column(db.String(5), default='08:00')
+    notes = db.Column(db.Text)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    item = db.relationship('WaterManagementItem')
+    unit = db.relationship('Unit')
+    __table_args__ = (db.UniqueConstraint('item_id', 'unit_id', name='uq_water_item_unit'),)
+
+
 class FeedingProtocolRow(db.Model):
     """Linha editável da tabela base de alimentação.
 
@@ -529,6 +561,13 @@ class FeedingProtocolRow(db.Model):
     notes = db.Column(db.Text)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     feeds = db.relationship('FeedingProtocolFeed', backref='row', cascade='all, delete-orphan', lazy=True)
+
+
+class FeedingProtocolConfig(db.Model):
+    """Configuração global de como o peso entra no cálculo da tabela de ração."""
+    id = db.Column(db.Integer, primary_key=True)
+    biometric_weight_scope = db.Column(db.String(40), nullable=False, default='table_only')
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
 class FeedingProtocolFeed(db.Model):
@@ -7042,6 +7081,49 @@ def scale_nursery_mixes(mixes, quantity_kg):
     return [item for item in scaled if item['grams'] > 0]
 
 
+BIOMETRIC_WEIGHT_SCOPE_OPTIONS = [
+    ('table_only', 'Manter os pesos da tabela'),
+    ('excavated_only', 'Usar última biometria somente nos viveiros escavados'),
+    ('excavated_and_greenhouses', 'Usar última biometria nos viveiros escavados + estufas'),
+    ('all_units', 'Usar última biometria em todas as unidades'),
+]
+
+
+def get_feeding_protocol_config():
+    config = FeedingProtocolConfig.query.order_by(FeedingProtocolConfig.id.asc()).first()
+    if not config:
+        config = FeedingProtocolConfig(biometric_weight_scope='table_only')
+        db.session.add(config)
+        db.session.commit()
+    return config
+
+
+def should_use_latest_biometric_weight(unit, operational_phase=None):
+    scope = (get_feeding_protocol_config().biometric_weight_scope or 'table_only').strip()
+    phase = normalize_phase_value(operational_phase or getattr(unit, 'phase', None))
+    if scope == 'all_units':
+        return True
+    if scope == 'excavated_only':
+        return phase == 'engorda'
+    if scope == 'excavated_and_greenhouses':
+        return phase in {'juvenil', 'engorda'}
+    return False
+
+
+def latest_biometric_for_unit_on_date(lot_id, unit_id, target_date):
+    query = BiometricsSample.query.filter(
+        BiometricsSample.lot_id == lot_id,
+        BiometricsSample.sample_date <= target_date,
+    )
+    if unit_id:
+        unit_sample = query.filter(BiometricsSample.unit_id == unit_id).order_by(
+            BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()
+        ).first()
+        if unit_sample:
+            return unit_sample
+    return query.order_by(BiometricsSample.sample_date.desc(), BiometricsSample.id.desc()).first()
+
+
 def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, cumulative_factor=1.0, correction_events=None):
     target_date = target_date or local_today()
     if not lot or not unit or not lot.start_date:
@@ -7119,7 +7201,6 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     def scaled(value):
         return int(round((value or 0) * factor))
 
-    base_total_day_g = scaled(row['total_day_g'])
     correction_factor = cumulative_factor or 1.0
     correction_label = nursery_score_factor_label(correction_factor)
     correction_events = correction_events or []
@@ -7128,12 +7209,30 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     if not row_population:
         row_population = (get_nursery_protocol_base_population(protocol_key) or 0) * (row['survival_pct'] / 100.0)
     projected_population = int(round((row_population or 0) * factor))
-    biomass_kg = round((projected_population * row['individual_weight_g']) / 1000.0, 2)
+
+    table_weight_g = float(row.get('individual_weight_g') or 0)
+    calculation_weight_g = table_weight_g
+    weight_source = 'tabela-base'
+    biometric_sample = None
+    if should_use_latest_biometric_weight(unit, operational_phase):
+        biometric_sample = latest_biometric_for_unit_on_date(lot.id, unit.id, target_date)
+        if biometric_sample and (biometric_sample.average_weight_g or 0) > 0:
+            calculation_weight_g = float(biometric_sample.average_weight_g)
+            weight_source = f"última biometria de {biometric_sample.sample_date.strftime('%d/%m/%Y')}"
+
+    biomass_kg = round((projected_population * calculation_weight_g) / 1000.0, 2)
+    if weight_source == 'tabela-base':
+        base_total_day_g = scaled(row['total_day_g'])
+    else:
+        base_total_day_g = int(round(biomass_kg * (float(row.get('feed_rate_pct') or 0) / 100.0) * 1000))
+
     base_mixes = [
         {'label': resolve_nursery_mix_label(item.get('label', 'Ração protocolo')), 'grams': scaled(item.get('grams', 0))}
         for item in row.get('mixes', [])
     ]
     base_mixes = consolidate_feed_mixes(base_mixes)
+    if weight_source != 'tabela-base' and base_mixes:
+        base_mixes = scale_nursery_mixes(base_mixes, base_total_day_g / 1000.0)
     mixes = [
         {'label': item['label'], 'grams': int(round(item['grams'] * correction_factor))}
         for item in base_mixes
@@ -7156,7 +7255,9 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     # (probiótico/AQUAPRO, LOTHAR, melaço etc.). A ração continua seguindo a
     # tabela proporcionalmente, sem reiniciar o ciclo.
     raw_water_items = row.get('water_items', [])
-    water_items = [] if operational_phase == 'engorda' else raw_water_items
+    # O cadastro central substitui os itens fixos do protocolo quando houver regras ativas.
+    configured_items = configured_water_items_for_unit(unit, target_date, total_feed_g=total_day_g, cycle_day=cycle_day)
+    water_items = configured_items if configured_items else ([] if operational_phase == 'engorda' else raw_water_items)
 
     days_at_farm = inclusive_day_count(lot.start_date, target_date)
     phase_start_date = nursery_phase_start_date(lot, unit, allocation, transfer_marker, target_date)
@@ -7210,6 +7311,10 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         'base_row': row,
         'projected_population': projected_population,
         'biomass_kg': biomass_kg,
+        'table_weight_g': table_weight_g,
+        'calculation_weight_g': calculation_weight_g,
+        'weight_source': weight_source,
+        'biometric_sample': biometric_sample,
         'feed_rate_pct': row['feed_rate_pct'],
         'base_total_day_g': base_total_day_g,
         'base_total_day_kg': grams_to_kg(base_total_day_g),
@@ -8025,6 +8130,7 @@ def init_db():
         seed_admin_user()
         get_water_reference_config()
         ensure_feeding_protocol_seeded()
+        ensure_water_management_seeded()
         ensure_alert_rules()
 
 
@@ -9422,6 +9528,15 @@ def nursery_water_supply_alias_labels(label: str):
 
 
 def find_or_create_supply_product_for_protocol(label: str, measure_unit='g', create_missing=True):
+    # Respeita primeiro o vínculo explícito feito no cadastro de manejo da água.
+    configured = WaterManagementItem.query.filter(
+        func.lower(WaterManagementItem.name) == (label or '').strip().lower(),
+        WaterManagementItem.active.is_(True),
+    ).first()
+    if configured and configured.supply_product_id:
+        linked = db.session.get(SupplyProduct, configured.supply_product_id)
+        if linked and linked.active:
+            return linked
     aliases = [normalize_text(item) for item in nursery_water_supply_alias_labels(label)]
     aliases = [item for item in aliases if item]
     if not aliases:
@@ -13359,6 +13474,166 @@ def charts_page():
 
 
 
+
+WATER_FREQUENCY_LABELS = {
+    'daily': 'Todos os dias',
+    'weekly': 'Semanal',
+    'cycle_start': 'No início do ciclo',
+    'between_cycles': 'Entre ciclos',
+}
+WEEKDAY_SHORT_PT = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+
+
+def ensure_water_management_seeded():
+    """Cria as quatro colunas iniciais e replica os valores da planilha enviada."""
+    definitions = [
+        ('AQUAPRO ECO', 'comprimido', 10),
+        ('WSR – Waste & Sludge Reducer', 'comprimido', 20),
+        ('EPIZYM-PST3', 'g', 30),
+        ('ProBacyl', 'g', 40),
+    ]
+    items = {}
+    changed = False
+    for name, unit_name, order in definitions:
+        item = WaterManagementItem.query.filter(func.lower(WaterManagementItem.name) == name.lower()).first()
+        if not item:
+            item = WaterManagementItem(name=name, default_measure_unit=unit_name, sort_order=order, active=True)
+            db.session.add(item); db.session.flush(); changed = True
+        items[name] = item
+
+    exact = {
+        'Belém': (3, 7, 162, 3), 'Natuba': (3, 7, 171, 3), 'Santa Rita': (5, 12, 235, 3),
+        'Sapé': (5, 12, 243, 3), 'Lucena': (2, 5, 108, 3), 'Cruz do Espírito Santo': (3, 7, 132, 3),
+        'Conde': (4, 10, 174, 3), 'Campina Grande': (3, 7, 151, 3),
+        'São Paulo (Berçário)': (1, 2, None, 5), 'São Paulo 1 (Estufa)': (5, 3, None, 4),
+        'São Paulo 2 (Estufa)': (5, 12, None, 4), 'Rio Grande (Berçário)': (1, 3, None, 5),
+        'Rio Grande (Estufa)': (5, 12, None, 4),
+    }
+    aliases = {'Sao Paulo': 'São Paulo', 'Espirito': 'Espírito'}
+    for unit in Unit.query.filter_by(active=True).all():
+        vals = exact.get(unit.name)
+        if not vals:
+            # Bons padrões para unidades novas; ficam desmarcados para revisão.
+            vals = (max(1, round(unit.area_m2 / 180)), max(1, round(unit.area_m2 / 70)), round(unit.area_m2 * .3), 4 if unit.structure_type == 'estufa' else (5 if unit.phase == 'bercario' else 3))
+        configs = [
+            ('AQUAPRO ECO', vals[0], 'fixed', 'weekly', '0'),
+            ('WSR – Waste & Sludge Reducer', vals[1], 'fixed', 'weekly', '0'),
+            ('EPIZYM-PST3', vals[2], 'fixed', 'between_cycles', ''),
+            ('ProBacyl', vals[3], 'per_feed_kg', 'daily', ''),
+        ]
+        for name, qty, basis, freq, days in configs:
+            item = items[name]
+            rule = WaterManagementUnitRule.query.filter_by(item_id=item.id, unit_id=unit.id).first()
+            if not rule:
+                rule = WaterManagementUnitRule(item_id=item.id, unit_id=unit.id, enabled=False)
+                db.session.add(rule); changed = True
+            if rule.quantity is None and qty is not None:
+                rule.quantity = qty
+                rule.measure_unit = item.default_measure_unit
+                rule.dosage_basis = basis
+                rule.frequency_type = freq
+                rule.weekdays_csv = days
+                rule.scheduled_time = '08:00'
+    if changed:
+        db.session.commit()
+
+
+def water_rule_applies(rule, target_date, cycle_day=None):
+    if not rule or not rule.enabled:
+        return False
+    if rule.frequency_type == 'daily':
+        return True
+    if rule.frequency_type == 'weekly':
+        days = {int(x) for x in (rule.weekdays_csv or '').split(',') if x.strip().isdigit()}
+        return target_date.weekday() in days
+    if rule.frequency_type == 'cycle_start':
+        return cycle_day in (0, 1)
+    # "Entre ciclos" aparece no cadastro/estoque, mas não deve ser lançado dentro de lote ativo.
+    return False
+
+
+def configured_water_items_for_unit(unit, target_date, total_feed_g=0, cycle_day=None):
+    if not unit:
+        return []
+    ensure_water_management_seeded()
+    rules = (WaterManagementUnitRule.query.options(joinedload(WaterManagementUnitRule.item))
+             .filter_by(unit_id=unit.id).join(WaterManagementItem)
+             .filter(WaterManagementItem.active.is_(True))
+             .order_by(WaterManagementItem.sort_order, WaterManagementItem.id).all())
+    result = []
+    for rule in rules:
+        if not water_rule_applies(rule, target_date, cycle_day):
+            continue
+        qty = float(rule.quantity or 0)
+        if rule.dosage_basis == 'per_feed_kg':
+            qty *= (float(total_feed_g or 0) / 1000.0)
+        result.append({
+            'label': rule.item.name, 'source_label': rule.item.name, 'category': 'aditivo',
+            'quantity': round(qty, 3), 'measure_unit': rule.measure_unit or rule.item.default_measure_unit,
+            'scheduled_time': rule.scheduled_time or '08:00', 'priority': 'alta',
+            'configured_rule_id': rule.id,
+        })
+    return result
+
+
+@app.route('/water-management-protocol', methods=['GET', 'POST'])
+@login_required
+@requires_permission('protocols_manage')
+def water_management_protocol_page():
+    ensure_water_management_seeded()
+    if request.method == 'POST':
+        action = request.form.get('action') or 'save'
+        if action == 'add_item':
+            name = (request.form.get('new_item_name') or '').strip()
+            if not name:
+                flash('Informe o nome do novo probiótico/insumo.', 'danger')
+            elif WaterManagementItem.query.filter(func.lower(WaterManagementItem.name) == name.lower()).first():
+                flash('Já existe uma coluna com esse nome.', 'warning')
+            else:
+                item = WaterManagementItem(name=name, default_measure_unit=(request.form.get('new_item_unit') or 'g').strip(), sort_order=(db.session.query(func.max(WaterManagementItem.sort_order)).scalar() or 0) + 10)
+                db.session.add(item); db.session.flush()
+                for unit in Unit.query.filter_by(active=True).all():
+                    db.session.add(WaterManagementUnitRule(item_id=item.id, unit_id=unit.id, enabled=False, measure_unit=item.default_measure_unit))
+                db.session.commit(); flash(f'Coluna {name} criada.', 'success')
+            return redirect(url_for('water_management_protocol_page'))
+        if action == 'delete_item':
+            item = db.session.get(WaterManagementItem, parse_int(request.form.get('item_id')))
+            if item:
+                item.active = False; db.session.commit(); flash('Coluna desativada.', 'success')
+            return redirect(url_for('water_management_protocol_page'))
+
+        items = WaterManagementItem.query.filter_by(active=True).order_by(WaterManagementItem.sort_order, WaterManagementItem.id).all()
+        units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+        now = datetime.utcnow()
+        for item in items:
+            product_id = parse_int(request.form.get(f'item_{item.id}_supply_product_id'))
+            item.supply_product_id = product_id or None
+            item.default_measure_unit = (request.form.get(f'item_{item.id}_default_unit') or item.default_measure_unit or 'g').strip()
+            for unit in units:
+                rule = WaterManagementUnitRule.query.filter_by(item_id=item.id, unit_id=unit.id).first()
+                if not rule:
+                    rule = WaterManagementUnitRule(item_id=item.id, unit_id=unit.id); db.session.add(rule)
+                key = f'rule_{unit.id}_{item.id}_'
+                rule.enabled = request.form.get(key + 'enabled') == 'on'
+                rule.quantity = parse_float(request.form.get(key + 'quantity'), 0) or 0
+                rule.measure_unit = (request.form.get(key + 'unit') or item.default_measure_unit or 'g').strip()
+                rule.dosage_basis = request.form.get(key + 'basis') or 'fixed'
+                rule.frequency_type = request.form.get(key + 'frequency') or 'daily'
+                selected_days = request.form.getlist(key + 'weekdays')
+                rule.weekdays_csv = ','.join(selected_days)
+                rule.scheduled_time = (request.form.get(key + 'time') or '08:00').strip()
+                rule.updated_at = now
+        db.session.commit(); flash('Manejo da água e probióticos salvo.', 'success')
+        return redirect(url_for('water_management_protocol_page'))
+
+    items = WaterManagementItem.query.filter_by(active=True).order_by(WaterManagementItem.sort_order, WaterManagementItem.id).all()
+    units = Unit.query.filter_by(active=True).order_by(Unit.name).all()
+    rule_map = {(r.unit_id, r.item_id): r for r in WaterManagementUnitRule.query.all()}
+    supplies = SupplyProduct.query.filter_by(active=True).order_by(SupplyProduct.name).all()
+    return render_template('water_management_protocol.html', items=items, units=units, rule_map=rule_map,
+                           supplies=supplies, frequency_labels=WATER_FREQUENCY_LABELS, weekdays=WEEKDAY_SHORT_PT)
+
+
 @app.route('/feeding-protocol', methods=['GET', 'POST'])
 @login_required
 @requires_permission('protocols_manage')
@@ -13382,6 +13657,12 @@ def feeding_protocol_page():
 
         recalc_totals = request.form.get('recalc_totals') == 'on'
         now = datetime.utcnow()
+
+        config = get_feeding_protocol_config()
+        selected_scope = (request.form.get('biometric_weight_scope') or 'table_only').strip()
+        valid_scopes = {value for value, _ in BIOMETRIC_WEIGHT_SCOPE_OPTIONS}
+        config.biometric_weight_scope = selected_scope if selected_scope in valid_scopes else 'table_only'
+        config.updated_at = now
 
         # Mapeamento global: cada ração/coluna da tabela pode apontar para uma ração real do estoque.
         for idx, label in enumerate(feed_labels):
@@ -13480,6 +13761,8 @@ def feeding_protocol_page():
         feed_labels_json=json.dumps(feed_labels, ensure_ascii=False),
         feed_maps=feed_maps,
         feed_products=feed_products,
+        feeding_protocol_config=get_feeding_protocol_config(),
+        biometric_weight_scope_options=BIOMETRIC_WEIGHT_SCOPE_OPTIONS,
         phase_options=[('bercario', 'Berçário'), ('juvenil', 'Juvenil'), ('engorda', 'Engorda')],
         column_letters=column_letters,
         fixed_protocol_columns=fixed_protocol_columns,
