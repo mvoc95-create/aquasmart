@@ -8,7 +8,7 @@
     <div>
       <p class="panel-kicker">Cadastros · Alimentação</p>
       <h2>Tabela base do protocolo</h2>
-      <p class="muted-text">Edição em modo planilha: a linha da ração é escolhida pela idade do PL/estágio da tabela; o cálculo usa o peso da tabela, não a última biometria real.</p>
+      <p class="muted-text">Edição em modo planilha: a linha da ração é escolhida pela idade do PL/estágio. A origem do peso usada no cálculo pode ser definida abaixo.</p>
     </div>
     <div class="protocol-head-actions">
       <button type="button" class="secondary-button" id="toggle-sheet-fullscreen">Abrir como planilha</button>
@@ -28,10 +28,20 @@
     <input type="hidden" name="action" value="save">
     <input type="hidden" name="feed_labels_json" value="{{ feed_labels_json|e }}">
 
+    <div class="info-card protocol-help-card">
+      <label for="biometric-weight-scope"><strong>Peso usado para calcular a ração</strong></label>
+      <select name="biometric_weight_scope" id="biometric-weight-scope" class="sheet-select" style="margin-top:8px;max-width:620px;width:100%;">
+        {% for value, label in biometric_weight_scope_options %}
+          <option value="{{ value }}" {% if feeding_protocol_config.biometric_weight_scope == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <p class="muted-text" style="margin:8px 0 0;">Quando a biometria estiver habilitada, o sistema mantém a população e a taxa de alimentação da linha atual, substitui somente o peso pelo último peso real disponível e recalcula biomassa, total diário e proporção do mix. Sem biometria cadastrada, continua usando automaticamente o peso da tabela.</p>
+    </div>
+
     <div class="sheet-toolbar">
       <div class="sheet-name-box" id="sheet-name-box">A1</div>
       <label class="sheet-formula-bar"><span>fx</span><input type="text" id="sheet-formula-input" readonly value="Selecione uma célula da planilha"></label>
-      <label class="check-row sheet-check"><input type="checkbox" name="recalc_totals" id="recalc_totals" checked> Recalcular biomassa e total do dia pela população × peso da tabela × taxa</label>
+      <label class="check-row sheet-check"><input type="checkbox" name="recalc_totals" id="recalc_totals" checked> Recalcular biomassa e total da linha pela população × peso informado × taxa</label>
       <button type="button" class="secondary-button compact-button" id="copy-sheet-tsv">Copiar planilha</button>
     </div>
 

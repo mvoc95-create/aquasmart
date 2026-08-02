@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Manejo da água e probióticos{% endblock %}
+{% block content %}
+<section class="page-header"><div><p class="eyebrow">Cadastros</p><h1>Manejo da água e probióticos</h1><p>Defina por viveiro o que será usado, a dose, a frequência, o dia e o vínculo com o estoque. Os itens ativos entram no texto diário do WhatsApp e na Rotina do Dia; ao concluir, baixam o estoque e compõem o custo/relatório do ciclo.</p></div></section>
+<section class="panel-card">
+  <div class="section-heading"><div><h2>Criar nova coluna</h2><p>Use para Citronex ou qualquer produto futuro.</p></div></div>
+  <form method="post" class="inline-form">
+    <input type="hidden" name="action" value="add_item">
+    <label>Nome<input name="new_item_name" placeholder="Ex.: Citronex" required></label>
+    <label>Unidade padrão<select name="new_item_unit"><option>g</option><option>kg</option><option>mL</option><option>L</option><option>comprimido</option></select></label>
+    <button class="primary-button" type="submit">Adicionar coluna</button>
+  </form>
+</section>
+<form method="post"><input type="hidden" name="action" value="save">
+<section class="panel-card">
+<div class="table-wrapper" style="overflow:auto;max-height:72vh"><table class="data-table" style="min-width:{{ 360 + items|length * 330 }}px">
+<thead><tr><th style="position:sticky;left:0;z-index:3;background:white">Viveiro / área</th>{% for item in items %}<th style="min-width:320px"><div>{{ item.name }}</div><small>Vínculo com estoque</small><select name="item_{{ item.id }}_supply_product_id"><option value="">Sem vínculo</option>{% for p in supplies %}<option value="{{ p.id }}" {% if item.supply_product_id==p.id %}selected{% endif %}>{{ p.full_name }}</option>{% endfor %}</select><input type="hidden" name="item_{{ item.id }}_default_unit" value="{{ item.default_measure_unit }}"><button class="text-button" formmethod="post" name="action" value="delete_item" formaction="{{ url_for('water_management_protocol_page') }}" onclick="this.form.item_id.value='{{ item.id }}';return confirm('Desativar esta coluna?')">Desativar</button></th>{% endfor %}</tr></thead>
+<tbody>{% for unit in units %}<tr><td style="position:sticky;left:0;z-index:2;background:white"><strong>{{ unit.name }}</strong><br><small>{{ unit.area_m2|round|int }} m² · {{ unit.phase|capitalize }}</small></td>{% for item in items %}{% set r=rule_map.get((unit.id,item.id)) %}<td><div style="display:grid;gap:7px"><label><input type="checkbox" name="rule_{{unit.id}}_{{item.id}}_enabled" {% if r and r.enabled %}checked{% endif %}> Usando neste ciclo/viveiro</label><div style="display:flex;gap:6px"><input type="number" step="0.001" min="0" name="rule_{{unit.id}}_{{item.id}}_quantity" value="{{ r.quantity if r and r.quantity is not none else '' }}" placeholder="Dose"><select name="rule_{{unit.id}}_{{item.id}}_unit">{% for u in ['g','kg','mL','L','comprimido'] %}<option {% if (r.measure_unit if r else item.default_measure_unit)==u %}selected{% endif %}>{{u}}</option>{% endfor %}</select></div><select name="rule_{{unit.id}}_{{item.id}}_basis"><option value="fixed" {% if not r or r.dosage_basis=='fixed' %}selected{% endif %}>Quantidade fixa por aplicação</option><option value="per_feed_kg" {% if r and r.dosage_basis=='per_feed_kg' %}selected{% endif %}>Por kg de ração do dia</option></select><select class="freq" name="rule_{{unit.id}}_{{item.id}}_frequency">{% for k,v in frequency_labels.items() %}<option value="{{k}}" {% if r and r.frequency_type==k %}selected{% endif %}>{{v}}</option>{% endfor %}</select><div class="weekdays">{% set chosen=(r.weekdays_csv or '').split(',') if r else [] %}{% for d in weekdays %}<label style="margin-right:5px"><input type="checkbox" name="rule_{{unit.id}}_{{item.id}}_weekdays" value="{{loop.index0}}" {% if loop.index0|string in chosen %}checked{% endif %}>{{d}}</label>{% endfor %}</div><label>Horário <input type="time" name="rule_{{unit.id}}_{{item.id}}_time" value="{{r.scheduled_time if r else '08:00'}}"></label></div></td>{% endfor %}</tr>{% endfor %}</tbody>
+</table></div>
+<input type="hidden" name="item_id" value=""><div class="form-actions sticky-actions"><button class="primary-button" type="submit">Salvar manejo da água</button></div>
+</section></form>
+<script>document.querySelectorAll('.freq').forEach(function(s){function f(){const d=s.parentElement.querySelector('.weekdays');if(d)d.style.display=s.value==='weekly'?'block':'none'}s.addEventListener('change',f);f()});</script>
+{% endblock %}

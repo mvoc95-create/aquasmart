@@ -112,6 +112,7 @@
             {% if current_user.is_authenticated and current_user.has_permission('protocols_manage') %}
             <a class="nav-sublink {{ 'active' if current_endpoint == 'protocols_page' else '' }}" href="{{ url_for('protocols_page') }}">Protocolos</a>
             <a class="nav-sublink {{ 'active' if current_endpoint == 'feeding_protocol_page' else '' }}" href="{{ url_for('feeding_protocol_page') }}">Tabela base de alimentação</a>
+            <a class="nav-sublink {{ 'active' if current_endpoint == 'water_management_protocol_page' else '' }}" href="{{ url_for('water_management_protocol_page') }}">Manejo da água e probióticos</a>
             {% endif %}
             {% if current_user.is_authenticated and current_user.has_permission('farm_documents_manage') %}
             <a class="nav-sublink {{ 'active' if current_endpoint == 'farm_documents_page' else '' }}" href="{{ url_for('farm_documents_page') }}">Documentos da fazenda</a>
