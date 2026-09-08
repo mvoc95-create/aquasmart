@@ -8,7 +8,7 @@
     <div>
       <p class="panel-kicker">Cadastros · Alimentação</p>
       <h2>Tabela base do protocolo</h2>
-      <p class="muted-text">Edição em modo planilha: a linha da ração é escolhida pela idade do PL/estágio. A origem do peso usada no cálculo pode ser definida abaixo.</p>
+      <p class="muted-text">Edição em modo planilha: a linha da ração é escolhida pela idade do PL/estágio. A origem do peso e o modo de ajuste usados no cálculo podem ser definidos abaixo.</p>
     </div>
     <div class="protocol-head-actions">
       <button type="button" class="secondary-button" id="toggle-sheet-fullscreen">Abrir como planilha</button>
@@ -35,7 +35,15 @@
           <option value="{{ value }}" {% if feeding_protocol_config.biometric_weight_scope == value %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
-      <p class="muted-text" style="margin:8px 0 0;">Quando a biometria estiver habilitada, o sistema mantém a população e a taxa de alimentação da linha atual, substitui somente o peso pelo último peso real disponível e recalcula biomassa, total diário e proporção do mix. Sem biometria cadastrada, continua usando automaticamente o peso da tabela.</p>
+      <p class="muted-text" style="margin:8px 0 0;">Escolha em quais unidades o último peso real será usado. Sem biometria cadastrada, o sistema continua usando o peso da linha por idade.</p>
+
+      <label for="biometric-adjustment-mode" style="display:block;margin-top:16px;"><strong>Modo de ajuste pela biometria</strong></label>
+      <select name="biometric_adjustment_mode" id="biometric-adjustment-mode" class="sheet-select" style="margin-top:8px;max-width:620px;width:100%;">
+        {% for value, label in biometric_adjustment_mode_options %}
+          <option value="{{ value }}" {% if feeding_protocol_config.biometric_adjustment_mode == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <p class="muted-text" style="margin:8px 0 0;"><strong>Somente o peso:</strong> mantém a taxa e o mix da linha escolhida pela idade, como no modo anterior. <strong>Peso, taxa e mix:</strong> procura a linha de peso mais próxima e usa também a taxa de alimentação e o tipo de ração dessa linha. Nos dois modos, a população permanece projetada pela idade e o total diário é recalculado.</p>
     </div>
 
     <div class="sheet-toolbar">

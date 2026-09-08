@@ -20,6 +20,42 @@
   </div>
 </div>
 
+<details class="panel reference-collapse" style="margin-bottom:1rem;">
+  <summary class="reference-collapse-summary">
+    <div>
+      <p class="panel-kicker">Correção de estoque</p>
+      <h2>Dar baixa na alimentação por período</h2>
+    </div>
+    <span class="inline-hint">Abrir</span>
+  </summary>
+  <form method="post" action="{{ url_for('backfill_management_feed_window') }}" class="form-grid compact-grid" style="margin-top:1rem;" onsubmit="return confirm('Confirmar a baixa automática das alimentações ausentes neste período? Registros já existentes serão preservados e não serão duplicados.');">
+    <label>Data inicial
+      <input type="date" name="window_start_date" value="{{ today.isoformat() }}" max="{{ today.isoformat() }}" required>
+    </label>
+    <label>Data final
+      <input type="date" name="window_end_date" value="{{ today.isoformat() }}" max="{{ today.isoformat() }}" required>
+    </label>
+    <label>Fase
+      <select name="window_phase">
+        <option value="all">Todas as fases</option>
+        <option value="bercario">Berçário</option>
+        <option value="juvenil">Juvenil</option>
+        <option value="engorda">Engorda</option>
+      </select>
+    </label>
+    <label>Viveiro / berçário
+      <select name="window_unit_id">
+        <option value="">Todas as unidades</option>
+        {% for u in units %}<option value="{{ u.id }}" {% if selected_unit_id == u.id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="full selection-info">
+      O sistema refaz o plano de cada data usando o lote e a alocação vigentes naquele dia, inclusive de lotes já encerrados, além da tabela de alimentação e da biometria disponível na data. Só cria baixas onde ainda não existe alimentação registrada, sem duplicar lançamentos, e não inclui probióticos ou outros insumos de água.
+    </div>
+    <div class="form-actions"><button type="submit">Dar baixa no período</button></div>
+  </form>
+</details>
+
 <div class="grid-2">
 <section class="panel">
 <div class="panel-head"><div><p class="panel-kicker">Lançamento</p><h2>Novo manejo</h2></div></div>
