@@ -567,6 +567,7 @@ class FeedingProtocolConfig(db.Model):
     """Configuração global de como o peso entra no cálculo da tabela de ração."""
     id = db.Column(db.Integer, primary_key=True)
     biometric_weight_scope = db.Column(db.String(40), nullable=False, default='table_only')
+    biometric_adjustment_mode = db.Column(db.String(40), nullable=False, default='weight_only')
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
@@ -5309,10 +5310,13 @@ PRODUCTION_PROTOCOL_ROWS = [{'phase': 'juvenil',
 # real do camarão e não confunde 40/2 com rações de camarões maiores. A fase
 # operacional segue sendo usada para frequência e para resolver estágios repetidos
 # no protocolo (ex.: J43 versus PL43, E67 versus J67).
-# Atualização solicitada: foram usados apenas os campos de alimentação da tabela
-# (taxa de alimentação, total do dia e mix de ração). A lógica de horários, número
-# de tratos, probióticos, LOTHAR e demais manejos/controles não foi alterada.
-FULL_CYCLE_FEEDING_FREQUENCIES = {'bercario': 12, 'juvenil': 8, 'engorda': 6}
+# Frequência operacional por fase. A engorda usa quatro tratos diurnos nos
+# horários fixos definidos abaixo; os demais manejos/controles seguem separados.
+FULL_CYCLE_FEEDING_FREQUENCIES = {'bercario': 12, 'juvenil': 8, 'engorda': 4}
+FIXED_PHASE_FEEDING_TIMES = {
+    # Na engorda os tratos ficam concentrados no período diurno, de três em três horas.
+    'engorda': ['08:00', '11:00', '14:00', '17:00'],
+}
 FULL_CYCLE_PROTOCOL_FLEXIBLE_PHASE_TRANSITIONS = True
 FULL_CYCLE_PROTOCOL_BASE_POPULATION = 350000
 FULL_CYCLE_PROTOCOL_COMPACT_ROWS = [('bercario', 1, 1, 'PL11', 350000, 100.0, 0.003, 1.05, 50.0, 526, [('NutriSphera 150', 526)], [('Melaço', 1000.0, 'g', '07:30'), ('LOTHAR', 1000.0, 'g', '07:45'), ('AQUAPRO ECO', 4.0, 'un', '08:00')]),
@@ -5734,7 +5738,11 @@ def feeding_protocol_row_to_dict(row: FeedingProtocolRow) -> dict:
         except Exception:
             water_items = []
     total_day_g = int(round(row.total_day_g or 0))
-    feedings_per_day = int(row.feedings_per_day or feedings_per_day_for_phase(row.phase))
+    feedings_per_day = (
+        feedings_per_day_for_phase(row.phase, fallback=row.feedings_per_day)
+        if normalize_phase_value(row.phase) == 'engorda'
+        else int(row.feedings_per_day or feedings_per_day_for_phase(row.phase))
+    )
     return {
         'phase': normalize_phase_value(row.phase) or 'bercario',
         'phase_day': int(row.phase_day or 1),
@@ -5879,10 +5887,13 @@ def feedings_per_day_for_phase(phase: str | None, fallback=None) -> int:
     return int(fallback or 8)
 
 
-def build_feeding_time_labels(feedings_per_day: int, first_time_label='08:00'):
+def build_feeding_time_labels(feedings_per_day: int, first_time_label='08:00', phase: str | None = None):
     feedings_per_day = max(int(feedings_per_day or 0), 0)
     if feedings_per_day <= 0:
         return []
+    fixed_times = FIXED_PHASE_FEEDING_TIMES.get(normalize_phase_value(phase))
+    if fixed_times:
+        return list(fixed_times)
     first = parse_time(first_time_label) or time(hour=8)
     start_minutes = first.hour * 60 + first.minute
     interval_minutes = 24 * 60 / feedings_per_day
@@ -5893,9 +5904,22 @@ def build_feeding_time_labels(feedings_per_day: int, first_time_label='08:00'):
     return labels
 
 
-def feeding_interval_label(feedings_per_day: int) -> str:
+def feeding_interval_label(feedings_per_day: int, phase: str | None = None) -> str:
     if not feedings_per_day:
         return '—'
+    fixed_times = FIXED_PHASE_FEEDING_TIMES.get(normalize_phase_value(phase))
+    if fixed_times and len(fixed_times) > 1:
+        parsed_times = [parse_time(value) for value in fixed_times]
+        gaps = []
+        for previous, current in zip(parsed_times, parsed_times[1:]):
+            if previous and current:
+                previous_minutes = previous.hour * 60 + previous.minute
+                current_minutes = current.hour * 60 + current.minute
+                gaps.append(current_minutes - previous_minutes)
+        if gaps and len(set(gaps)) == 1:
+            minutes = gaps[0]
+            hours, remainder = divmod(minutes, 60)
+            return f'{hours}h{remainder:02d}' if remainder else f'{hours}h'
     interval_hours = 24 / float(feedings_per_day)
     if abs(interval_hours - round(interval_hours)) < 0.001:
         return f'{int(round(interval_hours))}h'
@@ -6008,6 +6032,47 @@ def get_nursery_protocol_row_by_pl_age(pl_age: int | None, operational_phase: st
     if pl_age >= row_stage_number(nearest_pool[-1]):
         return nearest_pool[-1]
     return min(nearest_pool, key=lambda row: abs(row_stage_number(row) - pl_age))
+
+
+def get_feeding_protocol_row_by_weight(weight_g: float | None, operational_phase: str | None = None, protocol_key: str | None = None):
+    """Encontra a linha da tabela cuja faixa de peso mais se aproxima da biometria.
+
+    A população continua vindo da linha cronológica do lote. Esta busca serve para
+    escolher a taxa de alimentação e o mix de ração adequados ao peso real. A fase
+    operacional entra apenas como desempate, pois um camarão adiantado ou atrasado
+    pode precisar da ração de uma linha de outra fase.
+    """
+    try:
+        target_weight = float(weight_g or 0)
+    except (TypeError, ValueError):
+        return None
+    if target_weight <= 0:
+        return None
+
+    phase = normalize_phase_value(operational_phase)
+    candidates = []
+    for row in get_nursery_protocol_rows(protocol_key):
+        row_weight = parse_float(row.get('individual_weight_g'), None)
+        if row_weight is None:
+            row_weight = parse_float(row.get('weight_g'), None)
+        if row_weight is None or row_weight <= 0:
+            continue
+        candidates.append((float(row_weight), row))
+
+    if not candidates:
+        return None
+
+    def match_key(candidate):
+        row_weight, row = candidate
+        row_phase = normalize_phase_value(row.get('phase'))
+        return (
+            abs(row_weight - target_weight),
+            0 if phase and row_phase == phase else 1,
+            0 if row_weight <= target_weight else 1,
+            int(row.get('cycle_day') or row.get('day') or 0),
+        )
+
+    return min(candidates, key=match_key)[1]
 
 
 def get_nursery_protocol_row_by_cycle_day(cycle_day: int | None, protocol_key: str | None = None):
@@ -7088,18 +7153,34 @@ BIOMETRIC_WEIGHT_SCOPE_OPTIONS = [
     ('all_units', 'Usar última biometria em todas as unidades'),
 ]
 
+BIOMETRIC_ADJUSTMENT_MODE_OPTIONS = [
+    ('weight_only', 'Ajustar somente o peso (modo anterior)'),
+    ('weight_rate_mix', 'Ajustar peso, taxa de alimentação e mix de ração'),
+]
+
 
 def get_feeding_protocol_config():
     config = FeedingProtocolConfig.query.order_by(FeedingProtocolConfig.id.asc()).first()
     if not config:
-        config = FeedingProtocolConfig(biometric_weight_scope='table_only')
+        config = FeedingProtocolConfig(
+            biometric_weight_scope='table_only',
+            biometric_adjustment_mode='weight_only',
+        )
         db.session.add(config)
         db.session.commit()
     return config
 
 
-def should_use_latest_biometric_weight(unit, operational_phase=None):
-    scope = (get_feeding_protocol_config().biometric_weight_scope or 'table_only').strip()
+def biometric_adjustment_mode(config=None):
+    config = config or get_feeding_protocol_config()
+    mode = (config.biometric_adjustment_mode or 'weight_only').strip()
+    valid_modes = {value for value, _ in BIOMETRIC_ADJUSTMENT_MODE_OPTIONS}
+    return mode if mode in valid_modes else 'weight_only'
+
+
+def should_use_latest_biometric_weight(unit, operational_phase=None, config=None):
+    config = config or get_feeding_protocol_config()
+    scope = (config.biometric_weight_scope or 'table_only').strip()
     phase = normalize_phase_value(operational_phase or getattr(unit, 'phase', None))
     if scope == 'all_units':
         return True
@@ -7214,21 +7295,39 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     calculation_weight_g = table_weight_g
     weight_source = 'tabela-base'
     biometric_sample = None
-    if should_use_latest_biometric_weight(unit, operational_phase):
+    feeding_reference_row = row
+    feeding_config = get_feeding_protocol_config()
+    adjustment_mode = biometric_adjustment_mode(feeding_config)
+    adjust_rate_mix_by_weight = adjustment_mode == 'weight_rate_mix'
+    if should_use_latest_biometric_weight(unit, operational_phase, config=feeding_config):
         biometric_sample = latest_biometric_for_unit_on_date(lot.id, unit.id, target_date)
         if biometric_sample and (biometric_sample.average_weight_g or 0) > 0:
             calculation_weight_g = float(biometric_sample.average_weight_g)
             weight_source = f"última biometria de {biometric_sample.sample_date.strftime('%d/%m/%Y')}"
+            if adjust_rate_mix_by_weight:
+                feeding_reference_row = (
+                    get_feeding_protocol_row_by_weight(
+                        calculation_weight_g,
+                        operational_phase=operational_phase,
+                        protocol_key=protocol_key,
+                    )
+                    or row
+                )
+
+    feeding_reference_weight_g = float(feeding_reference_row.get('individual_weight_g') or feeding_reference_row.get('weight_g') or table_weight_g)
+    feeding_reference_stage_label = feeding_reference_row.get('stage_label') or stage_label
+    feeding_reference_phase = normalize_phase_value(feeding_reference_row.get('phase')) or protocol_phase
+    feed_rate_pct = float(feeding_reference_row.get('feed_rate_pct') or 0)
 
     biomass_kg = round((projected_population * calculation_weight_g) / 1000.0, 2)
     if weight_source == 'tabela-base':
         base_total_day_g = scaled(row['total_day_g'])
     else:
-        base_total_day_g = int(round(biomass_kg * (float(row.get('feed_rate_pct') or 0) / 100.0) * 1000))
+        base_total_day_g = int(round(biomass_kg * (feed_rate_pct / 100.0) * 1000))
 
     base_mixes = [
         {'label': resolve_nursery_mix_label(item.get('label', 'Ração protocolo')), 'grams': scaled(item.get('grams', 0))}
-        for item in row.get('mixes', [])
+        for item in feeding_reference_row.get('mixes', [])
     ]
     base_mixes = consolidate_feed_mixes(base_mixes)
     if weight_source != 'tabela-base' and base_mixes:
@@ -7242,14 +7341,14 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
 
     portion_values = build_even_schedule(total_day_g, feedings_per_day)
     per_feeding_g = int(round(total_day_g / feedings_per_day)) if feedings_per_day else 0
-    schedule_times = build_feeding_time_labels(feedings_per_day, first_time_label='08:00')
+    schedule_times = build_feeding_time_labels(feedings_per_day, first_time_label='08:00', phase=operational_phase)
     schedule = []
     for idx, time_label in enumerate(schedule_times):
         schedule.append({'time': time_label, 'grams': portion_values[idx] if idx < len(portion_values) else per_feeding_g})
 
     phase_name = phase_label(operational_phase)
     protocol_phase_name = phase_label(protocol_phase)
-    interval_label = feeding_interval_label(feedings_per_day)
+    interval_label = feeding_interval_label(feedings_per_day, phase=operational_phase)
 
     # Na Engorda, após a transferência, não entra manejo de água do protocolo
     # (probiótico/AQUAPRO, LOTHAR, melaço etc.). A ração continua seguindo a
@@ -7273,9 +7372,20 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         f"Data: {target_date.strftime('%d/%m/%Y')}",
         f"Tempo: {pluralize_day_pt(days_at_farm)} na fazenda · {pluralize_day_pt(days_in_phase)} {phase_duration_label}",
         f"Total do dia: {total_day_g:,} g".replace(',', '.'),
-        '',
-        '*Mix do dia*',
     ]
+    if biometric_sample:
+        if adjust_rate_mix_by_weight:
+            message_lines.append(
+                f"Ajuste por peso, taxa e mix: {format_decimal_pt(calculation_weight_g, 3)} g · "
+                f"taxa {format_decimal_pt(feed_rate_pct, 2)}% · mix da linha {feeding_reference_stage_label} "
+                f"({format_decimal_pt(feeding_reference_weight_g, 3)} g)"
+            )
+        else:
+            message_lines.append(
+                f"Ajuste somente do peso: {format_decimal_pt(calculation_weight_g, 3)} g · "
+                f"taxa {format_decimal_pt(feed_rate_pct, 2)}% e mix mantidos da linha {feeding_reference_stage_label} por idade"
+            )
+    message_lines.extend(['', '*Mix do dia*'])
     for item in mixes or [{'label': 'Sem mistura cadastrada', 'grams': 0}]:
         message_lines.append(f"- {item['label']}: {item['grams']:,} g".replace(',', '.'))
     if water_items:
@@ -7286,7 +7396,10 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
                 message_lines.append(f"- {item.get('label')}")
             else:
                 message_lines.append(f"- {item.get('label')}: {format_decimal_pt(quantity)} {item.get('measure_unit', '')}".strip())
-    message_lines.extend(['', f'*Porções em 24h · início 08:00 · intervalo {interval_label}*'])
+    if operational_phase == 'engorda':
+        message_lines.extend(['', '*Porções do dia · horários 08:00, 11:00, 14:00 e 17:00*'])
+    else:
+        message_lines.extend(['', f'*Porções em 24h · início 08:00 · intervalo {interval_label}*'])
     for item in schedule:
         message_lines.append(f"- {item['time']} — {item['grams']:,} g".replace(',', '.'))
 
@@ -7315,7 +7428,14 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         'calculation_weight_g': calculation_weight_g,
         'weight_source': weight_source,
         'biometric_sample': biometric_sample,
-        'feed_rate_pct': row['feed_rate_pct'],
+        'biometric_adjustment_mode': adjustment_mode,
+        'adjust_rate_mix_by_weight': adjust_rate_mix_by_weight,
+        'feeding_reference_row': feeding_reference_row,
+        'feeding_reference_weight_g': feeding_reference_weight_g,
+        'feeding_reference_stage_label': feeding_reference_stage_label,
+        'feeding_reference_phase': feeding_reference_phase,
+        'feeding_reference_phase_label': phase_label(feeding_reference_phase),
+        'feed_rate_pct': feed_rate_pct,
         'base_total_day_g': base_total_day_g,
         'base_total_day_kg': grams_to_kg(base_total_day_g),
         'score_factor': correction_factor,
@@ -7338,16 +7458,26 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     }
 
 
-def build_stage_feed_digest_for_date(target_date: date | None = None, phase: str = 'bercario'):
+def build_stage_feed_digest_for_date(
+    target_date: date | None = None,
+    phase: str = 'bercario',
+    include_closed_lots: bool = False,
+):
     target_date = target_date or local_today()
     phase = normalize_phase_value(phase) or 'bercario'
     plans = []
     seen = set()
-    allocations = active_allocations_for_operational_phase(phase, on_date=target_date)
+    allocations = active_allocations_for_operational_phase(
+        phase,
+        on_date=target_date,
+        include_closed_lots=include_closed_lots,
+    )
     for allocation in allocations:
         unit = allocation.unit
         lot = allocation.lot
-        if not unit or not unit.active or not lot or lot.status != 'ativo':
+        if not unit or not lot:
+            continue
+        if not include_closed_lots and (not unit.active or lot.status != 'ativo'):
             continue
         key = (unit.id, lot.id)
         if key in seen:
@@ -7951,7 +8081,7 @@ def run_lightweight_migrations():
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
 
-    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, SupplyProduct, SupplyInventory, ManagementSupplyUsage, LotUnitAllocation, FixedCost, NurseryFeeding, OperationalTask, FeedingProtocolRow, FeedingProtocolFeed, FeedingProtocolFeedMap):
+    for model in (ProtocolDocument, FarmDocument, WaterReferenceConfig, FeedProduct, SupplyProduct, SupplyInventory, ManagementSupplyUsage, LotUnitAllocation, FixedCost, NurseryFeeding, OperationalTask, FeedingProtocolRow, FeedingProtocolConfig, FeedingProtocolFeed, FeedingProtocolFeedMap):
         table_name = model.__table__.name
         if table_name not in tables:
             model.__table__.create(bind=db.engine)
@@ -8016,6 +8146,16 @@ def run_lightweight_migrations():
         add_column_if_missing('nursery_feeding', nursery_feeding_columns, 'score_adjustment_pct', 'ALTER TABLE nursery_feeding ADD COLUMN score_adjustment_pct FLOAT', 'ALTER TABLE nursery_feeding ADD COLUMN score_adjustment_pct DOUBLE PRECISION')
         add_column_if_missing('nursery_feeding', nursery_feeding_columns, 'active_feed_factor', 'ALTER TABLE nursery_feeding ADD COLUMN active_feed_factor FLOAT', 'ALTER TABLE nursery_feeding ADD COLUMN active_feed_factor DOUBLE PRECISION')
         add_column_if_missing('nursery_feeding', nursery_feeding_columns, 'water_items_json', 'ALTER TABLE nursery_feeding ADD COLUMN water_items_json TEXT', 'ALTER TABLE nursery_feeding ADD COLUMN water_items_json TEXT')
+
+    if 'feeding_protocol_config' in tables:
+        feeding_config_columns = get_columns('feeding_protocol_config')
+        add_column_if_missing(
+            'feeding_protocol_config',
+            feeding_config_columns,
+            'biometric_adjustment_mode',
+            "ALTER TABLE feeding_protocol_config ADD COLUMN biometric_adjustment_mode VARCHAR(40) NOT NULL DEFAULT 'weight_only'",
+            "ALTER TABLE feeding_protocol_config ADD COLUMN biometric_adjustment_mode VARCHAR(40) NOT NULL DEFAULT 'weight_only'",
+        )
 
     if 'water_monitoring' in tables:
         water_columns = get_columns('water_monitoring')
@@ -8738,7 +8878,7 @@ def active_allocation_rows(on_date=None):
     )
 
 
-def active_allocations_for_operational_phase(phase: str, on_date=None):
+def active_allocations_for_operational_phase(phase: str, on_date=None, include_closed_lots: bool = False):
     """Active allocations by operational phase, not only by the fixed unit phase.
 
     This is what makes Alimentação Juvenil find a lot transferred as Juvenil into an
@@ -8748,25 +8888,27 @@ def active_allocations_for_operational_phase(phase: str, on_date=None):
     if not phase:
         return []
     on_date = on_date or local_today()
+    filters = [
+        LotUnitAllocation.start_date <= on_date,
+        or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
+        or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
+        Lot.start_date <= on_date,
+        or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
+        or_(
+            LotUnitAllocation.operational_phase == phase,
+            and_(
+                or_(LotUnitAllocation.operational_phase.is_(None), LotUnitAllocation.operational_phase == ''),
+                Unit.phase == phase,
+            ),
+        ),
+    ]
+    if not include_closed_lots:
+        filters.append(Lot.status == 'ativo')
     return (
         LotUnitAllocation.query.options(joinedload(LotUnitAllocation.lot), joinedload(LotUnitAllocation.unit))
         .join(Lot, Lot.id == LotUnitAllocation.lot_id)
         .join(Unit, Unit.id == LotUnitAllocation.unit_id)
-        .filter(
-            LotUnitAllocation.start_date <= on_date,
-            or_(LotUnitAllocation.end_date.is_(None), LotUnitAllocation.end_date >= on_date),
-            or_(LotUnitAllocation.quantity_allocated.is_(None), LotUnitAllocation.quantity_allocated > 0),
-            Lot.status == 'ativo',
-            Lot.start_date <= on_date,
-            or_(Lot.end_date.is_(None), Lot.end_date >= on_date),
-            or_(
-                LotUnitAllocation.operational_phase == phase,
-                and_(
-                    or_(LotUnitAllocation.operational_phase.is_(None), LotUnitAllocation.operational_phase == ''),
-                    Unit.phase == phase,
-                ),
-            ),
-        )
+        .filter(*filters)
         .order_by(Unit.name.asc(), Lot.start_date.desc(), LotUnitAllocation.start_date.desc(), LotUnitAllocation.id.desc())
         .all()
     )
@@ -13085,6 +13227,108 @@ def management_page():
     )
 
 
+MAX_FEED_BACKFILL_DAYS = 180
+
+
+@app.post('/management/feed-window')
+@login_required
+@requires_permission('management_manage')
+def backfill_management_feed_window():
+    """Gera no Manejo as baixas de alimentação ausentes em um intervalo de datas."""
+    try:
+        start_date = parse_date(request.form.get('window_start_date'))
+        end_date = parse_date(request.form.get('window_end_date'))
+    except (TypeError, ValueError):
+        start_date = end_date = None
+
+    unit_id = request.form.get('window_unit_id', type=int)
+    selected_phase = (request.form.get('window_phase') or 'all').strip().lower()
+
+    if not start_date or not end_date:
+        flash('Informe a data inicial e a data final da janela de alimentação.', 'danger')
+        return redirect(url_for('management_page', unit_id=unit_id))
+    if end_date < start_date:
+        flash('A data final não pode ser anterior à data inicial.', 'danger')
+        return redirect(url_for('management_page', unit_id=unit_id))
+    if end_date > local_today():
+        flash('A baixa por período aceita somente hoje e datas passadas, para não consumir estoque de alimentação futura.', 'danger')
+        return redirect(url_for('management_page', unit_id=unit_id))
+
+    days_count = (end_date - start_date).days + 1
+    if days_count > MAX_FEED_BACKFILL_DAYS:
+        flash(f'Selecione uma janela de até {MAX_FEED_BACKFILL_DAYS} dias por vez.', 'danger')
+        return redirect(url_for('management_page', unit_id=unit_id))
+
+    if selected_phase == 'all':
+        phases = ['bercario', 'juvenil', 'engorda']
+    else:
+        normalized_phase = normalize_phase_value(selected_phase)
+        if not normalized_phase:
+            flash('Selecione uma fase válida para a baixa de alimentação.', 'danger')
+            return redirect(url_for('management_page', unit_id=unit_id))
+        phases = [normalized_phase]
+
+    if unit_id and not db.session.get(Unit, unit_id):
+        flash('O viveiro/berçário selecionado não foi encontrado.', 'danger')
+        return redirect(url_for('management_page'))
+
+    totals = {
+        'plans_count': 0,
+        'created': 0,
+        'repaired': 0,
+        'skipped': 0,
+        'skipped_existing': 0,
+        'processed_feed_kg': 0.0,
+    }
+    note = (
+        f'Baixa retroativa de alimentação pelo Manejo: '
+        f'{start_date.strftime("%d/%m/%Y")} a {end_date.strftime("%d/%m/%Y")}.'
+    )
+
+    try:
+        for offset in range(days_count):
+            target_date = start_date + timedelta(days=offset)
+            for phase in phases:
+                result = save_all_stage_feed_entries_for_date(
+                    phase,
+                    target_date,
+                    unit_id=unit_id,
+                    only_missing=True,
+                    include_water_items=False,
+                    include_closed_lots=True,
+                    automatic_note=note,
+                )
+                for key in totals:
+                    totals[key] += result.get(key, 0) or 0
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Falha ao processar baixa retroativa de alimentação')
+        flash('Não foi possível concluir a baixa do período. Nenhuma nova baixa desta operação foi mantida.', 'danger')
+        return redirect(url_for('management_page', unit_id=unit_id))
+
+    processed = totals['created'] + totals['repaired']
+    period_label = f'{start_date.strftime("%d/%m/%Y")} a {end_date.strftime("%d/%m/%Y")}'
+    if processed:
+        flash(
+            f'Baixa de alimentação concluída para {period_label}: '
+            f'{processed} lançamento(s) processado(s), totalizando '
+            f'{format_decimal_pt(totals["processed_feed_kg"], 3)} kg de ração.',
+            'success',
+        )
+        if totals['repaired']:
+            flash(f'{totals["repaired"]} alimentação(ões) já salva(s) tiveram a integração com o estoque reparada.', 'info')
+    else:
+        flash('Nenhuma baixa nova foi necessária nessa janela. Verifique a fase, o viveiro e as datas selecionadas.', 'warning')
+
+    if totals['skipped_existing']:
+        flash(
+            f'{totals["skipped_existing"]} data(s)/viveiro já tinham alimentação lançada e foram preservadas sem duplicar estoque.',
+            'info',
+        )
+    return redirect(url_for('management_page', unit_id=unit_id))
+
+
 @app.get('/management/previous-data')
 @login_required
 @requires_permission('management_manage')
@@ -13662,6 +13906,11 @@ def feeding_protocol_page():
         selected_scope = (request.form.get('biometric_weight_scope') or 'table_only').strip()
         valid_scopes = {value for value, _ in BIOMETRIC_WEIGHT_SCOPE_OPTIONS}
         config.biometric_weight_scope = selected_scope if selected_scope in valid_scopes else 'table_only'
+        selected_adjustment_mode = (request.form.get('biometric_adjustment_mode') or 'weight_only').strip()
+        valid_adjustment_modes = {value for value, _ in BIOMETRIC_ADJUSTMENT_MODE_OPTIONS}
+        config.biometric_adjustment_mode = (
+            selected_adjustment_mode if selected_adjustment_mode in valid_adjustment_modes else 'weight_only'
+        )
         config.updated_at = now
 
         # Mapeamento global: cada ração/coluna da tabela pode apontar para uma ração real do estoque.
@@ -13687,7 +13936,11 @@ def feeding_protocol_page():
             survival_pct = parse_float(request.form.get(prefix + 'survival_pct'), row.survival_pct) or 0
             individual_weight_g = parse_float(request.form.get(prefix + 'individual_weight_g'), row.individual_weight_g) or 0
             feed_rate_pct = parse_float(request.form.get(prefix + 'feed_rate_pct'), row.feed_rate_pct) or 0
-            feedings_per_day = parse_int(request.form.get(prefix + 'feedings_per_day'), row.feedings_per_day) or feedings_per_day_for_phase(phase)
+            feedings_per_day = (
+                feedings_per_day_for_phase(phase, fallback=row.feedings_per_day)
+                if phase == 'engorda'
+                else (parse_int(request.form.get(prefix + 'feedings_per_day'), row.feedings_per_day) or feedings_per_day_for_phase(phase))
+            )
             biomass_kg = round((population * individual_weight_g) / 1000.0, 3) if population and individual_weight_g else 0
             row_dirty = request.form.get(prefix + 'dirty') == '1'
             if recalc_totals and row_dirty:
@@ -13763,6 +14016,7 @@ def feeding_protocol_page():
         feed_products=feed_products,
         feeding_protocol_config=get_feeding_protocol_config(),
         biometric_weight_scope_options=BIOMETRIC_WEIGHT_SCOPE_OPTIONS,
+        biometric_adjustment_mode_options=BIOMETRIC_ADJUSTMENT_MODE_OPTIONS,
         phase_options=[('bercario', 'Berçário'), ('juvenil', 'Juvenil'), ('engorda', 'Engorda')],
         column_letters=column_letters,
         fixed_protocol_columns=fixed_protocol_columns,
@@ -15323,18 +15577,36 @@ def export_managerial_report(report_key):
 
 
 
-def save_all_stage_feed_entries_for_date(phase, target_date):
+def save_all_stage_feed_entries_for_date(
+    phase,
+    target_date,
+    unit_id=None,
+    only_missing=False,
+    include_water_items=True,
+    include_closed_lots=False,
+    automatic_note=None,
+):
     """Cria/atualiza todos os lançamentos de alimentação de uma fase no dia.
 
     Usa o mesmo plano que aparece nos cards da tela e chama sync_nursery_feed_to_management,
     então as rações do mix viram registros no Manejo Diário e os aditivos de água padrão
-    continuam dando baixa exatamente pela lógica já existente.
+    continuam dando baixa exatamente pela lógica já existente. ``only_missing`` é usado
+    na baixa por período: preserva manejos já lançados e repara apenas uma alimentação
+    salva que, por algum motivo, ainda não gerou a saída de estoque.
     """
     phase = normalize_phase_value(phase) or 'bercario'
-    plans = build_stage_feed_digest_for_date(target_date, phase=phase)
+    plans = build_stage_feed_digest_for_date(
+        target_date,
+        phase=phase,
+        include_closed_lots=include_closed_lots,
+    )
+    if unit_id:
+        plans = [plan for plan in plans if getattr(plan.get('unit'), 'id', None) == unit_id]
     created = 0
     updated = 0
+    repaired = 0
     skipped = 0
+    skipped_existing = 0
     entries = []
 
     for plan in plans:
@@ -15349,6 +15621,34 @@ def save_all_stage_feed_entries_for_date(phase, target_date):
             unit_id=unit.id,
             lot_id=lot.id,
         ).order_by(NurseryFeeding.id.desc()).first()
+
+        existing_feed_management = DailyManagement.query.filter(
+            DailyManagement.manage_date == target_date,
+            DailyManagement.unit_id == unit.id,
+            DailyManagement.lot_id == lot.id,
+            DailyManagement.feed_offered_kg > 0,
+        ).order_by(DailyManagement.id.asc()).first()
+
+        if only_missing and existing_feed_management:
+            skipped_existing += 1
+            continue
+
+        if only_missing and entry:
+            # Há alimentação salva, mas sem a integração no Manejo: usa a quantidade
+            # real já registrada e apenas recompõe as saídas de estoque ausentes.
+            if not (entry.quantity_kg or 0) > 0:
+                entry.quantity_kg = plan.get('total_day_kg') or grams_to_kg(plan.get('total_day_g') or 0)
+            if entry.active_feed_factor is None:
+                plan_factor = plan.get('score_factor')
+                entry.active_feed_factor = plan_factor if plan_factor is not None else 1.0
+            if not (entry.notes or '').strip() and automatic_note:
+                entry.notes = automatic_note
+            entry.updated_at = datetime.utcnow()
+            db.session.flush()
+            sync_nursery_feed_to_management(entry)
+            repaired += 1
+            entries.append(entry)
+            continue
 
         if entry:
             updated += 1
@@ -15375,9 +15675,12 @@ def save_all_stage_feed_entries_for_date(phase, target_date):
         else:
             plan_factor = plan.get('score_factor')
             entry.active_feed_factor = plan_factor if plan_factor is not None else 1.0
-        entry.water_items_json = json.dumps(selected_nursery_water_items_for_plan(plan), ensure_ascii=False)
+        entry.water_items_json = json.dumps(
+            selected_nursery_water_items_for_plan(plan) if include_water_items else [],
+            ensure_ascii=False,
+        )
         if not (entry.notes or '').strip():
-            entry.notes = 'Salvo automaticamente pelo botão Salvar todas as rações do dia.'
+            entry.notes = automatic_note or 'Salvo automaticamente pelo botão Salvar todas as rações do dia.'
         entry.updated_at = datetime.utcnow()
 
         db.session.flush()
@@ -15388,7 +15691,10 @@ def save_all_stage_feed_entries_for_date(phase, target_date):
         'plans_count': len(plans),
         'created': created,
         'updated': updated,
+        'repaired': repaired,
         'skipped': skipped,
+        'skipped_existing': skipped_existing,
+        'processed_feed_kg': round(sum((entry.quantity_kg or 0) for entry in entries), 3),
         'entries': entries,
     }
 
