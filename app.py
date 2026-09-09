@@ -255,10 +255,10 @@ class NurseryFeeding(db.Model):
     lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'))
     quantity_kg = db.Column(db.Float, nullable=False, default=0)
     intestinal_score = db.Column(db.Float)
-    # Ajuste incremental informado no lançamento: +10 aplica 10% sobre a correção ativa;
-    # 0 zera a correção; vazio mantém o fator ativo anterior.
+    # Ajuste incremental desta unidade: +10 aplica 10% sobre a correção ativa dela;
+    # 0 zera a correção da unidade; vazio mantém o fator ativo anterior.
     score_adjustment_pct = db.Column(db.Float)
-    # Fator de correção que fica ativo após este lançamento. Ex.: 1.10, 1.21 etc.
+    # Fator da unidade que fica ativo após este lançamento. Ex.: 1.10, 1.21 etc.
     active_feed_factor = db.Column(db.Float)
     # JSON com os aditivos/insumos de água marcados no lançamento do berçário.
     # Mantém o histórico do que foi realmente utilizado para refazer Manejo + Estoque.
@@ -6381,7 +6381,7 @@ def nursery_adjustment_pct_from_form(raw_adjustment, intestinal_score):
 
 
 def apply_nursery_adjustment_state_from_request(entry):
-    previous_adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
+    previous_adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.unit_id, entry.feed_date)
     entry.intestinal_score = parse_float(request.form.get('intestinal_score'))
     entry.score_adjustment_pct = nursery_adjustment_pct_from_form(
         request.form.get('score_adjustment_pct'),
@@ -6394,27 +6394,28 @@ def apply_nursery_adjustment_state_from_request(entry):
     return previous_adjustment
 
 
-def nursery_cumulative_adjustments(lot_id: int | None, target_date: date):
-    """Retorna a correção de ração ativa para a data informada.
+def nursery_cumulative_adjustments(lot_id: int | None, unit_id: int | None, target_date: date):
+    """Retorna a correção de ração ativa da unidade para a data informada.
 
     Somente lançamentos que realmente criam um ajuste entram na sequência.
-    Registros automáticos ou de outros viveiros do mesmo lote, que apenas
-    repetem ``active_feed_factor``, não podem apagar um +% ou -% salvo no mesmo
-    dia. Um novo +10% não substitui o fator: ele aplica sobre o valor já
-    corrigido. Ex.: +10% ativo e novo +10% = +21% sobre a tabela base.
-    Campo vazio mantém o fator; 0% zera a correção ativa.
+    O histórico é isolado por lote + unidade física, portanto um ajuste no
+    Viveiro Belém não altera Conde, outro berçário ou outra estufa, mesmo que
+    compartilhem o mesmo lote. Um novo +10% não substitui o fator: ele aplica
+    sobre o valor já corrigido. Ex.: +10% ativo e novo +10% = +21% sobre a
+    tabela base. Campo vazio mantém o fator; 0% zera a correção ativa.
     """
-    if not lot_id or not target_date:
+    if not lot_id or not unit_id or not target_date:
         return {'factor': 1.0, 'events': []}
 
     # ``active_feed_factor`` também é gravado nos lançamentos automáticos para
     # fins de histórico. Ele é um retrato derivado, não um novo evento. Buscar
-    # simplesmente o último registro fazia uma alimentação sem percentual,
-    # salva depois em outro viveiro do mesmo lote, anular o ajuste verdadeiro.
-    # A fonte da correção é o percentual explícito; para registros antigos,
-    # aceita-se também o score que ainda não possuía fator/percentual gravado.
+    # simplesmente o último registro fazia uma alimentação automática sem
+    # percentual anular o ajuste verdadeiro. A fonte da correção é o percentual
+    # explícito; para registros antigos, aceita-se também o score que ainda não
+    # possuía fator/percentual gravado.
     record = NurseryFeeding.query.filter(
         NurseryFeeding.lot_id == lot_id,
+        NurseryFeeding.unit_id == unit_id,
         NurseryFeeding.feed_date < target_date,
         or_(
             NurseryFeeding.score_adjustment_pct.isnot(None),
@@ -6440,7 +6441,7 @@ def nursery_cumulative_adjustments(lot_id: int | None, target_date: date):
         # a sugestão derivada do score como evento da sequência.
         adjustment_pct = nursery_record_adjustment_pct(record)
 
-    previous = nursery_cumulative_adjustments(lot_id, record.feed_date)
+    previous = nursery_cumulative_adjustments(lot_id, unit_id, record.feed_date)
     factor = nursery_next_active_feed_factor(previous.get('factor', 1.0), adjustment_pct)
 
     return {
@@ -7491,7 +7492,7 @@ def build_stage_feed_digest_for_date(
             continue
         seen.add(key)
         entry = NurseryFeeding.query.filter_by(feed_date=target_date, unit_id=unit.id, lot_id=lot.id).order_by(NurseryFeeding.id.desc()).first()
-        adjustment = nursery_cumulative_adjustments(lot.id, target_date)
+        adjustment = nursery_cumulative_adjustments(lot.id, unit.id, target_date)
         plan = build_nursery_protocol_for_date(
             lot,
             unit,
@@ -7813,7 +7814,7 @@ def sync_nursery_feed_to_management(entry):
 
     unit = db.session.get(Unit, entry.unit_id) if entry.unit_id else None
     lot = db.session.get(Lot, entry.lot_id) if entry.lot_id else None
-    adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
+    adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.unit_id, entry.feed_date)
     plan = build_nursery_protocol_for_date(
         lot,
         unit,
@@ -15674,7 +15675,7 @@ def save_all_stage_feed_entries_for_date(
         entry.lot_id = lot.id
         entry.quantity_kg = plan.get('total_day_kg') or grams_to_kg(plan.get('total_day_g') or 0)
         if entry.score_adjustment_pct is not None:
-            previous_adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.feed_date)
+            previous_adjustment = nursery_cumulative_adjustments(entry.lot_id, entry.unit_id, entry.feed_date)
             entry.active_feed_factor = nursery_next_active_feed_factor(
                 previous_adjustment.get('factor', 1.0),
                 entry.score_adjustment_pct,
