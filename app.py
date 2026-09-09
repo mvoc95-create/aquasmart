@@ -6397,44 +6397,51 @@ def apply_nursery_adjustment_state_from_request(entry):
 def nursery_cumulative_adjustments(lot_id: int | None, target_date: date):
     """Retorna a correção de ração ativa para a data informada.
 
-    A correção fica gravada como fator ativo no último lançamento anterior do
-    lote. Um novo +10% não substitui o fator: ele aplica sobre o valor já
+    Somente lançamentos que realmente criam um ajuste entram na sequência.
+    Registros automáticos ou de outros viveiros do mesmo lote, que apenas
+    repetem ``active_feed_factor``, não podem apagar um +% ou -% salvo no mesmo
+    dia. Um novo +10% não substitui o fator: ele aplica sobre o valor já
     corrigido. Ex.: +10% ativo e novo +10% = +21% sobre a tabela base.
     Campo vazio mantém o fator; 0% zera a correção ativa.
     """
     if not lot_id or not target_date:
         return {'factor': 1.0, 'events': []}
 
+    # ``active_feed_factor`` também é gravado nos lançamentos automáticos para
+    # fins de histórico. Ele é um retrato derivado, não um novo evento. Buscar
+    # simplesmente o último registro fazia uma alimentação sem percentual,
+    # salva depois em outro viveiro do mesmo lote, anular o ajuste verdadeiro.
+    # A fonte da correção é o percentual explícito; para registros antigos,
+    # aceita-se também o score que ainda não possuía fator/percentual gravado.
     record = NurseryFeeding.query.filter(
         NurseryFeeding.lot_id == lot_id,
         NurseryFeeding.feed_date < target_date,
         or_(
-            NurseryFeeding.active_feed_factor.isnot(None),
             NurseryFeeding.score_adjustment_pct.isnot(None),
-            NurseryFeeding.intestinal_score.isnot(None),
+            and_(
+                NurseryFeeding.active_feed_factor.is_(None),
+                NurseryFeeding.intestinal_score.isnot(None),
+            ),
         ),
-    ).order_by(NurseryFeeding.feed_date.desc(), NurseryFeeding.id.desc()).first()
+    ).order_by(
+        NurseryFeeding.feed_date.desc(),
+        NurseryFeeding.updated_at.desc(),
+        NurseryFeeding.id.desc(),
+    ).first()
 
     if not record:
         return {'factor': 1.0, 'events': []}
 
     adjustment_pct = record.score_adjustment_pct
     if adjustment_pct is not None:
-        # Ajuste manual/por score é sempre incremental sobre a correção que
-        # estava ativa antes deste lançamento. Recalcular aqui evita que um
-        # "Salvar todas as rações do dia" posterior sobrescreva um ajuste
-        # negativo já informado no card individual.
-        previous = nursery_cumulative_adjustments(lot_id, record.feed_date)
-        factor = nursery_next_active_feed_factor(previous.get('factor', 1.0), adjustment_pct)
-    elif record.active_feed_factor is not None:
-        factor = float(record.active_feed_factor or 1.0)
+        adjustment_pct = float(adjustment_pct)
     else:
-        # Compatibilidade com lançamentos antigos sem active_feed_factor: aplica
-        # o percentual sugerido pelo score sobre a correção anterior, mantendo a
-        # mesma regra incremental usada nos lançamentos atuais.
+        # Compatibilidade com lançamentos antigos sem percentual/fator: aplica
+        # a sugestão derivada do score como evento da sequência.
         adjustment_pct = nursery_record_adjustment_pct(record)
-        previous = nursery_cumulative_adjustments(lot_id, record.feed_date)
-        factor = nursery_next_active_feed_factor(previous.get('factor', 1.0), adjustment_pct)
+
+    previous = nursery_cumulative_adjustments(lot_id, record.feed_date)
+    factor = nursery_next_active_feed_factor(previous.get('factor', 1.0), adjustment_pct)
 
     return {
         'factor': factor,
