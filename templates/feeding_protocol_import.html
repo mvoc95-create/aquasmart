@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block page_title %}Revisar importação do Excel{% endblock %}
+{% block page_subtitle %}Confira as alterações antes de atualizar a tabela base.{% endblock %}
+{% block content %}
+<section class="panel full-width-panel">
+  <div class="panel-head"><div>
+    <h2>Prévia da tabela de alimentação</h2>
+    <p>{{ preview|length }} linhas lidas · {{ changed }} com alterações · {{ untouched }} fora da planilha, preservadas.</p>
+  </div></div>
+  <div class="info-card">
+    <p>Nenhuma alteração foi salva ainda. Ao confirmar, estes valores serão usados nos próximos cálculos de alimentação do berçário, juvenil e engorda.</p>
+    <p>Total diário: {{ 'recalculado por população × peso × taxa.' if recalc else 'mantido conforme a planilha.' }} Biomassa recalculada em todas as linhas importadas.</p>
+    <p>Vínculos com estoque, modos de biometria, ajustes por unidade e registros de manejo já realizados serão preservados. A prévia é válida por 30 minutos.</p>
+    {% if new_labels %}<p><strong>Novas rações:</strong> {{ new_labels|join(', ') }}. Após importar, vincule cada uma ao produto do estoque no cabeçalho da tabela.</p>{% endif %}
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID / estágio</th><th>Campo</th><th>Valor atual</th><th>Valor importado</th></tr></thead>
+      <tbody>
+      {% for row in preview %}
+        {% for change in row.changes %}
+        <tr><td>{{ row.id }} · {{ row.stage }}</td><td>{{ change.field }}</td><td>{{ change.before }}</td><td>{{ change.after }}</td></tr>
+        {% else %}
+        <tr><td>{{ row.id }} · {{ row.stage }}</td><td colspan="3">Sem alterações · total diário: {{ row.total }} g</td></tr>
+        {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <form method="post" action="{{ url_for('feeding_protocol_excel_page') }}" class="form-actions">
+    <input type="hidden" name="action" value="apply">
+    <input type="hidden" name="preview_token" value="{{ preview_token }}">
+    <button type="submit" class="primary-button">Confirmar importação de {{ preview|length }} linhas</button>
+    <a href="{{ url_for('feeding_protocol_page') }}" class="secondary-link-button">Cancelar e voltar</a>
+  </form>
+</section>
+{% endblock %}

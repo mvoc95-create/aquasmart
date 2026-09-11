@@ -24,6 +24,20 @@
     a linha da tabela é associada pela <strong>idade do PL/estágio</strong> — PL11, PL12, …, J43, J44, E67 etc. Em cada cabeçalho de ração, você vincula a <strong>ração real do estoque</strong> equivalente. O Manejo Diário obedece primeiro esse vínculo salvo; só usa busca automática por nome se a coluna estiver sem vínculo. Ex.: SAMARIA 40#2 pode ficar vinculada à AquaVita 40#2.
   </div>
 
+  <div class="info-card protocol-help-card">
+    <h3>Atualizar pelo Excel</h3>
+    <p>Baixe a tabela atual, edite no Excel e envie o arquivo .xlsx. Mantenha os cabeçalhos e os IDs. Você verá uma prévia antes de confirmar.</p>
+    <p>Linhas ausentes são preservadas; células vazias de ração valem zero. Use valores, sem fórmulas. Para 5%, digite 5 ou use uma célula percentual do Excel.</p>
+    <a class="secondary-link-button" href="{{ url_for('feeding_protocol_excel_page') }}">Baixar tabela atual / modelo Excel</a>
+    <form method="post" action="{{ url_for('feeding_protocol_excel_page') }}" enctype="multipart/form-data" style="margin-top:16px;">
+      <label for="feeding-excel-file">Planilha Excel (.xlsx, até 5 MB)</label>
+      <input id="feeding-excel-file" type="file" name="excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+      <label class="check-row" style="margin:12px 0;"><input type="checkbox" name="excel_recalc_totals"> Recalcular o total diário pela população × peso × taxa de alimentação</label>
+      <p class="muted-text">Desmarcado: usa o total diário digitado no Excel. A biomassa é sempre recalculada. O mix mantém as quantidades informadas nas colunas de ração.</p>
+      <button type="submit" class="primary-button">Importar Excel e revisar</button>
+    </form>
+  </div>
+
   <form method="post" id="feeding-protocol-form">
     <input type="hidden" name="action" value="save">
     <input type="hidden" name="feed_labels_json" value="{{ feed_labels_json|e }}">
