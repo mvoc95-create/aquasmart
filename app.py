@@ -4,6 +4,7 @@ import json
 import os
 import re
 import unicodedata
+import secrets
 from zoneinfo import ZoneInfo
 from collections import defaultdict, OrderedDict
 from functools import wraps
@@ -27,6 +28,12 @@ from openpyxl import Workbook
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from feeding_protocol_excel import (
+    COLUMNS as FEED_EXCEL_COLUMNS, MAX_BYTES as FEED_EXCEL_MAX_BYTES,
+    export_table as export_feeding_table, parse_table as parse_feeding_table,
+    snapshot as feeding_table_snapshot,
+)
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
@@ -13884,6 +13891,128 @@ def water_management_protocol_page():
     supplies = SupplyProduct.query.filter_by(active=True).order_by(SupplyProduct.name).all()
     return render_template('water_management_protocol.html', items=items, units=units, rule_map=rule_map,
                            supplies=supplies, frequency_labels=WATER_FREQUENCY_LABELS, weekdays=WEEKDAY_SHORT_PT)
+
+
+def feeding_excel_current_rows(lock=False):
+    query = FeedingProtocolRow.query.order_by(FeedingProtocolRow.id.asc())
+    if lock:
+        query = query.with_for_update()
+    models = query.all()
+    rows = [feeding_protocol_row_to_dict(row) | {
+        'id': row.id, 'active': row.active, 'updated_at': row.updated_at.isoformat(),
+    } for row in models]
+    labels = get_protocol_feed_labels(rows)
+    for mapping in FeedingProtocolFeedMap.query.order_by(FeedingProtocolFeedMap.protocol_label).all():
+        if mapping.protocol_label not in labels:
+            labels.append(mapping.protocol_label)
+    return models, rows, labels
+
+
+@app.route('/feeding-protocol/excel', methods=['GET', 'POST'])
+@login_required
+@requires_permission('protocols_manage')
+def feeding_protocol_excel_page():
+    serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'], salt='feeding-protocol-excel-v1')
+    if request.method == 'GET':
+        ensure_feeding_protocol_seeded()
+        _, rows, labels = feeding_excel_current_rows()
+        return send_file(export_feeding_table(rows, labels), as_attachment=True,
+                         download_name='tabela-base-alimentacao.xlsx',
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+    if request.form.get('action') == 'apply':
+        try:
+            payload = serializer.loads(request.form.get('preview_token', ''), max_age=1800)
+            if (payload['user_id'] != str(current_user.id)
+                    or not session.get('feeding_excel_nonce')
+                    or payload['nonce'] != session.get('feeding_excel_nonce')):
+                raise ValueError('Prévia inválida ou já utilizada. Importe a planilha novamente.')
+            db.session.expire_all()
+            models, rows, labels = feeding_excel_current_rows(lock=True)
+            if payload['snapshot'] != feeding_table_snapshot(rows) or payload['old_labels'] != labels:
+                raise ValueError('A tabela foi alterada depois da prévia. Baixe a versão atual e importe novamente.')
+            by_id = {row.id: row for row in models}
+            now = datetime.utcnow()
+            for data in payload['rows']:
+                row = by_id[data['id']]
+                for _, key in FEED_EXCEL_COLUMNS:
+                    if key != 'id':
+                        setattr(row, key, data[key])
+                row.biomass_kg = data['biomass_kg']
+                row.updated_at = now
+                current_feeds = {feed.protocol_label: feed for feed in row.feeds}
+                for index, mix in enumerate(data['mixes']):
+                    feed = current_feeds.get(mix['label'])
+                    if mix['grams'] > 0:
+                        if feed is None:
+                            feed = FeedingProtocolFeed(row_id=row.id, protocol_label=mix['label'])
+                            db.session.add(feed)
+                        feed.grams, feed.sort_order, feed.updated_at = mix['grams'], index, now
+                    elif feed is not None:
+                        db.session.delete(feed)
+            mapped = {mapping.protocol_label for mapping in FeedingProtocolFeedMap.query.all()}
+            for label in payload['labels']:
+                if label not in mapped:
+                    db.session.add(FeedingProtocolFeedMap(protocol_label=label, updated_at=now))
+            db.session.commit()
+            session.pop('feeding_excel_nonce', None)
+            flash(f"Importação concluída: {len(payload['rows'])} linhas atualizadas. A tabela base já está em uso nos cálculos de alimentação.", 'success')
+        except (BadSignature, SignatureExpired):
+            db.session.rollback()
+            flash('A prévia expirou ou é inválida. Importe a planilha novamente.', 'error')
+        except ValueError as error:
+            db.session.rollback()
+            flash(str(error), 'error')
+        except Exception:
+            db.session.rollback()
+            app.logger.exception('Erro ao gravar importação da tabela base')
+            flash('Não foi possível salvar. Nenhuma linha foi importada. Tente novamente.', 'error')
+        return redirect(url_for('feeding_protocol_page'))
+
+    uploaded = request.files.get('excel_file')
+    if not uploaded or not uploaded.filename:
+        flash('Selecione a planilha Excel .xlsx.', 'error')
+        return redirect(url_for('feeding_protocol_page'))
+    try:
+        _, rows, labels = feeding_excel_current_rows()
+        recalc = request.form.get('excel_recalc_totals') == 'on'
+        parsed, imported_labels = parse_feeding_table(
+            uploaded.stream.read(FEED_EXCEL_MAX_BYTES + 1), uploaded.filename, rows, labels, recalc)
+        existing = {row['id']: row for row in rows}
+        preview = []
+        for data in parsed:
+            before = existing[data['id']]
+            changes = []
+            for title, key in FEED_EXCEL_COLUMNS:
+                if key != 'id' and before[key] != data[key]:
+                    old, new = before[key], data[key]
+                    if key == 'active':
+                        old, new = ('Sim' if old else 'Não'), ('Sim' if new else 'Não')
+                    changes.append({'field': title, 'before': old, 'after': new})
+            old_mix = {item['label']: item['grams'] for item in before['mixes']}
+            for mix in data['mixes']:
+                if old_mix.get(mix['label'], 0) != mix['grams']:
+                    changes.append({'field': mix['label'] + ' (g)',
+                                    'before': old_mix.get(mix['label'], 0), 'after': mix['grams']})
+            if before['biomass_kg'] != data['biomass_kg']:
+                changes.append({'field': 'Biomassa ref. (kg)', 'before': before['biomass_kg'], 'after': data['biomass_kg']})
+            preview.append({'id': data['id'], 'stage': data['stage_label'], 'changes': changes,
+                            'total': data['total_day_g']})
+        nonce = secrets.token_urlsafe(24)
+        session['feeding_excel_nonce'] = nonce
+        token = serializer.dumps({'user_id': str(current_user.id), 'nonce': nonce,
+                                  'snapshot': feeding_table_snapshot(rows), 'old_labels': labels,
+                                  'rows': parsed, 'labels': imported_labels})
+        return render_template('feeding_protocol_import.html', preview=preview, preview_token=token,
+                               untouched=len(rows) - len(parsed), recalc=recalc,
+                               changed=sum(bool(row['changes']) for row in preview),
+                               new_labels=[label for label in imported_labels if label not in labels])
+    except ValueError as error:
+        flash(str(error), 'error')
+    except Exception:
+        app.logger.exception('Erro ao ler Excel da tabela base')
+        flash('Não foi possível ler a planilha. Use o modelo .xlsx baixado pelo sistema.', 'error')
+    return redirect(url_for('feeding_protocol_page'))
 
 
 @app.route('/feeding-protocol', methods=['GET', 'POST'])
