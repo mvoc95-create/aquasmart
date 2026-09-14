@@ -234,6 +234,8 @@ class LotUnitAllocation(db.Model):
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date)
     quantity_allocated = db.Column(db.Integer)
+    # Percentual vivo do marco original; preservado em saídas parciais.
+    survival_reference_pct = db.Column(db.Float, nullable=False, default=100)
     # Fase operacional da alocação.
     # Ex.: uma estufa cadastrada como "engorda" pode receber um lote como Juvenil.
     # A alimentação e o mapa de saldos devem seguir esta fase da transferência, não apenas
@@ -568,6 +570,13 @@ class FeedingProtocolRow(db.Model):
     notes = db.Column(db.Text)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     feeds = db.relationship('FeedingProtocolFeed', backref='row', cascade='all, delete-orphan', lazy=True)
+
+
+class FeedingProtocolRevision(db.Model):
+    """Versão aplicada e cópia da tabela anterior para auditoria/restauração."""
+    version = db.Column(db.String(80), primary_key=True)
+    previous_rows_json = db.Column(db.Text, nullable=False)
+    applied_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
 class FeedingProtocolConfig(db.Model):
@@ -5319,7 +5328,7 @@ PRODUCTION_PROTOCOL_ROWS = [{'phase': 'juvenil',
 # no protocolo (ex.: J43 versus PL43, E67 versus J67).
 # Frequência operacional por fase. A engorda usa quatro tratos diurnos nos
 # horários fixos definidos abaixo; os demais manejos/controles seguem separados.
-FULL_CYCLE_FEEDING_FREQUENCIES = {'bercario': 12, 'juvenil': 8, 'engorda': 4}
+FULL_CYCLE_FEEDING_FREQUENCIES = {'bercario': 12, 'juvenil': 6, 'engorda': 4}
 FIXED_PHASE_FEEDING_TIMES = {
     # Na engorda os tratos ficam concentrados no período diurno, de três em três horas.
     'engorda': ['08:00', '11:00', '14:00', '17:00'],
@@ -5548,6 +5557,9 @@ FULL_CYCLE_PROTOCOL_COMPACT_ROWS = [('bercario', 1, 1, 'PL11', 350000, 100.0, 0.
  ('engorda', 33, 99, 'E99', 238140, 84.0, 16.879, 4019.47, 3.25, 130633, [('IRCA CarciMax 30 2,4mm', 130633)], [('Melaço', 26.0, 'kg', '07:30'), ('LOTHAR', 20.0, 'kg', '07:45')])]
 
 
+from feeding_protocol_20260911 import REVISION as FEEDING_PROTOCOL_REVISION, build_compact_rows
+FULL_CYCLE_PROTOCOL_COMPACT_ROWS = build_compact_rows(FULL_CYCLE_PROTOCOL_COMPACT_ROWS)
+
 def _stage_number_from_label(stage_label, fallback):
     match = re.search(r'(\d+)', str(stage_label or ''))
     return int(match.group(1)) if match else fallback
@@ -5607,7 +5619,7 @@ def build_full_cycle_protocol_rows():
 FULL_CYCLE_PROTOCOL_ROWS = build_full_cycle_protocol_rows()
 NURSERY_PROTOCOLS['full_cycle'] = {
     'name': 'Protocolo Alimentação Ciclo Completo — Berçário, Juvenil e Engorda',
-    'sheet_name': 'PROTOCOLOS Alimentacao - alimentação atualizada',
+    'sheet_name': 'Protocolos e Planilhas 11.09.26 — sobrevivência diária',
     'base_population': FULL_CYCLE_PROTOCOL_BASE_POPULATION,
     'rows': FULL_CYCLE_PROTOCOL_ROWS,
 }
@@ -5673,8 +5685,8 @@ def protocol_feed_label_key(label: str) -> str:
 def ensure_feeding_protocol_seeded(force: bool = False):
     """Materializa a tabela padrão do PDF no banco.
 
-    Se já existir tabela editada pelo usuário, não sobrescreve. O parâmetro force é
-    usado apenas pelo botão "restaurar padrão" da tela de cadastro.
+    Aplica a revisão autorizada uma única vez, guardando a tabela anterior.
+    Edições posteriores são preservadas; force atende ao botão restaurar padrão.
     """
     if not has_app_context():
         return
@@ -5683,9 +5695,26 @@ def ensure_feeding_protocol_seeded(force: bool = False):
     except Exception:
         return
 
-    if existing_count and not force:
+    revision = db.session.get(FeedingProtocolRevision, FEEDING_PROTOCOL_REVISION)
+    if existing_count and not force and revision:
         return
-
+    previous_water = {row.stage_label: row.water_items_json for row in FeedingProtocolRow.query.all()}
+    # PostgreSQL serializa a troca entre workers; SQLite é usado localmente.
+    if db.engine.dialect.name == 'postgresql':
+        db.session.execute(text('SELECT pg_advisory_xact_lock(20260911)'))
+        existing_count = FeedingProtocolRow.query.count()
+    revision = db.session.get(FeedingProtocolRevision, FEEDING_PROTOCOL_REVISION)
+    if existing_count and not force and revision:
+        return
+    if not revision:
+        previous = [feeding_protocol_row_to_dict(row) for row in
+                    FeedingProtocolRow.query.order_by(FeedingProtocolRow.id).all()]
+        db.session.add(FeedingProtocolRevision(
+            version=FEEDING_PROTOCOL_REVISION,
+            previous_rows_json=json.dumps(previous, ensure_ascii=False),
+        ))
+    force_requested = force
+    force = force or bool(existing_count)
     if force:
         FeedingProtocolFeed.query.delete()
         FeedingProtocolRow.query.delete()
@@ -5706,7 +5735,9 @@ def ensure_feeding_protocol_seeded(force: bool = False):
             feed_rate_pct=row_data['feed_rate_pct'],
             total_day_g=row_data['total_day_g'],
             feedings_per_day=row_data['feedings_per_day'],
-            water_items_json=json.dumps(row_data.get('water_items') or [], ensure_ascii=False),
+            water_items_json=(previous_water.get(row_data['stage_label'])
+                              if not force_requested and row_data['stage_label'] in previous_water
+                              else json.dumps(row_data.get('water_items') or [], ensure_ascii=False)),
             active=True,
             updated_at=datetime.utcnow(),
         )
@@ -6192,14 +6223,41 @@ def protocol_population_for_lot_date(lot, target_date: date, operational_phase: 
     return population if population and population > 0 else None
 
 
-def project_population_marker_to_date(lot, marker_quantity, marker_date: date, target_date: date, operational_phase: str | None = None, protocol_key: str | None = None):
-    """Atualiza um marco de população pela curva de sobrevivência até a data-alvo.
+def protocol_survival_loss_between(lot, marker_date, target_date, protocol_key=None):
+    """Soma apenas quedas diárias, pela idade cronológica, independentemente da fase."""
+    if not lot or not marker_date or not target_date or target_date <= marker_date:
+        return 0.0
+    rows = sorted(get_nursery_protocol_rows(protocol_key), key=row_stage_number)
+    if not rows or not getattr(lot, 'start_date', None):
+        return 0.0
+    entry_age = int(getattr(lot, 'entry_pl_stage', None) or row_stage_number(rows[0]))
+    first_age = entry_age + max((marker_date - lot.start_date).days, 0)
+    last_age = entry_age + max((target_date - lot.start_date).days, 0)
+    loss = 0.0
+    for previous, current in zip(rows, rows[1:]):
+        if first_age < row_stage_number(current) <= last_age:
+            loss += max(float(previous.get('survival_pct') or 0) -
+                        float(current.get('survival_pct') or 0), 0.0)
+    # Depois da última linha, conserva a última queda diária em vez de congelar a população.
+    if len(rows) >= 2 and last_age > row_stage_number(rows[-1]):
+        last, previous = rows[-1], rows[-2]
+        interval = max(row_stage_number(last) - row_stage_number(previous), 1)
+        daily_loss = max(float(previous.get('survival_pct') or 0) - float(last.get('survival_pct') or 0), 0) / interval
+        loss += max(last_age - max(first_age, row_stage_number(last)), 0) * daily_loss
+    return round(loss, 8)
 
-    ``quantity_allocated`` é a população estimada/real na data em que a alocação
-    começou. Antes desta correção, uma transferência parcial feita dias depois
-    subtraía os animais desse número antigo. A alimentação, porém, já usava a
-    população reduzida pela sobrevivência do protocolo. Isso podia fazer a ração
-    permanecer igual após retirar camarões.
+
+def projected_survival_reference(lot, marker_date, target_date, reference_pct=100.0, protocol_key=None):
+    reference = 100.0 if reference_pct is None else float(reference_pct)
+    return max(reference - protocol_survival_loss_between(lot, marker_date, target_date, protocol_key), 0.0)
+
+
+def project_population_marker_to_date(lot, marker_quantity, marker_date: date, target_date: date,
+                                      operational_phase=None, protocol_key=None, survival_reference_pct=100.0):
+    """Uma contagem real começa em 100%; a queda diária mantém pontos percentuais.
+
+    Um saldo parcial conserva seu percentual de origem em survival_reference_pct,
+    evitando reiniciar a sobrevivência dos animais que não foram recontados.
     """
     try:
         quantity = max(int(round(float(marker_quantity or 0))), 0)
@@ -6207,16 +6265,11 @@ def project_population_marker_to_date(lot, marker_quantity, marker_date: date, t
         return 0
     if quantity <= 0 or not marker_date or not target_date or target_date <= marker_date:
         return quantity
-    protocol_key = protocol_key or DEFAULT_NURSERY_PROTOCOL_KEY
-    marker_population = protocol_population_for_lot_date(
-        lot, marker_date, operational_phase=operational_phase, protocol_key=protocol_key
-    )
-    target_population = protocol_population_for_lot_date(
-        lot, target_date, operational_phase=operational_phase, protocol_key=protocol_key
-    )
-    if not marker_population or not target_population:
-        return quantity
-    return max(int(round(quantity * (target_population / float(marker_population)))), 0)
+    reference = 100.0 if survival_reference_pct is None else float(survival_reference_pct)
+    if reference <= 0:
+        return 0
+    remaining = projected_survival_reference(lot, marker_date, target_date, reference, protocol_key)
+    return max(int(round(quantity * remaining / reference)), 0)
 
 
 def estimated_allocation_population_on_date(allocation, target_date: date | None = None):
@@ -6228,6 +6281,7 @@ def estimated_allocation_population_on_date(allocation, target_date: date | None
         allocation.quantity_allocated,
         allocation.start_date,
         target_date,
+        survival_reference_pct=allocation.survival_reference_pct,
         operational_phase=allocation_operational_phase(allocation),
         protocol_key=nursery_protocol_key_for_unit(allocation.unit) if allocation.unit else DEFAULT_NURSERY_PROTOCOL_KEY,
     )
@@ -7304,7 +7358,17 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
     row_population = row.get('population')
     if not row_population:
         row_population = (get_nursery_protocol_base_population(protocol_key) or 0) * (row['survival_pct'] / 100.0)
-    projected_population = int(round((row_population or 0) * factor))
+    if allocation:
+        projected_population = estimated_allocation_population_on_date(allocation, target_date)
+        survival_since_count_pct = projected_survival_reference(
+            lot, allocation.start_date, target_date, allocation.survival_reference_pct, protocol_key)
+    else:
+        marker_date = transfer_marker.transfer_date if transfer_marker else lot.start_date
+        marker_qty = transfer_marker.transferred_qty if transfer_marker else lot.initial_count
+        projected_population = project_population_marker_to_date(
+            lot, marker_qty, marker_date, target_date, protocol_key=protocol_key)
+        survival_since_count_pct = projected_survival_reference(lot, marker_date, target_date, protocol_key=protocol_key)
+    factor = projected_population / float(row_population or 1)
 
     table_weight_g = float(row.get('individual_weight_g') or 0)
     calculation_weight_g = table_weight_g
@@ -7438,6 +7502,7 @@ def build_nursery_protocol_for_date(lot, unit, target_date: date | None = None, 
         'protocol_name': protocol_meta.get('name', protocol_key.upper()),
         'base_row': row,
         'projected_population': projected_population,
+        'survival_since_count_pct': round(survival_since_count_pct, 2),
         'biomass_kg': biomass_kg,
         'table_weight_g': table_weight_g,
         'calculation_weight_g': calculation_weight_g,
@@ -8138,6 +8203,9 @@ def run_lightweight_migrations():
 
     if 'lot_unit_allocation' in tables:
         allocation_columns = get_columns('lot_unit_allocation')
+        add_column_if_missing('lot_unit_allocation', allocation_columns, 'survival_reference_pct',
+                              'ALTER TABLE lot_unit_allocation ADD COLUMN survival_reference_pct FLOAT NOT NULL DEFAULT 100',
+                              'ALTER TABLE lot_unit_allocation ADD COLUMN survival_reference_pct DOUBLE PRECISION NOT NULL DEFAULT 100')
         add_column_if_missing('lot_unit_allocation', allocation_columns, 'quantity_allocated', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER', 'ALTER TABLE lot_unit_allocation ADD COLUMN quantity_allocated INTEGER')
         add_column_if_missing('lot_unit_allocation', allocation_columns, 'operational_phase', 'ALTER TABLE lot_unit_allocation ADD COLUMN operational_phase VARCHAR(30)', 'ALTER TABLE lot_unit_allocation ADD COLUMN operational_phase VARCHAR(30)')
 
@@ -8264,6 +8332,7 @@ def run_lightweight_migrations():
         add_column_if_missing('management_supply_usage', management_supply_columns, 'created_at', f"ALTER TABLE management_supply_usage ADD COLUMN created_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE management_supply_usage ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         add_column_if_missing('management_supply_usage', management_supply_columns, 'updated_at', f"ALTER TABLE management_supply_usage ADD COLUMN updated_at DATETIME DEFAULT '{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}'", 'ALTER TABLE management_supply_usage ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
 
+    ensure_feeding_protocol_seeded()
     backfill_lot_allocations_and_status()
     sync_transfer_phase_history()
     sync_transfer_close_source_flags()
@@ -8490,7 +8559,7 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
         unit = db.session.get(Unit, unit_id) if unit_id else None
         return normalize_phase_value(unit.phase if unit else None)
 
-    def add_allocation(unit_id, start_date, end_date, qty, notes, operational_phase=None):
+    def add_allocation(unit_id, start_date, end_date, qty, notes, operational_phase=None, survival_reference_pct=100.0):
         if not unit_id or not start_date or not qty or qty <= 0:
             return
         if end_date and end_date < start_date:
@@ -8501,6 +8570,7 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             start_date=start_date,
             end_date=end_date,
             quantity_allocated=int(qty),
+            survival_reference_pct=survival_reference_pct,
             operational_phase=phase_for_unit(unit_id, operational_phase),
             notes=notes,
         ))
@@ -8574,7 +8644,10 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             source_state.get('start_date') if source_state else transfer_date,
             transfer_date,
             operational_phase=source_state.get('phase') if source_state else source_phase,
+            survival_reference_pct=source_state.get('survival_reference_pct', 100.0),
         )
+        source_reference_now = projected_survival_reference(
+            lot, source_state['start_date'], transfer_date, source_state.get('survival_reference_pct', 100.0))
         received_qty = qty_requested
 
         if qty_requested > available_qty:
@@ -8601,11 +8674,13 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             source_state.get('qty'),
             source_state.get('notes') or 'Saldo anterior à transferência.',
             source_state.get('phase') or source_phase,
+            source_state.get('survival_reference_pct', 100.0),
         )
         remaining_qty = max(available_qty - removed_from_source, 0)
         if remaining_qty > 0:
             state[transfer.source_unit_id] = {
                 'qty': remaining_qty,
+                'survival_reference_pct': source_reference_now,
                 'start_date': transfer_date,
                 'phase': source_state.get('phase') or source_phase,
                 'notes': 'Saldo recalculado após transferência parcial.',
@@ -8624,6 +8699,7 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
                 destination_state['qty'],
                 destination_state.get('notes') or 'Saldo anterior à nova entrada.',
                 destination_state.get('phase') or destination_phase,
+                destination_state.get('survival_reference_pct', 100.0),
             )
             destination_qty_at_transfer = project_population_marker_to_date(
                 lot,
@@ -8631,13 +8707,21 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
                 destination_state.get('start_date'),
                 transfer_date,
                 operational_phase=destination_state.get('phase') or destination_phase,
+                survival_reference_pct=destination_state.get('survival_reference_pct', 100.0),
             )
             new_destination_qty = int(destination_qty_at_transfer) + received_qty
+            old_reference = projected_survival_reference(
+                lot, destination_state['start_date'], transfer_date,
+                destination_state.get('survival_reference_pct', 100.0))
+            equivalent_base = (destination_qty_at_transfer * 100 / old_reference if old_reference > 0 else 0) + received_qty
+            destination_reference = new_destination_qty * 100 / equivalent_base if equivalent_base else 100.0
         else:
             new_destination_qty = received_qty
+            destination_reference = 100.0
 
         state[transfer.destination_unit_id] = {
             'qty': new_destination_qty,
+            'survival_reference_pct': destination_reference,
             'start_date': transfer_date,
             'phase': destination_phase,
             'notes': 'Saldo recalculado automaticamente a partir das transferências reais.',
@@ -8661,6 +8745,7 @@ def rebuild_lot_allocations_from_transfer_history(lot: Lot):
             payload['qty'],
             payload.get('notes') or 'Saldo recalculado automaticamente.',
             payload.get('phase'),
+            payload.get('survival_reference_pct', 100.0),
         )
 
     db.session.flush()
@@ -16959,23 +17044,20 @@ def adaptive_survival_profile_for_lot(lot: Lot, on_date=None):
 
 
 def modeled_live_count_for_lot(lot: Lot, on_date=None):
-    """Contagem viva usada em projeções/sugestão.
-
-    Depois de uma transferência, a quantidade transferida vira o novo marco real do lote.
-    A curva de sobrevivência só limita lotes que ainda não têm contagem real de transferência.
-    """
+    """Projeção por unidade: contagem real + queda diária desde cada marco."""
     on_date = on_date or local_today()
-    mortality_adjusted = allocation_live_count_for_lot(lot, on_date=on_date)
-    base_count = sum((allocation.quantity_allocated or 0) for allocation in active_allocations_for_lot(lot, on_date=on_date)) or (parse_int(getattr(lot, 'initial_count', 0), 0) or 0)
-    harvested = lot_total_harvested_units(lot.id)
-    if latest_transfer_for_lot(lot, on_date=on_date):
-        return mortality_adjusted
-    survival_profile = adaptive_survival_profile_for_lot(lot, on_date=on_date)
-    modeled_survival = survival_profile.get('survival_pct')
-    if modeled_survival is None or harvested > 0 or not base_count:
-        return mortality_adjusted
-    modeled_adjusted = int(round(base_count * (modeled_survival / 100)))
-    return max(min(mortality_adjusted, modeled_adjusted), 0)
+    allocations = active_allocations_for_lot(lot, on_date=on_date)
+    if allocations:
+        total = 0
+        for allocation in allocations:
+            projected = estimated_allocation_population_on_date(allocation, on_date)
+            mortality = _sum_mortality_after_marker(lot.id, allocation.unit_id, allocation.start_date, on_date)
+            harvested = _sum_harvested_after_marker(lot.id, allocation.unit_id, allocation.start_date, on_date)
+            # Mortalidade real limita a estimativa; não duplica perdas já previstas.
+            total += max(min(projected, (allocation.quantity_allocated or 0) - mortality) - harvested, 0)
+        return int(total)
+    projected = project_population_marker_to_date(lot, lot.initial_count, lot.start_date, on_date)
+    return min(projected, allocation_live_count_for_lot(lot, on_date=on_date))
 
 
 def pellet_hint_for_weight(weight_g):
