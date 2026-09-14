@@ -13,7 +13,7 @@
     <div>
       <p class="panel-kicker">Data de trabalho</p>
       <h2>Planejamento automático do {{ phase_label }}</h2>
-      <p class="helper-text">Veja o protocolo do dia, salve o lançamento real e, se precisar, abra a mensagem pronta para o WhatsApp. A tabela acompanha a idade real do ciclo; transferir antes/depois não reinicia em J43 ou E67.</p>
+      <p class="helper-text">Veja o protocolo do dia, salve o lançamento real e, se precisar, abra a mensagem pronta para o WhatsApp. A tabela acompanha a idade real do ciclo. A contagem real na transferência inicia uma nova base de 100% de sobrevivência, com a queda diária prevista para a idade atual.</p>
     </div>
   </div>
   <form method="get" class="form-grid compact-grid nursery-toolbar-form">
@@ -77,6 +77,7 @@
     <div class="summary-chip"><strong>{{ '%.2f'|format(plan.feed_rate_pct) }}%</strong><span>taxa de alimentação</span></div>
     <div class="summary-chip"><strong>{{ '{:,.0f}'.format(plan.total_day_g).replace(',', '.') }} g</strong><span>{{ '%.3f'|format(plan.total_day_kg) }} kg no dia</span></div>
     <div class="summary-chip"><strong>{{ plan.score_factor_label }}</strong><span>correção ativa desta unidade{% if plan.intestinal_score is not none %} · último score {{ '%.1f'|format(plan.intestinal_score) }}{% endif %}{% if plan.correction_source_date %} de {{ plan.correction_source_date|brdate }}{% endif %}</span></div>
+    <div class="summary-chip"><strong>{{ '%.2f'|format(plan.survival_since_count_pct) }}%</strong><span>sobrevivência estimada desde a contagem</span></div>
     <div class="summary-chip"><strong>{{ plan.feedings_per_day }}</strong><span>alimentações no dia</span></div>
     <div class="summary-chip"><strong>{% if plan.per_feeding_min_g != plan.per_feeding_max_g %}{{ '{:,.0f}'.format(plan.per_feeding_min_g).replace(',', '.') }}–{{ '{:,.0f}'.format(plan.per_feeding_max_g).replace(',', '.') }} g{% else %}{{ '{:,.0f}'.format(plan.per_feeding_g).replace(',', '.') }} g{% endif %}</strong><span>por porção</span></div>
   </div>
